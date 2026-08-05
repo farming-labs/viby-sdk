@@ -207,6 +207,15 @@ export class Chat<Framework extends FrameworkId = FrameworkId> {
     return data ? new Version(data, this.#dependencies) : null;
   }
 
+  async getVersion(id: string): Promise<Version<Framework>> {
+    const data = await this.#dependencies.repository.getVersion<Framework>(
+      this.#dependencies.scope,
+      id,
+    );
+    if (!data || data.chatId !== this.id) throw new NotFoundError("Version");
+    return new Version(data, this.#dependencies);
+  }
+
   async listVersions(): Promise<Array<Version<Framework>>> {
     const records = await this.#dependencies.repository.listVersions<Framework>(
       this.#dependencies.scope,

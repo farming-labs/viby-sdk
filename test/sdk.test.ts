@@ -84,6 +84,7 @@ test("creates a tenant-scoped chat, generation, immutable version, and source ZI
   assert.equal(second.number, 2);
   assert.equal(second.parentVersionId, first.id);
   assert.equal(generator.calls[1]?.previousFiles[0]?.content, "export const version = 1;\n");
+  assert.equal((await chat.getVersion(first.id)).id, first.id);
 
   const artifact = await second.download();
   assert.equal(artifact.filename, "analytics-dashboard.zip");
@@ -93,6 +94,16 @@ test("creates a tenant-scoped chat, generation, immutable version, and source ZI
 
   await viby.close();
   assert.equal(repository.closed, true);
+});
+
+test("does not return a version that belongs to a different chat", async () => {
+  const { viby } = setup();
+  const user = viby.forUser({ tenantId: "tenant-a", userId: "user-a" });
+  const firstChat = await user.chats.create();
+  const secondChat = await user.chats.create();
+  const version = await firstChat.generate({ prompt: "Build a dashboard" });
+
+  await assert.rejects(() => secondChat.getVersion(version.id), NotFoundError);
 });
 
 test("never exposes records across tenants or users", async () => {
