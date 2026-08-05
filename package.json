@@ -1,0 +1,64 @@
+{
+  "name": "@viby/sdk",
+  "version": "0.1.0",
+  "description": "Framework-agnostic SDK for building persistent, skill-guided vibe coding products.",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/farming-labs/viby-sdk.git"
+  },
+  "homepage": "https://github.com/farming-labs/viby-sdk#readme",
+  "bugs": {
+    "url": "https://github.com/farming-labs/viby-sdk/issues"
+  },
+  "keywords": [
+    "ai",
+    "code-generation",
+    "sdk",
+    "skills",
+    "typescript",
+    "vibe-coding"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "files": [
+    "dist",
+    "migrations",
+    "README.md",
+    "LICENSE"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "bin": {
+    "viby": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test test/**/*.test.ts",
+    "check": "npm run typecheck && npm test && npm run build",
+    "prepack": "npm run check"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "dependencies": {
+    "ai": "^7.0.52",
+    "fflate": "^0.8.3",
+    "postgres": "^3.4.9",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.2",
+    "tsx": "^4.23.7",
+    "typescript": "^7.0.2"
+  }
+}
