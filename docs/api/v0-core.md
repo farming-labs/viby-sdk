@@ -46,7 +46,7 @@ Within chat requests, the audited inputs also include privacy, metadata, attachm
 | Rename and attach arbitrary metadata | `chats.update` | proposed `chat.update` | Planned | chat name and JSON metadata |
 | Favorite a chat | deprecated `chats.favorite`; v0 recommends metadata | proposed `chat.update({ metadata: { favorite } })` | Planned | chat metadata |
 | Delete a chat | `chats.delete` | proposed `chat.delete` | Planned | soft-delete marker; later purge policy |
-| Fork a chat from a version | `chats.fork` | proposed `version.fork` | Planned | new chat and copied immutable version lineage |
+| Fork a chat from a version | `chats.fork` | `version.fork` | Shipped | new chat and copied immutable version lineage |
 | Continue from the latest version | `chats.sendMessage` | `chat.generate` | Shipped | message, generation, child version, files |
 | Continue from any historical version | `chats.sendMessage`/fork workflow | `version.iterate` | Shipped | message, generation, child version, files |
 | Per-request system instructions | `system` | categorized configured skills | Partial | resolved skill snapshot per generation |
@@ -85,7 +85,7 @@ Viby does not copy v0's hosted privacy values, `webUrl`, `apiUrl`, `demoUrl`, or
 | Read complete source files | `getVersion({ includeDefaultFiles })` | `version.files` | Shipped | reads version file snapshot |
 | Edit or add files | `chats.updateVersion` | `version.apply({ changes })` with `write` | Shipped | a new immutable child version, never in-place mutation |
 | Delete files | `chats.deleteVersionFiles` | `version.apply({ changes })` with `delete` | Shipped | a new immutable child version |
-| Restore a version | `chats.restore` | proposed `version.restore` | Planned | a new immutable child version pointing at the restored snapshot |
+| Restore a version | `chats.restore` | `version.restore` | Shipped | a new immutable child version pointing at the restored snapshot |
 | Download ZIP | `chats.downloadVersion({ format: "zip" })` | `version.download` | Shipped | artifact is generated from persisted files |
 | Download tarball | `format: "tarball"` | proposed artifact format option | Planned | artifact is generated from persisted files |
 | Locked/default files | file `locked`; `includeDefaultFiles` | framework skill and generated source | Planned | lock policy on version files |

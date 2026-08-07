@@ -25,11 +25,13 @@ import type {
   CreatedGeneration,
   CreateGenerationRecord,
   CreateSourceVersionRecord,
+  ForkVersionRecord,
   ImportedChat,
   ImportChatRecord,
   PauseGenerationRecord,
   Repository,
   ResolveGenerationTaskRecord,
+  RestoreVersionRecord,
 } from "./repository.js";
 import { createId } from "./utils.js";
 import {
@@ -283,6 +285,129 @@ export class PostgresRepository implements Repository {
           ) VALUES (
             ${createId()}, ${scope.tenantId}, ${scope.userId}, ${input.id}, ${file.path},
             ${file.content}, ${file.mediaType}, ${file.size}, ${file.checksum}
+          )
+        `;
+      }
+      await sql`
+        UPDATE viby.chats SET updated_at = now()
+        WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+          AND id = ${input.chatId}
+      `;
+      return version;
+    });
+    return mapVersion<Framework>(row);
+  }
+
+  async forkVersion<Framework extends FrameworkId>(
+    scope: UserScope,
+    input: ForkVersionRecord<Framework>,
+  ): Promise<ImportedChat<Framework>> {
+    await this.assertReady();
+    const result = await this.#sql.begin(async (sql) => {
+      const [source] = await sql<VersionRow[]>`
+        SELECT * FROM viby.versions
+        WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+          AND id = ${input.sourceVersionId}
+        LIMIT 1
+      `;
+      if (!source) throw new NotFoundError("Source version");
+
+      const files = await sql<VersionFileRow[]>`
+        SELECT path, content, media_type, size, checksum
+        FROM viby.version_files
+        WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+          AND version_id = ${source.id}
+        ORDER BY path
+      `;
+      const [chat] = await sql<ChatRow[]>`
+        INSERT INTO viby.chats (id, tenant_id, user_id, title, framework)
+        VALUES (
+          ${input.chatId}, ${scope.tenantId}, ${scope.userId}, ${input.title}, ${input.framework}
+        )
+        RETURNING *
+      `;
+      if (!chat) throw new Error("Postgres did not return the forked chat.");
+      const [version] = await sql<VersionRow[]>`
+        INSERT INTO viby.versions (
+          id, tenant_id, user_id, chat_id, generation_id, parent_version_id,
+          number, origin, framework, title, summary
+        ) VALUES (
+          ${input.versionId}, ${scope.tenantId}, ${scope.userId}, ${input.chatId}, NULL,
+          ${source.id}, 1, 'forked', ${input.framework}, ${input.title}, ${input.summary}
+        )
+        RETURNING *
+      `;
+      if (!version) throw new Error("Postgres did not return the forked version.");
+      for (const file of files) {
+        await sql`
+          INSERT INTO viby.version_files (
+            id, tenant_id, user_id, version_id, path, content, media_type, size, checksum
+          ) VALUES (
+            ${createId()}, ${scope.tenantId}, ${scope.userId}, ${input.versionId}, ${file.path},
+            ${file.content}, ${file.media_type}, ${file.size}, ${file.checksum}
+          )
+        `;
+      }
+      return { chat, version };
+    });
+    return {
+      chat: mapChat<Framework>(result.chat),
+      version: mapVersion<Framework>(result.version),
+    };
+  }
+
+  async restoreVersion<Framework extends FrameworkId>(
+    scope: UserScope,
+    input: RestoreVersionRecord<Framework>,
+  ): Promise<VersionData<Framework>> {
+    await this.assertReady();
+    const row = await this.#sql.begin(async (sql) => {
+      const [chat] = await sql<{ id: string }[]>`
+        SELECT id FROM viby.chats
+        WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+          AND id = ${input.chatId}
+        FOR UPDATE
+      `;
+      if (!chat) throw new NotFoundError("Chat");
+      const [source] = await sql<VersionRow[]>`
+        SELECT * FROM viby.versions
+        WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+          AND id = ${input.sourceVersionId} AND chat_id = ${input.chatId}
+        LIMIT 1
+      `;
+      if (!source) throw new NotFoundError("Source version");
+      const files = await sql<VersionFileRow[]>`
+        SELECT path, content, media_type, size, checksum
+        FROM viby.version_files
+        WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+          AND version_id = ${source.id}
+        ORDER BY path
+      `;
+      const [numberRow] = await sql<{ number: number }[]>`
+        SELECT COALESCE(MAX(number), 0)::integer + 1 AS number
+        FROM viby.versions
+        WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+          AND chat_id = ${input.chatId}
+      `;
+      const [version] = await sql<VersionRow[]>`
+        INSERT INTO viby.versions (
+          id, tenant_id, user_id, chat_id, generation_id, parent_version_id,
+          number, origin, framework, title, summary
+        ) VALUES (
+          ${input.id}, ${scope.tenantId}, ${scope.userId}, ${input.chatId}, NULL,
+          ${source.id}, ${numberRow?.number ?? 1}, 'restored', ${input.framework},
+          ${input.title}, ${input.summary}
+        )
+        RETURNING *
+      `;
+      if (!version) throw new Error("Postgres did not return the restored version.");
+      for (const file of files) {
+        await sql`
+          INSERT INTO viby.version_files (
+            id, tenant_id, user_id, version_id, path, content, media_type, size, checksum
+          ) VALUES (
+            ${createId()}, ${scope.tenantId}, ${scope.userId}, ${input.id}, ${file.path},
+            ${file.content}, ${file.media_type}, ${file.size}, ${file.checksum}
           )
         `;
       }

@@ -43,6 +43,24 @@ export interface CreateSourceVersionRecord<Framework extends FrameworkId = Frame
   readonly files: readonly VersionFile[];
 }
 
+export interface ForkVersionRecord<Framework extends FrameworkId = FrameworkId> {
+  readonly chatId: string;
+  readonly versionId: string;
+  readonly sourceVersionId: string;
+  readonly title: string;
+  readonly summary: string;
+  readonly framework: Framework;
+}
+
+export interface RestoreVersionRecord<Framework extends FrameworkId = FrameworkId> {
+  readonly id: string;
+  readonly chatId: string;
+  readonly sourceVersionId: string;
+  readonly title: string;
+  readonly summary: string;
+  readonly framework: Framework;
+}
+
 export interface CreateGenerationRecord {
   readonly id: string;
   readonly attemptId: string;
@@ -119,6 +137,14 @@ export interface Repository {
   createSourceVersion<Framework extends FrameworkId>(
     scope: UserScope,
     input: CreateSourceVersionRecord<Framework>,
+  ): Promise<VersionData<Framework>>;
+  forkVersion<Framework extends FrameworkId>(
+    scope: UserScope,
+    input: ForkVersionRecord<Framework>,
+  ): Promise<ImportedChat<Framework>>;
+  restoreVersion<Framework extends FrameworkId>(
+    scope: UserScope,
+    input: RestoreVersionRecord<Framework>,
   ): Promise<VersionData<Framework>>;
   getChat<Framework extends FrameworkId>(
     scope: UserScope,

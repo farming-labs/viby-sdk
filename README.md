@@ -104,6 +104,18 @@ const editedVersion = await importedVersion!.apply({
 
 `apply` creates a complete immutable child snapshot. It never changes the selected version in place.
 
+Fork or restore any historical snapshot without a model request:
+
+```ts
+const experiment = await importedVersion!.fork({
+  title: "Import experiment",
+});
+
+const restored = await importedVersion!.restore();
+```
+
+`fork` creates a new chat whose first version points back to the selected source version. `restore` copies the selected files into a new latest version in the same chat.
+
 Every generation attempt is stored, including failures and token usage. Successful attempts create immutable versions with a parent relationship and complete source snapshot.
 
 ## Run and stream asynchronously

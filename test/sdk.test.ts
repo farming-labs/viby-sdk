@@ -265,6 +265,44 @@ test("rejects invalid source change sets before persistence", async () => {
   assert.equal((await chat.listVersions()).length, 1);
 });
 
+test("forks and restores exact immutable version snapshots", async () => {
+  const { viby, generator, repository } = setup();
+  const owner = viby.forUser({ tenantId: "tenant-a", userId: "user-a" });
+  const stranger = viby.forUser({ tenantId: "tenant-b", userId: "user-b" });
+  const chat = await owner.chats.import({
+    title: "Source project",
+    source: {
+      type: "files",
+      files: [{ path: "src/index.ts", content: "export const version = 1;\n" }],
+    },
+  });
+  const first = await chat.latestVersion();
+  assert.ok(first);
+  const second = await first.apply({
+    changes: [{ type: "write", path: "src/index.ts", content: "export const version = 2;\n" }],
+  });
+
+  const forkedChat = await first.fork({ title: "Version one experiment" });
+  const forkedVersion = await forkedChat.latestVersion();
+  assert.ok(forkedVersion);
+  assert.notEqual(forkedChat.id, chat.id);
+  assert.equal(forkedVersion.number, 1);
+  assert.equal(forkedVersion.origin, "forked");
+  assert.equal(forkedVersion.parentVersionId, first.id);
+  assert.equal((await forkedVersion.files())[0]?.content, "export const version = 1;\n");
+
+  const restored = await first.restore();
+  assert.equal(restored.number, 3);
+  assert.equal(restored.origin, "restored");
+  assert.equal(restored.parentVersionId, first.id);
+  assert.equal((await restored.files())[0]?.content, "export const version = 1;\n");
+  assert.equal((await second.files())[0]?.content, "export const version = 2;\n");
+  assert.equal((await chat.latestVersion())?.id, restored.id);
+  assert.equal(generator.calls.length, 0);
+  assert.equal(repository.messages.length, 0);
+  await assert.rejects(() => stranger.chats.get(forkedChat.id), NotFoundError);
+});
+
 test("does not return a version that belongs to a different chat", async () => {
   const { viby } = setup();
   const user = viby.forUser({ tenantId: "tenant-a", userId: "user-a" });

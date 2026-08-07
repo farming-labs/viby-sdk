@@ -20,11 +20,13 @@ import type {
   CreatedGeneration,
   CreateGenerationRecord,
   CreateSourceVersionRecord,
+  ForkVersionRecord,
   ImportedChat,
   ImportChatRecord,
   PauseGenerationRecord,
   Repository,
   ResolveGenerationTaskRecord,
+  RestoreVersionRecord,
 } from "../../src/repository.js";
 import { createId } from "../../src/utils.js";
 import { GenerationStateError, NotFoundError } from "../../src/errors.js";
@@ -121,6 +123,65 @@ export class MemoryRepository implements Repository {
     };
     this.versions.set(version.id, version);
     this.files.set(version.id, [...input.files]);
+    this.chats.set(chat.id, { ...chat, updatedAt: new Date() });
+    return version;
+  }
+
+  async forkVersion<Framework extends FrameworkId>(
+    scope: UserScope,
+    input: ForkVersionRecord<Framework>,
+  ): Promise<ImportedChat<Framework>> {
+    const source = await this.getVersion(scope, input.sourceVersionId);
+    if (!source) throw new NotFoundError("Source version");
+    const chat = await this.createChat(scope, {
+      id: input.chatId,
+      title: input.title,
+      framework: input.framework,
+    });
+    const version: VersionData<Framework> & ScopedRecord = {
+      id: input.versionId,
+      chatId: input.chatId,
+      generationId: null,
+      parentVersionId: source.id,
+      number: 1,
+      origin: "forked",
+      framework: input.framework,
+      title: input.title,
+      summary: input.summary,
+      createdAt: new Date(),
+      ...scope,
+    };
+    this.versions.set(version.id, version);
+    this.files.set(version.id, [...(this.files.get(source.id) ?? [])]);
+    return { chat, version };
+  }
+
+  async restoreVersion<Framework extends FrameworkId>(
+    scope: UserScope,
+    input: RestoreVersionRecord<Framework>,
+  ): Promise<VersionData<Framework>> {
+    const chat = await this.getChat(scope, input.chatId);
+    if (!chat) throw new NotFoundError("Chat");
+    const source = await this.getVersion(scope, input.sourceVersionId);
+    if (!source || source.chatId !== input.chatId) throw new NotFoundError("Source version");
+    const number = [...this.versions.values()]
+      .filter((version) => version.chatId === input.chatId && inScope(version, scope))
+      .reduce((highest, version) => Math.max(highest, version.number), 0) + 1;
+    const version: VersionData<Framework> & ScopedRecord = {
+      id: input.id,
+      chatId: input.chatId,
+      generationId: null,
+      parentVersionId: source.id,
+      number,
+      origin: "restored",
+      framework: input.framework,
+      title: input.title,
+      summary: input.summary,
+      createdAt: new Date(),
+      ...scope,
+    };
+    this.versions.set(version.id, version);
+    this.files.set(version.id, [...(this.files.get(source.id) ?? [])]);
     this.chats.set(chat.id, { ...chat, updatedAt: new Date() });
     return version;
   }
