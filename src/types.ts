@@ -80,6 +80,29 @@ export interface GenerateInput {
 
 export type IterateInput = GenerateInput;
 
+export type SourceChange =
+  | {
+      readonly type: "write";
+      readonly path: string;
+      readonly content: string;
+      readonly mediaType?: string;
+    }
+  | {
+      readonly type: "delete";
+      readonly path: string;
+    }
+  | {
+      readonly type: "move";
+      readonly from: string;
+      readonly to: string;
+    };
+
+export interface ApplySourceChangesInput {
+  readonly changes: readonly SourceChange[];
+  readonly title?: string;
+  readonly summary?: string;
+}
+
 export type GenerationStatus =
   | "queued"
   | "running"

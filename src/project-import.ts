@@ -53,15 +53,15 @@ function importZipFiles(bytes: Uint8Array): VersionFile[] {
   return normalizeSourceFiles(files, "Imported");
 }
 
-function normalizeSourceFiles(
+export function normalizeSourceFiles(
   files: readonly SourceFileInput[],
   label: string,
 ): VersionFile[] {
   if (!Array.isArray(files) || files.length === 0) {
-    throw new ConfigurationError("An imported project must contain at least one source file.");
+    throw new ConfigurationError(`${label} project must contain at least one source file.`);
   }
   if (files.length > MAX_PROJECT_FILES) {
-    throw new ConfigurationError(`An imported project cannot exceed ${MAX_PROJECT_FILES} files.`);
+    throw new ConfigurationError(`${label} project cannot exceed ${MAX_PROJECT_FILES} files.`);
   }
 
   const paths = new Set<string>();
@@ -85,7 +85,7 @@ function normalizeSourceFiles(
     }
     totalBytes += size;
     if (totalBytes > MAX_PROJECT_BYTES) {
-      throw new ConfigurationError(`An imported project cannot exceed ${MAX_PROJECT_BYTES} bytes.`);
+      throw new ConfigurationError(`${label} project cannot exceed ${MAX_PROJECT_BYTES} bytes.`);
     }
 
     const mediaType = file.mediaType?.trim() || inferMediaType(path);

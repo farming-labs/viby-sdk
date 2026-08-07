@@ -83,8 +83,8 @@ Viby does not copy v0's hosted privacy values, `webUrl`, `apiUrl`, `demoUrl`, or
 | Get latest version | chat `latestVersion` | `chat.latestVersion` | Shipped | reads version |
 | Get a version by ID | `chats.getVersion` | `chat.getVersion` | Shipped | reads version |
 | Read complete source files | `getVersion({ includeDefaultFiles })` | `version.files` | Shipped | reads version file snapshot |
-| Edit or add files | `chats.updateVersion` | proposed `version.edit` | Planned | a new immutable child version, never in-place mutation |
-| Delete files | `chats.deleteVersionFiles` | proposed `version.removeFiles` | Planned | a new immutable child version |
+| Edit or add files | `chats.updateVersion` | `version.apply({ changes })` with `write` | Shipped | a new immutable child version, never in-place mutation |
+| Delete files | `chats.deleteVersionFiles` | `version.apply({ changes })` with `delete` | Shipped | a new immutable child version |
 | Restore a version | `chats.restore` | proposed `version.restore` | Planned | a new immutable child version pointing at the restored snapshot |
 | Download ZIP | `chats.downloadVersion({ format: "zip" })` | `version.download` | Shipped | artifact is generated from persisted files |
 | Download tarball | `format: "tarball"` | proposed artifact format option | Planned | artifact is generated from persisted files |

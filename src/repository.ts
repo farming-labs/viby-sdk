@@ -15,6 +15,7 @@ import type {
   UserScope,
   VersionData,
   VersionFile,
+  VersionOrigin,
 } from "./types.js";
 
 export interface ImportChatRecord<Framework extends FrameworkId = FrameworkId> {
@@ -29,6 +30,17 @@ export interface ImportChatRecord<Framework extends FrameworkId = FrameworkId> {
 export interface ImportedChat<Framework extends FrameworkId = FrameworkId> {
   readonly chat: ChatData<Framework>;
   readonly version: VersionData<Framework>;
+}
+
+export interface CreateSourceVersionRecord<Framework extends FrameworkId = FrameworkId> {
+  readonly id: string;
+  readonly chatId: string;
+  readonly parentVersionId: string;
+  readonly origin: Exclude<VersionOrigin, "generated" | "imported">;
+  readonly framework: Framework;
+  readonly title: string;
+  readonly summary: string;
+  readonly files: readonly VersionFile[];
 }
 
 export interface CreateGenerationRecord {
@@ -104,6 +116,10 @@ export interface Repository {
     scope: UserScope,
     input: ImportChatRecord<Framework>,
   ): Promise<ImportedChat<Framework>>;
+  createSourceVersion<Framework extends FrameworkId>(
+    scope: UserScope,
+    input: CreateSourceVersionRecord<Framework>,
+  ): Promise<VersionData<Framework>>;
   getChat<Framework extends FrameworkId>(
     scope: UserScope,
     id: string,

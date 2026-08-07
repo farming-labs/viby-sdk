@@ -22,6 +22,7 @@ export {
 export type { GenerationOutcome, Viby } from "./client.js";
 export type {
   BuiltInSkillCategory,
+  ApplySourceChangesInput,
   ChatData,
   CreateChatInput,
   FrameworkId,
@@ -59,6 +60,7 @@ export type {
   SkillGroups,
   SkillReference,
   SkillsShSkillId,
+  SourceChange,
   SourceFileInput,
   UserScope,
   VersionData,

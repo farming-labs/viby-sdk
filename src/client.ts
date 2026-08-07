@@ -1,5 +1,6 @@
 import type {
   ChatData,
+  ApplySourceChangesInput,
   CreateChatInput,
   FrameworkId,
   GenerateInput,
@@ -42,6 +43,7 @@ import {
 } from "./utils.js";
 import { createSourceDownload, type DownloadArtifact } from "./download.js";
 import { importProjectFiles } from "./project-import.js";
+import { applySourceChanges } from "./source-changes.js";
 
 const DEFAULT_POLL_INTERVAL_MS = 100;
 const DEFAULT_EVENT_LIMIT = 100;
@@ -589,6 +591,31 @@ export class Version<Framework extends FrameworkId = FrameworkId> {
     return new Chat(chatData, this.#dependencies).generateFromVersion(input, this.#data);
   }
 
+  async apply(input: ApplySourceChangesInput): Promise<Version<Framework>> {
+    if (!input) throw new ConfigurationError("A source change set is required.");
+    const files = applySourceChanges(await this.files(), input.changes);
+    const title = normalizeVersionTitle(input.title ?? this.title);
+    const summary = input.summary?.trim()
+      || `Applied ${input.changes.length} source change${input.changes.length === 1 ? "" : "s"}.`;
+    if (summary.length > 2_000) {
+      throw new ConfigurationError("A version summary cannot exceed 2,000 characters.");
+    }
+    const data = await this.#dependencies.repository.createSourceVersion(
+      this.#dependencies.scope,
+      {
+        id: createId(),
+        chatId: this.chatId,
+        parentVersionId: this.id,
+        origin: "edited",
+        framework: this.framework,
+        title,
+        summary,
+        files,
+      },
+    );
+    return new Version(data, this.#dependencies);
+  }
+
   files(): Promise<VersionFile[]> {
     return this.#dependencies.repository.getVersionFiles(this.#dependencies.scope, this.id);
   }
@@ -612,6 +639,14 @@ function normalizeChatTitle(value: string | undefined): string {
   const title = value?.trim() || "Untitled";
   if (title.length > 200) {
     throw new ConfigurationError("A chat title cannot exceed 200 characters.");
+  }
+  return title;
+}
+
+function normalizeVersionTitle(value: string): string {
+  const title = value.trim();
+  if (title.length === 0 || title.length > 120) {
+    throw new ConfigurationError("A version title must contain between 1 and 120 characters.");
   }
   return title;
 }
