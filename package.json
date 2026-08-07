@@ -53,18 +53,22 @@
     "check": "npm run typecheck && npm test && npm run build",
     "bump": "bumpp",
     "release": "npm run release:latest",
-    "release:latest": "bumpp",
-    "release:beta": "bumpp --preid beta",
-    "release:canary": "bumpp --preid canary",
+    "release:auth": "npm whoami --registry=https://registry.npmjs.org",
+    "release:latest": "npm run release:auth && bumpp && npm run publish:latest",
+    "release:beta": "npm run release:auth && bumpp --preid beta && npm run publish:beta",
+    "release:canary": "npm run release:auth && bumpp --preid canary && npm run publish:canary",
     "release:check": "node scripts/check-release-version.mjs && npm run check && npm run test:package",
-    "release:prepare": "node scripts/check-release-branch.mjs && npm run release:check",
+    "release:prepare": "node scripts/check-release-branch.mjs && npm run release:check && npm run release:guard",
     "release:guard": "node scripts/release-guard.mjs",
+    "publish:dry-run": "npm run release:check && npm publish --dry-run --ignore-scripts --access public --tag latest",
+    "publish:latest": "npm publish --access public --tag latest",
+    "publish:beta": "npm publish --access public --tag beta",
+    "publish:canary": "npm publish --access public --tag canary",
     "prepack": "npm run build",
     "prepublishOnly": "npm run release:check"
   },
   "publishConfig": {
     "access": "public",
-    "provenance": true,
     "registry": "https://registry.npmjs.org"
   },
   "dependencies": {

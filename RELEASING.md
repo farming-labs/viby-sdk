@@ -1,36 +1,41 @@
 # Releasing Viby SDK
 
-Viby uses Bumpp for version commits and tags, then GitHub Actions publishes the package and GitHub Release. Start from a clean, up-to-date `main` branch.
+Viby uses the same local release shape as Farm.js: Bumpp creates and pushes the version commit and tag, then the authenticated workstation publishes the package to npm. Start from a clean, up-to-date `main` branch and sign in to npm before releasing.
 
 ## Stable release
 
 ```bash
-npm run release
+npm whoami
+pnpm release
 ```
 
-Choose the next version in the Bumpp prompt. Bumpp verifies the release is running from `main`, updates `package.json` and `package-lock.json`, runs the complete release check, creates `chore: release v<version>`, tags it as `v<version>`, and pushes the commit and tag.
-
-The pushed tag starts `publish.yml`. The workflow prepares a draft GitHub Release, publishes `@viby/sdk` with npm provenance, and publishes the GitHub Release only after npm succeeds.
+The command verifies npm authentication before Bumpp can change anything. Choose and approve the next version in the Bumpp prompt. Bumpp verifies the release is running from `main`, updates `package.json` and `package-lock.json`, confirms the version is available on npm, runs the complete release check, creates `chore: release v<version>`, tags it as `v<version>`, and pushes the commit and tag. The command then runs `npm publish --access public --tag latest` locally and only succeeds after npm accepts the package.
 
 ## Prereleases
 
 ```bash
-npm run release:beta
-npm run release:canary
+pnpm release:beta
+pnpm release:canary
 ```
 
-Beta versions publish with npm's `beta` dist-tag and canary versions with `canary`. Other prerelease identifiers use `next`. Prerelease GitHub Releases are marked accordingly.
+Beta versions publish with npm's `beta` dist-tag and canary versions with `canary`.
 
 ## Verify without releasing
 
 ```bash
-npm run release:check
-npm run release:guard
-npm publish --dry-run --ignore-scripts
+pnpm release:check
+pnpm release:guard
+pnpm publish:dry-run
 ```
 
 ## Recover an interrupted release
 
-Do not bump the version again. Dispatch the `Publish` workflow from `main`. It reuses the existing version tag, skips npm if that exact version is already present, and completes an existing draft GitHub Release.
+If Bumpp pushed the version but npm publishing failed, do not bump again. Check out the exact release tag in a clean worktree, authenticate with npm, and publish the existing version with the matching command:
 
-The first npm publication needs either an authenticated local publish or a temporary `NPM_TOKEN` in the GitHub `npm` environment. Remove that token and configure npm trusted publishing after the package exists. See [docs/publishing.md](./docs/publishing.md) for the one-time setup.
+```bash
+pnpm publish:latest
+# or: pnpm publish:beta
+# or: pnpm publish:canary
+```
+
+See [docs/publishing.md](./docs/publishing.md) for npm access, two-factor authentication, and recovery details.
