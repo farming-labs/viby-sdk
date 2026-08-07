@@ -1,51 +1,44 @@
 # Publishing `@viby/sdk`
 
-The repository validates the same artifact that npm receives. `npm run release:check` runs typechecking, unit tests, compilation, tarball-content assertions, installation into a clean consumer project, a public-import check, and a CLI smoke test.
+Publishing is intentionally local and manually approved. GitHub Actions validates changes, but it does not hold npm credentials or publish releases.
 
-## One-time first publish
+The repository validates the same artifact that npm receives. `pnpm release:check` runs typechecking, unit tests, compilation, tarball-content assertions, installation into a clean consumer project, a public-import check, and a CLI smoke test. The package's `prepublishOnly` hook repeats those checks before npm accepts an upload.
 
-`@viby/sdk` must exist on npm before npm lets the package configure a trusted publisher. Confirm that your npm account can publish public packages in the `@viby` organization and has two-factor authentication enabled, then publish `0.2.0` once from a trusted workstation:
+## Authenticate the release workstation
+
+The npm account must be allowed to publish public packages in the `@viby` organization and must satisfy the organization's two-factor authentication policy.
 
 ```bash
 npm login
-npm ci
-npm run release:guard
-npm publish --access public
+npm whoami
+npm org ls viby
 ```
 
-The package's `prepublishOnly` hook runs the complete release check before uploading anything.
-
-Alternatively, add a short-lived granular npm token as the `NPM_TOKEN` secret in the GitHub `npm` environment, run the Bumpp release flow, and delete the secret immediately after the first release. Later releases should use OIDC instead of a long-lived token.
-
-## Configure trusted publishing
-
-After the first version exists, open the package settings on npm, choose **Trusted Publisher → GitHub Actions**, and enter:
-
-- Organization: `farming-labs`
-- Repository: `viby-sdk`
-- Workflow filename: `publish.yml`
-- Environment: `npm`
-- Allowed action: `npm publish`
-
-The workflow uses a GitHub-hosted runner, `id-token: write`, Node 24, and npm 11.18.0. npm trusted publishing generates provenance automatically. Configure required reviewers on the GitHub `npm` environment if a human approval should gate every release, then remove any bootstrap `NPM_TOKEN` secret.
+Authentication stays on the release workstation; it is not copied into GitHub.
 
 ## Publish a release
 
-Start from a clean, up-to-date `main` branch and run:
+Start from a clean, up-to-date `main` branch:
 
 ```bash
-npm run release
+git switch main
+git pull --ff-only
+pnpm release
 ```
 
-Bumpp verifies the current branch is `main`, prompts for the next version, updates both release manifests, runs `npm run release:check`, creates `chore: release v<version>`, tags `v<version>`, and pushes both. The tag starts `publish.yml`, which:
+The command checks npm authentication before opening the version prompt. After you approve the version, Bumpp updates both manifests, confirms the selected version is available on npm, validates the package, creates and pushes the version commit and tag, and then publishes it locally with npm's `latest` dist-tag. The command exits unsuccessfully if npm rejects the publication.
 
-1. Validates that the tag and package version match.
-2. Prepares a draft GitHub Release.
-3. Publishes the package with the correct npm dist-tag and provenance.
-4. Publishes the GitHub Release after npm succeeds.
+For prereleases, use `pnpm release:beta` or `pnpm release:canary`. They publish with the matching npm dist-tag.
 
-For prereleases, use `npm run release:beta` or `npm run release:canary`.
+## Recover a pushed but unpublished version
 
-If a release is interrupted, do not bump again. Dispatch `publish.yml` from `main`; it skips an npm version that is already present and completes the matching draft GitHub Release.
+Do not create another version. Publish the exact tagged source from a clean worktree so the registry artifact matches the Git tag:
 
-The trusted-publisher requirements are maintained in the [official npm documentation](https://docs.npmjs.com/trusted-publishers/).
+```bash
+git worktree add ../viby-sdk-release v0.2.2
+cd ../viby-sdk-release
+npm ci
+npm publish --access public --tag latest --provenance=false
+```
+
+Replace `v0.2.2` with the interrupted tag. The explicit provenance override is needed for tags created before Viby switched from CI publishing to local publishing. Remove the temporary worktree after confirming the version on npm. npm versions are immutable, so always verify the tag and package version before publishing.
