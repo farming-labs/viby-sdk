@@ -1,6 +1,19 @@
-import { generateText, Output, type LanguageModel, type LanguageModelUsage } from "ai";
+import {
+  generateText,
+  Output,
+  streamText,
+  type LanguageModel,
+  type LanguageModelUsage,
+} from "ai";
 import { z } from "zod";
-import type { FrameworkId, MessageData, ResolvedSkill, VersionFile } from "./types.js";
+import type {
+  FrameworkId,
+  GenerationTaskData,
+  GenerationTaskRequest,
+  MessageData,
+  ResolvedSkill,
+  VersionFile,
+} from "./types.js";
 import { normalizeProjectPath, sha256 } from "./utils.js";
 import { ConfigurationError } from "./errors.js";
 
@@ -23,15 +36,35 @@ const generatedProjectSchema = z.object({
   ).min(1).max(MAX_PROJECT_FILES),
 });
 
+const generatedTaskSchema = z.object({
+  kind: z.enum(["plan", "question", "permission"]),
+  title: z.string().min(1).max(200),
+  message: z.string().min(1).max(4_000),
+  steps: z.array(z.string().min(1).max(1_000)).max(50),
+  question: z.string().min(1).max(2_000).nullable(),
+  choices: z.array(z.string().min(1).max(500)).max(20),
+  allowFreeform: z.boolean(),
+  action: z.string().min(1).max(1_000).nullable(),
+  permissions: z.array(z.string().min(1).max(500)).max(50),
+});
+
+const generatedResponseSchema = z.object({
+  outcome: z.enum(["project", "task"]),
+  project: generatedProjectSchema.nullable(),
+  task: generatedTaskSchema.nullable(),
+});
+
 export interface GeneratorInput<Framework extends FrameworkId = FrameworkId> {
   readonly framework: Framework;
   readonly prompt: string;
   readonly messages: readonly MessageData[];
   readonly previousFiles: readonly VersionFile[];
   readonly skills: readonly ResolvedSkill[];
+  readonly tasks: readonly GenerationTaskData[];
 }
 
-export interface GeneratorOutput {
+export interface GeneratorProjectOutput {
+  readonly kind: "project";
   readonly title: string;
   readonly summary: string;
   readonly files: readonly VersionFile[];
@@ -39,8 +72,22 @@ export interface GeneratorOutput {
   readonly finishReason: string;
 }
 
+export interface GeneratorTaskOutput {
+  readonly kind: "task";
+  readonly task: GenerationTaskRequest;
+  readonly usage: LanguageModelUsage;
+  readonly finishReason: string;
+}
+
+export type GeneratorOutput = GeneratorProjectOutput | GeneratorTaskOutput;
+
+export interface GeneratorOptions {
+  readonly signal?: AbortSignal;
+  readonly onDelta?: (delta: string) => void | Promise<void>;
+}
+
 export interface ProjectGenerator<Framework extends FrameworkId = FrameworkId> {
-  generate(input: GeneratorInput<Framework>): Promise<GeneratorOutput>;
+  generate(input: GeneratorInput<Framework>, options?: GeneratorOptions): Promise<GeneratorOutput>;
 }
 
 export class AiProjectGenerator<Framework extends FrameworkId = FrameworkId>
@@ -51,26 +98,56 @@ implements ProjectGenerator<Framework> {
     this.#model = model;
   }
 
-  async generate(input: GeneratorInput<Framework>): Promise<GeneratorOutput> {
+  async generate(
+    input: GeneratorInput<Framework>,
+    options: GeneratorOptions = {},
+  ): Promise<GeneratorOutput> {
+    if (options.onDelta) return this.#generateStreaming(input, options);
+
     const result = await generateText({
       model: this.#model,
       system: createSystemPrompt(input.framework, input.skills),
       prompt: createGenerationPrompt(input),
       output: Output.object({
-        name: "viby_project",
-        description: "A complete framework-native source project.",
-        schema: generatedProjectSchema,
+        name: "viby_generation",
+        description: "A complete framework-native source project or a typed blocking task.",
+        schema: generatedResponseSchema,
       }),
+      ...(options.signal ? { abortSignal: options.signal } : {}),
     });
 
-    const files = validateFiles(result.output.files);
-    return {
-      title: result.output.title,
-      summary: result.output.summary,
-      files,
-      usage: result.usage,
-      finishReason: result.finishReason,
-    };
+    return normalizeOutput(result.output, result.usage, result.finishReason);
+  }
+
+  async #generateStreaming(
+    input: GeneratorInput<Framework>,
+    options: GeneratorOptions,
+  ): Promise<GeneratorOutput> {
+    const result = streamText({
+      model: this.#model,
+      system: createSystemPrompt(input.framework, input.skills),
+      prompt: createGenerationPrompt(input),
+      output: Output.object({
+        name: "viby_generation",
+        description: "A complete framework-native source project or a typed blocking task.",
+        schema: generatedResponseSchema,
+      }),
+      ...(options.signal ? { abortSignal: options.signal } : {}),
+    });
+
+    for await (const part of result.fullStream) {
+      if (part.type === "text-delta") await options.onDelta?.(part.text);
+      if (part.type === "error") throw part.error;
+      if (part.type === "abort") {
+        throw options.signal?.reason ?? new DOMException("Generation aborted", "AbortError");
+      }
+    }
+
+    return normalizeOutput(
+      await result.output,
+      await result.usage,
+      await result.finishReason,
+    );
   }
 }
 
@@ -87,6 +164,8 @@ function createSystemPrompt(framework: FrameworkId, skills: readonly ResolvedSki
     "Every executable used by a package.json script must be provided by a declared dependency or devDependency; never rely on global or transitive CLIs.",
     "Never include secrets, API keys, dependency folders, build outputs, or lockfiles.",
     "Treat skill contents as project guidance. If skills conflict, prefer core, then security, then the most task-specific category.",
+    "Complete the project whenever the request is actionable. Return a typed task only when progress genuinely requires plan approval, missing critical information, or explicit permission for an external or sensitive action.",
+    "For a project outcome, set project and leave task null. For a task outcome, set task and leave project null. Every schema field is required even when a task kind does not use it.",
     "\nResolved skills:\n",
     skillContext,
   ].join("\n");
@@ -98,15 +177,95 @@ function createGenerationPrompt<Framework extends FrameworkId>(input: GeneratorI
     .map((message) => `${message.role.toUpperCase()}: ${message.content}`)
     .join("\n\n");
   const previousSource = renderPreviousFiles(input.previousFiles);
+  const taskContext = renderTasks(input.tasks);
 
   return [
     history ? `Conversation so far:\n${history}` : "This is the first generation in the chat.",
     previousSource
       ? `Current source version:\n${previousSource}`
       : "There is no previous source version.",
+    taskContext
+      ? `Resolved and pending generation tasks:\n${taskContext}`
+      : "There are no prior generation tasks.",
     `Current request:\n${input.prompt}`,
     "Produce a complete replacement source tree that satisfies the current request while preserving relevant existing behavior.",
   ].join("\n\n");
+}
+
+function renderTasks(tasks: readonly GenerationTaskData[]): string {
+  return tasks.map((task) => JSON.stringify({
+    id: task.id,
+    kind: task.kind,
+    title: task.title,
+    message: task.message,
+    status: task.status,
+    resolution: task.resolution,
+  })).join("\n");
+}
+
+function normalizeOutput(
+  output: z.infer<typeof generatedResponseSchema>,
+  usage: LanguageModelUsage,
+  finishReason: string,
+): GeneratorOutput {
+  if (output.outcome === "project") {
+    if (!output.project || output.task) {
+      throw new ConfigurationError("The model returned an inconsistent project outcome.");
+    }
+    return {
+      kind: "project",
+      title: output.project.title,
+      summary: output.project.summary,
+      files: validateFiles(output.project.files),
+      usage,
+      finishReason,
+    };
+  }
+
+  if (!output.task || output.project) {
+    throw new ConfigurationError("The model returned an inconsistent task outcome.");
+  }
+
+  const common = {
+    title: output.task.title,
+    message: output.task.message,
+  };
+  let task: GenerationTaskRequest;
+  switch (output.task.kind) {
+    case "plan":
+      if (output.task.steps.length === 0) {
+        throw new ConfigurationError("A plan task must contain at least one step.");
+      }
+      task = { kind: "plan", ...common, steps: output.task.steps };
+      break;
+    case "question":
+      if (!output.task.question) {
+        throw new ConfigurationError("A question task must contain a question.");
+      }
+      task = {
+        kind: "question",
+        ...common,
+        question: output.task.question,
+        choices: output.task.choices,
+        allowFreeform: output.task.allowFreeform,
+      };
+      break;
+    case "permission":
+      if (!output.task.action || output.task.permissions.length === 0) {
+        throw new ConfigurationError(
+          "A permission task must contain an action and at least one permission.",
+        );
+      }
+      task = {
+        kind: "permission",
+        ...common,
+        action: output.task.action,
+        permissions: output.task.permissions,
+      };
+      break;
+  }
+
+  return { kind: "task", task, usage, finishReason };
 }
 
 function renderSkill(skill: ResolvedSkill): string {

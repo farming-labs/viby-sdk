@@ -4,7 +4,7 @@ This example runs the complete Viby v1 path:
 
 1. configure Farm, an OpenAI model, and a local product skill;
 2. create a tenant- and user-scoped chat;
-3. generate a complete source project;
+3. start an asynchronous generation and consume its durable event stream;
 4. optionally iterate from the generated version;
 5. re-open the chat and version from Postgres;
 6. download the persisted framework-native source as a ZIP.
@@ -40,4 +40,4 @@ VIBY_ITERATION_PROMPT="Tighten the type scale and add a complete submitting stat
 npm run iterate
 ```
 
-The script prints persisted IDs and counts, then writes the source ZIP under `./output`. It never prints the API key.
+The script prints persisted IDs and counts, including the number of durable generation events, then writes the source ZIP under `./output`. It never prints the API key.

@@ -1,6 +1,6 @@
 # Viby SDK
 
-`@viby/sdk` is a framework-agnostic TypeScript SDK for building persistent, skill-guided vibe coding products. Your application owns authentication, model credentials, and Postgres. Viby owns chats, generation attempts, immutable source versions, iteration, and source downloads.
+`@viby/sdk` is a framework-agnostic TypeScript SDK for building persistent, skill-guided vibe coding products. Your application owns authentication, model credentials, and Postgres. Viby owns chats, durable generation attempts and events, typed tasks, immutable source versions, iteration, and source downloads.
 
 ## Install
 
@@ -71,6 +71,78 @@ version = await version.iterate({
 
 Every generation attempt is stored, including failures and token usage. Successful attempts create immutable versions with a parent relationship and complete source snapshot.
 
+## Run and stream asynchronously
+
+`chat.start` persists a queued generation and its first attempt before model execution begins, then immediately returns an addressable generation handle:
+
+```ts
+const generation = await chat.start({
+  prompt: "Build a polished SaaS analytics dashboard",
+});
+
+for await (const event of generation.stream()) {
+  if (event.type === "output.delta") {
+    sendToBrowser(event);
+  }
+}
+
+const outcome = await generation.wait();
+if (outcome.status === "succeeded") {
+  const version = outcome.version;
+}
+```
+
+Events are committed to Postgres with monotonically increasing string cursors. A reconnecting client can continue without replaying acknowledged events:
+
+```ts
+const page = await generation.events({ after: lastCursor });
+
+for await (const event of generation.stream({ after: lastCursor })) {
+  lastCursor = event.cursor;
+}
+```
+
+Stopping an event iterator only disconnects that subscriber. Explicitly cancel the underlying model call with:
+
+```ts
+await generation.cancel("Stopped from the product UI");
+```
+
+Failures and interrupted processes retain their original attempts. Recovery creates a new attempt on the same generation:
+
+```ts
+const generation = await userViby.generations.get(generationId);
+
+await generation.retry();  // failed or cancelled generation
+await generation.resume(); // interrupted, failed, or cancelled generation
+```
+
+`chat.generate` and `version.iterate` remain synchronous convenience methods built on this durable lifecycle.
+
+## Resolve typed tasks
+
+A generation can pause when it genuinely requires plan approval, critical information, or permission for a sensitive action. `wait` returns the typed pending task instead of losing the model state:
+
+```ts
+const outcome = await generation.wait();
+
+if (outcome.status === "waiting") {
+  const task = outcome.tasks[0];
+
+  if (task?.kind === "question") {
+    await generation.resolve({
+      taskId: task.id,
+      resolution: {
+        kind: "question",
+        answer: "Use our existing Postgres database",
+      },
+    });
+  }
+}
+```
+
+Plan resolutions use `approve` or `revise`; permission resolutions use `allow` or `deny`. Resolution starts a new durable attempt, and the complete task history remains available through `generation.tasks()`.
+
 ## Download framework source
 
 ```ts
@@ -126,7 +198,11 @@ Included now:
 - tenant- and user-scoped Postgres persistence
 - Viby-owned migrations
 - chats and messages
-- generation attempts and usage
+- asynchronous generation handles
+- resumable event cursors and streamed output deltas
+- cancellation, retry, and process recovery
+- immutable attempt history and usage
+- typed plan, question, and permission tasks
 - immutable versions and iteration
 - raw source ZIP downloads
 

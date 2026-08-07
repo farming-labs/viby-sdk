@@ -28,7 +28,7 @@ This is the complete top-level surface exported by `createClient()` in `v0-sdk@0
 | `rateLimits` | `find` | hosted-account concern; the embedding app owns rate limits |
 | `user` | `get`, `getBilling`, `getPlan`, `getScopes` | hosted-account concern; the embedding app owns identity and billing |
 | `reports` | `getUsage`, `getAIUsage`, `getUserActivity` | app-owned reporting; Viby persists the underlying per-generation usage |
-| package utility | `parseStreamingResponse` | planned streaming event decoder when Viby adds `chat.stream` |
+| package utility | `parseStreamingResponse` | no decoder required; Viby returns typed durable events from `generation.stream` |
 
 Within chat requests, the audited inputs also include privacy, metadata, attachments, per-request system prompts, model/thinking/image options, response mode, design-system ID, remote/memory/project skills, integration/tool IDs, and typed task resolutions. Viby keeps portable generation inputs (prompt, model, skills, attachments, metadata, response mode, and task state) in the parity target and excludes provider connection identifiers.
 
@@ -54,11 +54,12 @@ Within chat requests, the audited inputs also include privacy, metadata, attachm
 | Text and URL attachments | `attachments` | proposed `attachments` on `generate` | Planned | attachment metadata and a content snapshot when allowed |
 | Model and reasoning options | `modelConfiguration` | AI SDK model configured on `createViby` | Partial | provider, model ID, usage, finish state |
 | Sync generation | `responseMode: "sync"` | awaited `chat.generate` | Shipped | complete durable attempt |
-| Async generation | `responseMode: "async"` | proposed `chat.start` and `generation.wait` | Planned | queued/running/final attempt state |
-| Streaming generation events | `responseMode: "experimental_stream"` | proposed `chat.stream` | Planned | canonical final state plus resumable event cursor |
-| Stop a running generation | `chats.stop` | proposed `generation.cancel` | Planned | cancellation status and timestamp |
-| Resume an interrupted generation | `chats.resume` | proposed `generation.resume` | Planned | new attempt linked to interrupted attempt |
-| Resolve plans, questions, or permission tasks | `chats.resolveTask` | proposed typed `generation.resolve` | Planned | task and resolution records |
+| Async generation | `responseMode: "async"` | `chat.start` and `generation.wait` | Shipped | queued/running/final logical state plus immutable attempts |
+| Streaming generation events | `responseMode: "experimental_stream"` | `generation.stream({ after })` | Shipped | canonical state, ordered durable events, and resumable cursor |
+| Stop a running generation | `chats.stop` | `generation.cancel` | Shipped | cancellation state, event, timestamp, and local model abort |
+| Resume an interrupted generation | `chats.resume` | `generation.resume` | Shipped | new attempt linked by generation ID; prior active attempt becomes interrupted |
+| Retry a failed generation | implicit new message/retry | `generation.retry` | Shipped | new immutable attempt on the same logical generation |
+| Resolve plans, questions, or permission tasks | `chats.resolveTask` | typed `generation.resolve` | Shipped | discriminated task and resolution records plus continuation attempt |
 
 Viby does not copy v0's hosted privacy values, `webUrl`, `apiUrl`, `demoUrl`, or screenshot URLs. Authentication, authorization, sharing routes, and product URLs belong to the application. Preview URLs only become meaningful when a future execution or deployment adapter is configured.
 
@@ -71,7 +72,7 @@ Viby does not copy v0's hosted privacy values, `webUrl`, `apiUrl`, `demoUrl`, or
 | Get one message | `chats.getMessage` | proposed `chat.getMessage` | Planned | reads message |
 | User and assistant roles | message resource | `MessageData.role` | Shipped | role and content |
 | Parent message/thread linkage | `parentId` | version parent lineage | Partial | version parent ID; message parent ID is planned |
-| Finish reason and rich generation state | `finishReason`, experimental task content | generation record and assistant summary | Partial | generation finish reason exists in SQL; richer typed events are planned |
+| Finish reason and rich generation state | `finishReason`, experimental task content | generation attempts, events, and typed tasks | Shipped | attempt finish reason, usage, ordered events, and task records |
 | Attachment metadata | message attachments | proposed attachment resource | Planned | scoped attachment rows |
 
 ## Versions, files, and artifacts
@@ -122,7 +123,7 @@ Those capabilities can later live behind explicit adapters. They must not change
 Every future parity feature follows these rules:
 
 1. Every row is constrained by both `tenantId` and `userId`.
-2. A generation attempt is durable before a model request begins, and failure/cancellation is durable afterward.
+2. The logical generation and immutable attempt are durable before a model request begins; every transition, failure, and cancellation has an ordered durable event.
 3. Successful source changes create immutable full snapshots with parent lineage. Editing, deleting, and restoring files never mutate historical versions.
 4. Exact resolved skills are content-addressed and linked to the generation that used them.
 5. Model credentials and provider access tokens are never written to the Viby schema.

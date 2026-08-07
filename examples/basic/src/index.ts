@@ -31,13 +31,25 @@ try {
   });
 
   const chat = await userViby.chats.create({ title: "Signal waitlist" });
-  let version = await chat.generate({
+  const initialGeneration = await chat.start({
     prompt: [
       "Build a compact, polished waitlist page for Signal, a privacy-first analytics product.",
       "Include a concise hero, three proof points, an email form with validation feedback,",
       "and a quiet footer. Return a complete runnable Farm project.",
     ].join(" "),
   });
+  let eventCount = 0;
+  for await (const event of initialGeneration.stream()) {
+    eventCount += 1;
+    if (event.type === "task.created") {
+      console.log(`Generation is waiting for ${event.data.task.kind}: ${event.data.task.title}`);
+    }
+  }
+  const outcome = await initialGeneration.wait();
+  if (outcome.status !== "succeeded") {
+    throw new Error(`Generation finished with ${outcome.status}.`);
+  }
+  let version = outcome.version;
 
   const iterationPrompt = process.env.VIBY_ITERATION_PROMPT?.trim();
   if (iterationPrompt) {
@@ -67,6 +79,7 @@ try {
     versions: versions.length,
     files: files.length,
     generationStatus: generation.status,
+    durableEvents: eventCount,
     totalTokens: generation.totalTokens,
     sourceZip: artifactPath,
     previewUrl: null,
