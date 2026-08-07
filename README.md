@@ -223,7 +223,7 @@ npm run test:package
 
 Run the [persistent OpenAI example](./examples/basic) to exercise chat creation, generation, optional iteration, Postgres reload, and source download end to end.
 
-The CI workflow tests supported Node releases, the compiled package and CLI, the example's public types, and a durable lifecycle against PostgreSQL. See the [npm publishing guide](./docs/publishing.md) for the first release and trusted-publisher setup.
+The CI workflow tests supported Node releases, the compiled package and CLI, the example's public types, and a durable lifecycle against PostgreSQL. See [RELEASING.md](./RELEASING.md) for versioning commands and the [npm publishing guide](./docs/publishing.md) for trusted-publisher setup.
 
 ## License
 

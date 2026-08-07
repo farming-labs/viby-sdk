@@ -1,14 +1,16 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { appendFile, readFile } from "node:fs/promises";
+import { getReleaseVersion } from "./release-version.mjs";
 
 const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
-const expectedTag = `v${packageJson.version}`;
+const release = getReleaseVersion(packageJson.version);
+const allowPublished = process.argv.includes("--allow-published");
 
-if (process.env.GITHUB_EVENT_NAME === "release") {
+if (process.env.GITHUB_EVENT_NAME === "release" || process.env.GITHUB_REF_TYPE === "tag") {
   assert.equal(
     process.env.GITHUB_REF_NAME,
-    expectedTag,
-    `GitHub release tag must be ${expectedTag}`,
+    release.tag,
+    `Git tag must be ${release.tag}`,
   );
 }
 
@@ -18,11 +20,31 @@ const response = await fetch(
   { headers: { accept: "application/json" } },
 );
 
-if (response.ok) {
+const published = response.ok;
+if (published && !allowPublished) {
   throw new Error(`${packageJson.name}@${packageJson.version} is already published.`);
 }
 if (response.status !== 404) {
-  throw new Error(`npm registry returned ${response.status} while checking the release version.`);
+  if (!response.ok) {
+    throw new Error(`npm registry returned ${response.status} while checking the release version.`);
+  }
 }
 
-console.log(`${packageJson.name}@${packageJson.version} is available for ${expectedTag}.`);
+if (process.env.GITHUB_OUTPUT) {
+  await appendFile(
+    process.env.GITHUB_OUTPUT,
+    [
+      `version=${packageJson.version}`,
+      `tag=${release.tag}`,
+      `npm_tag=${release.npmTag}`,
+      `prerelease=${release.prerelease ? "true" : "false"}`,
+      `published=${published ? "true" : "false"}`,
+      "",
+    ].join("\n"),
+  );
+}
+
+const availability = published ? "is already published" : "is available";
+console.log(
+  `${packageJson.name}@${packageJson.version} ${availability} for ${release.tag} (${release.npmTag}).`,
+);

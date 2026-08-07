@@ -15,7 +15,7 @@ npm publish --access public
 
 The package's `prepublishOnly` hook runs the complete release check before uploading anything.
 
-Alternatively, add a short-lived granular npm token as the `NPM_TOKEN` secret in the GitHub `npm` environment, dispatch `publish.yml` from `main`, and delete the secret immediately after the first release. Later releases should use OIDC instead of a long-lived token.
+Alternatively, add a short-lived granular npm token as the `NPM_TOKEN` secret in the GitHub `npm` environment, run the Bumpp release flow, and delete the secret immediately after the first release. Later releases should use OIDC instead of a long-lived token.
 
 ## Configure trusted publishing
 
@@ -31,10 +31,21 @@ The workflow uses a GitHub-hosted runner, `id-token: write`, Node 24, and npm 11
 
 ## Publish a release
 
-1. Update the version in `package.json` and `package-lock.json`.
-2. Merge a PR whose CI checks pass.
-3. Publish a GitHub release with a tag matching `v<package version>`, such as `v0.2.0`.
+Start from a clean, up-to-date `main` branch and run:
 
-The release guard rejects mismatched tags and versions that already exist on npm. `publish.yml` can also be dispatched manually from `main` for recovery.
+```bash
+npm run release
+```
+
+Bumpp verifies the current branch is `main`, prompts for the next version, updates both release manifests, runs `npm run release:check`, creates `chore: release v<version>`, tags `v<version>`, and pushes both. The tag starts `publish.yml`, which:
+
+1. Validates that the tag and package version match.
+2. Prepares a draft GitHub Release.
+3. Publishes the package with the correct npm dist-tag and provenance.
+4. Publishes the GitHub Release after npm succeeds.
+
+For prereleases, use `npm run release:beta` or `npm run release:canary`.
+
+If a release is interrupted, do not bump again. Dispatch `publish.yml` from `main`; it skips an npm version that is already present and completes the matching draft GitHub Release.
 
 The trusted-publisher requirements are maintained in the [official npm documentation](https://docs.npmjs.com/trusted-publishers/).
