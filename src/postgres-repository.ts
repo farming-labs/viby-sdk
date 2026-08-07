@@ -24,6 +24,8 @@ import type {
   CreateAttemptRecord,
   CreatedGeneration,
   CreateGenerationRecord,
+  ImportedChat,
+  ImportChatRecord,
   PauseGenerationRecord,
   Repository,
   ResolveGenerationTaskRecord,
@@ -115,9 +117,10 @@ interface SkillSnapshotRow {
 interface VersionRow {
   id: string;
   chat_id: string;
-  generation_id: string;
+  generation_id: string | null;
   parent_version_id: string | null;
   number: number;
+  origin: VersionData["origin"];
   framework: string;
   title: string;
   summary: string;
@@ -183,6 +186,52 @@ export class PostgresRepository implements Repository {
     `;
     if (!row) throw new Error("Postgres did not return the created chat.");
     return mapChat<Framework>(row);
+  }
+
+  async importChat<Framework extends FrameworkId>(
+    scope: UserScope,
+    input: ImportChatRecord<Framework>,
+  ): Promise<ImportedChat<Framework>> {
+    await this.assertReady();
+    const result = await this.#sql.begin(async (sql) => {
+      const [chat] = await sql<ChatRow[]>`
+        INSERT INTO viby.chats (id, tenant_id, user_id, title, framework)
+        VALUES (
+          ${input.chatId}, ${scope.tenantId}, ${scope.userId}, ${input.title}, ${input.framework}
+        )
+        RETURNING *
+      `;
+      if (!chat) throw new Error("Postgres did not return the imported chat.");
+
+      const [version] = await sql<VersionRow[]>`
+        INSERT INTO viby.versions (
+          id, tenant_id, user_id, chat_id, generation_id, parent_version_id,
+          number, origin, framework, title, summary
+        ) VALUES (
+          ${input.versionId}, ${scope.tenantId}, ${scope.userId}, ${input.chatId}, NULL, NULL,
+          1, 'imported', ${input.framework}, ${input.title}, ${input.summary}
+        )
+        RETURNING *
+      `;
+      if (!version) throw new Error("Postgres did not return the imported version.");
+
+      for (const file of input.files) {
+        await sql`
+          INSERT INTO viby.version_files (
+            id, tenant_id, user_id, version_id, path, content, media_type, size, checksum
+          ) VALUES (
+            ${createId()}, ${scope.tenantId}, ${scope.userId}, ${input.versionId}, ${file.path},
+            ${file.content}, ${file.mediaType}, ${file.size}, ${file.checksum}
+          )
+        `;
+      }
+      return { chat, version };
+    });
+
+    return {
+      chat: mapChat<Framework>(result.chat),
+      version: mapVersion<Framework>(result.version),
+    };
   }
 
   async getChat<Framework extends FrameworkId>(
@@ -1116,6 +1165,7 @@ function mapVersion<Framework extends FrameworkId>(row: VersionRow): VersionData
     generationId: row.generation_id,
     parentVersionId: row.parent_version_id,
     number: row.number,
+    origin: row.origin,
     framework: row.framework as Framework,
     title: row.title,
     summary: row.summary,

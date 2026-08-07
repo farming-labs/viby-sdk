@@ -52,6 +52,28 @@ export interface CreateChatInput {
   readonly title?: string;
 }
 
+export interface SourceFileInput {
+  readonly path: string;
+  readonly content: string;
+  readonly mediaType?: string;
+}
+
+export type ImportProjectSource =
+  | {
+      readonly type: "files";
+      readonly files: readonly SourceFileInput[];
+    }
+  | {
+      readonly type: "zip";
+      readonly bytes: Uint8Array;
+    };
+
+export interface ImportProjectInput {
+  readonly title?: string;
+  readonly summary?: string;
+  readonly source: ImportProjectSource;
+}
+
 export interface GenerateInput {
   readonly prompt: string;
 }
@@ -282,14 +304,17 @@ export interface GenerationStreamOptions {
 export interface VersionData<Framework extends FrameworkId = FrameworkId> {
   readonly id: string;
   readonly chatId: string;
-  readonly generationId: string;
+  readonly generationId: string | null;
   readonly parentVersionId: string | null;
   readonly number: number;
+  readonly origin: VersionOrigin;
   readonly framework: Framework;
   readonly title: string;
   readonly summary: string;
   readonly createdAt: Date;
 }
+
+export type VersionOrigin = "generated" | "imported" | "edited" | "forked" | "restored";
 
 export interface VersionFile {
   readonly path: string;

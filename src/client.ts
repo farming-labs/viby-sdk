@@ -3,6 +3,7 @@ import type {
   CreateChatInput,
   FrameworkId,
   GenerateInput,
+  ImportProjectInput,
   GenerationAttemptData,
   GenerationData,
   GenerationEvent,
@@ -40,6 +41,7 @@ import {
   errorMessage,
 } from "./utils.js";
 import { createSourceDownload, type DownloadArtifact } from "./download.js";
+import { importProjectFiles } from "./project-import.js";
 
 const DEFAULT_POLL_INTERVAL_MS = 100;
 const DEFAULT_EVENT_LIMIT = 100;
@@ -189,16 +191,37 @@ export class ChatCollection<Framework extends FrameworkId = FrameworkId> {
   }
 
   async create(input: CreateChatInput = {}): Promise<Chat<Framework>> {
-    const title = input.title?.trim() || "Untitled";
-    if (title.length > 200) {
-      throw new ConfigurationError("A chat title cannot exceed 200 characters.");
-    }
+    const title = normalizeChatTitle(input.title);
     const data = await this.#dependencies.repository.createChat(this.#dependencies.scope, {
       id: createId(),
       title,
       framework: this.#dependencies.framework,
     });
     return new Chat(data, this.#dependencies);
+  }
+
+  async import(input: ImportProjectInput): Promise<Chat<Framework>> {
+    if (!input || !input.source) {
+      throw new ConfigurationError("Project import requires a files or ZIP source.");
+    }
+    const title = normalizeChatTitle(input.title);
+    const summary = input.summary?.trim() || "Imported project source.";
+    if (summary.length > 2_000) {
+      throw new ConfigurationError("An import summary cannot exceed 2,000 characters.");
+    }
+    const files = importProjectFiles(input.source);
+    const imported = await this.#dependencies.repository.importChat(
+      this.#dependencies.scope,
+      {
+        chatId: createId(),
+        versionId: createId(),
+        title,
+        summary,
+        framework: this.#dependencies.framework,
+        files,
+      },
+    );
+    return new Chat(imported.chat, this.#dependencies);
   }
 
   async get(id: string): Promise<Chat<Framework>> {
@@ -539,9 +562,10 @@ export class Version<Framework extends FrameworkId = FrameworkId> {
 
   get id(): string { return this.#data.id; }
   get chatId(): string { return this.#data.chatId; }
-  get generationId(): string { return this.#data.generationId; }
+  get generationId(): string | null { return this.#data.generationId; }
   get parentVersionId(): string | null { return this.#data.parentVersionId; }
   get number(): number { return this.#data.number; }
+  get origin(): VersionData["origin"] { return this.#data.origin; }
   get framework(): Framework { return this.#data.framework; }
   get title(): string { return this.#data.title; }
   get summary(): string { return this.#data.summary; }
@@ -569,7 +593,8 @@ export class Version<Framework extends FrameworkId = FrameworkId> {
     return this.#dependencies.repository.getVersionFiles(this.#dependencies.scope, this.id);
   }
 
-  async generation(): Promise<GenerationData> {
+  async generation(): Promise<GenerationData | null> {
+    if (!this.generationId) return null;
     const generation = await this.#dependencies.repository.getGeneration(
       this.#dependencies.scope,
       this.generationId,
@@ -581,6 +606,14 @@ export class Version<Framework extends FrameworkId = FrameworkId> {
   async download(): Promise<DownloadArtifact> {
     return createSourceDownload(this.title, await this.files());
   }
+}
+
+function normalizeChatTitle(value: string | undefined): string {
+  const title = value?.trim() || "Untitled";
+  if (title.length > 200) {
+    throw new ConfigurationError("A chat title cannot exceed 200 characters.");
+  }
+  return title;
 }
 
 interface RunnerDependencies<Framework extends FrameworkId> {

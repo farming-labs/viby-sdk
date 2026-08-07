@@ -69,6 +69,27 @@ version = await version.iterate({
 });
 ```
 
+## Import an existing project
+
+Create a durable chat and first immutable version directly from UTF-8 source files or ZIP bytes. Importing never invokes the model.
+
+```ts
+const imported = await userViby.chats.import({
+  title: "Existing Farm app",
+  source: {
+    type: "files",
+    files: [
+      { path: "package.json", content: packageJson },
+      { path: "src/index.ts", content: source },
+    ],
+  },
+});
+
+const importedVersion = await imported.latestVersion();
+```
+
+Use `{ type: "zip", bytes }` for a ZIP archive. Imports reject unsafe paths, duplicate files, encrypted or oversized archives, symbolic links, binary content, and ZIP bombs before persistence.
+
 Every generation attempt is stored, including failures and token usage. Successful attempts create immutable versions with a parent relationship and complete source snapshot.
 
 ## Run and stream asynchronously

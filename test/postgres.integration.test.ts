@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { test } from "node:test";
 import type { LanguageModel, LanguageModelUsage } from "ai";
-import { strFromU8, unzipSync } from "fflate";
+import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
 import { createVibyWithDependencies } from "../src/client.js";
 import type { GeneratorInput, GeneratorOutput, ProjectGenerator } from "../src/generator.js";
 import { migrateDatabase } from "../src/migrations.js";
@@ -107,6 +107,23 @@ test("persists a durable generation, iteration, events, and download in Postgres
     const artifact = await persistedVersion.download();
     const files = unzipSync(artifact.bytes);
     assert.equal(strFromU8(files["src/index.ts"]!), "export const version = 2;\n");
+
+    const importedChat = await user.chats.import({
+      title: "Imported Postgres project",
+      source: {
+        type: "zip",
+        bytes: zipSync({
+          "package.json": strToU8('{"name":"postgres-import"}\n'),
+          "src/main.ts": strToU8("export const imported = true;\n"),
+        }),
+      },
+    });
+    const importedVersion = await importedChat.latestVersion();
+    assert.ok(importedVersion);
+    assert.equal(importedVersion.origin, "imported");
+    assert.equal(importedVersion.generationId, null);
+    assert.equal(await importedVersion.generation(), null);
+    assert.equal((await importedVersion.files()).length, 2);
   } finally {
     await viby.close();
   }
