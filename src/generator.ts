@@ -16,7 +16,9 @@ const generatedProjectSchema = z.object({
     z.object({
       path: z.string().min(1).max(500),
       content: z.string(),
-      mediaType: z.string().min(1).max(200).optional(),
+      // Structured Outputs requires every property to be required. `null` keeps
+      // media-type inference available without producing an optional schema key.
+      mediaType: z.string().min(1).max(200).nullable(),
     }),
   ).min(1).max(MAX_PROJECT_FILES),
 });
@@ -82,6 +84,7 @@ function createSystemPrompt(framework: FrameworkId, skills: readonly ResolvedSki
     `Generate only a ${framework} project and follow that framework's native conventions.`,
     "Return the entire runnable source tree, not patches or prose-only answers.",
     "Include package.json, framework configuration, application source, complete interaction states, and a concise README.",
+    "Every executable used by a package.json script must be provided by a declared dependency or devDependency; never rely on global or transitive CLIs.",
     "Never include secrets, API keys, dependency folders, build outputs, or lockfiles.",
     "Treat skill contents as project guidance. If skills conflict, prefer core, then security, then the most task-specific category.",
     "\nResolved skills:\n",
@@ -127,7 +130,7 @@ function renderPreviousFiles(files: readonly VersionFile[]): string {
 }
 
 function validateFiles(
-  files: ReadonlyArray<{ path: string; content: string; mediaType?: string | undefined }>,
+  files: ReadonlyArray<{ path: string; content: string; mediaType: string | null }>,
 ): VersionFile[] {
   const paths = new Set<string>();
   const normalized: VersionFile[] = [];

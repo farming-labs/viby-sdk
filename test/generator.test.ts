@@ -31,8 +31,16 @@ test("generates and validates a complete structured source project through AI SD
     title: "Farm dashboard",
     summary: "A complete dashboard.",
     files: [
-      { path: "package.json", content: "{\"scripts\":{\"dev\":\"farm start\"}}" },
-      { path: "src/index.tsx", content: "export function App() { return null }" },
+      {
+        path: "package.json",
+        content: "{\"scripts\":{\"dev\":\"farm start\"}}",
+        mediaType: "application/json",
+      },
+      {
+        path: "src/index.tsx",
+        content: "export function App() { return null }",
+        mediaType: null,
+      },
     ],
   }));
 
@@ -46,6 +54,7 @@ test("generates and validates a complete structured source project through AI SD
 
   assert.equal(output.title, "Farm dashboard");
   assert.deepEqual(output.files.map((file) => file.path), ["package.json", "src/index.tsx"]);
+  assert.equal(output.files[1]?.mediaType, "text/javascript");
   assert.equal(output.usage.totalTokens, 36);
 });
 
@@ -53,7 +62,7 @@ test("rejects unsafe paths even when the model returns schema-valid JSON", async
   const generator = new AiProjectGenerator<"farm">(createMockModel({
     title: "Unsafe project",
     summary: "Should be rejected.",
-    files: [{ path: "../.env", content: "SECRET=value" }],
+    files: [{ path: "../.env", content: "SECRET=value", mediaType: null }],
   }));
 
   await assert.rejects(() => generator.generate({

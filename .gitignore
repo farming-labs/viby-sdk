@@ -5,4 +5,5 @@ coverage/
 .env.*
 !.env.example
 *.tgz
+examples/**/output/
 .DS_Store
