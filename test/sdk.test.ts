@@ -43,6 +43,7 @@ class FakeGenerator<Framework extends FrameworkId> implements ProjectGenerator<F
       checksum: sha256(content),
     }];
     return {
+      kind: "project",
       title: "Analytics dashboard",
       summary: `Generated version ${number}`,
       files,

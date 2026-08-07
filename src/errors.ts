@@ -42,6 +42,41 @@ export class GenerationError extends VibyError {
   }
 }
 
+export class GenerationCancelledError extends VibyError {
+  readonly generationId: string;
+
+  constructor(generationId: string, message = "Generation was cancelled.") {
+    super("generation_cancelled", message);
+    this.name = "GenerationCancelledError";
+    this.generationId = generationId;
+  }
+}
+
+export class GenerationStateError extends VibyError {
+  readonly generationId: string;
+
+  constructor(generationId: string, message: string) {
+    super("invalid_generation_state", message);
+    this.name = "GenerationStateError";
+    this.generationId = generationId;
+  }
+}
+
+export class GenerationTaskRequiredError extends VibyError {
+  readonly generationId: string;
+  readonly taskIds: readonly string[];
+
+  constructor(generationId: string, taskIds: readonly string[]) {
+    super(
+      "generation_task_required",
+      `Generation ${generationId} is waiting for ${taskIds.length} task resolution${taskIds.length === 1 ? "" : "s"}.`,
+    );
+    this.name = "GenerationTaskRequiredError";
+    this.generationId = generationId;
+    this.taskIds = taskIds;
+  }
+}
+
 export class SkillResolutionError extends VibyError {
   constructor(locator: string, message: string, options?: ErrorOptions) {
     super("skill_resolution_failed", `Could not resolve skill ${locator}: ${message}`, options);

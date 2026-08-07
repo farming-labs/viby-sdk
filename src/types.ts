@@ -58,6 +58,29 @@ export interface GenerateInput {
 
 export type IterateInput = GenerateInput;
 
+export type GenerationStatus =
+  | "queued"
+  | "running"
+  | "waiting"
+  | "succeeded"
+  | "failed"
+  | "cancelled";
+
+export type GenerationAttemptStatus =
+  | "queued"
+  | "running"
+  | "waiting"
+  | "succeeded"
+  | "failed"
+  | "cancelled"
+  | "interrupted";
+
+export type GenerationAttemptReason =
+  | "initial"
+  | "retry"
+  | "resume"
+  | "task_resolution";
+
 export interface ChatData<Framework extends FrameworkId = FrameworkId> {
   readonly id: string;
   readonly tenantId: string;
@@ -80,7 +103,11 @@ export interface MessageData {
 export interface GenerationData {
   readonly id: string;
   readonly chatId: string;
-  readonly status: "pending" | "succeeded" | "failed";
+  readonly baseVersionId: string | null;
+  readonly activeAttemptId: string;
+  readonly attemptCount: number;
+  readonly prompt: string;
+  readonly status: GenerationStatus;
   readonly modelProvider: string;
   readonly modelId: string;
   readonly inputTokens: number | null;
@@ -88,7 +115,168 @@ export interface GenerationData {
   readonly totalTokens: number | null;
   readonly error: string | null;
   readonly createdAt: Date;
+  readonly startedAt: Date | null;
   readonly completedAt: Date | null;
+}
+
+export interface GenerationAttemptData {
+  readonly id: string;
+  readonly generationId: string;
+  readonly number: number;
+  readonly reason: GenerationAttemptReason;
+  readonly status: GenerationAttemptStatus;
+  readonly modelProvider: string;
+  readonly modelId: string;
+  readonly inputTokens: number | null;
+  readonly outputTokens: number | null;
+  readonly totalTokens: number | null;
+  readonly finishReason: string | null;
+  readonly error: string | null;
+  readonly createdAt: Date;
+  readonly startedAt: Date | null;
+  readonly completedAt: Date | null;
+}
+
+export interface PlanTaskRequest {
+  readonly kind: "plan";
+  readonly title: string;
+  readonly message: string;
+  readonly steps: readonly string[];
+}
+
+export interface QuestionTaskRequest {
+  readonly kind: "question";
+  readonly title: string;
+  readonly message: string;
+  readonly question: string;
+  readonly choices: readonly string[];
+  readonly allowFreeform: boolean;
+}
+
+export interface PermissionTaskRequest {
+  readonly kind: "permission";
+  readonly title: string;
+  readonly message: string;
+  readonly action: string;
+  readonly permissions: readonly string[];
+}
+
+export type GenerationTaskRequest =
+  | PlanTaskRequest
+  | QuestionTaskRequest
+  | PermissionTaskRequest;
+
+export interface PlanTaskResolution {
+  readonly kind: "plan";
+  readonly decision: "approve" | "revise";
+  readonly feedback?: string;
+}
+
+export interface QuestionTaskResolution {
+  readonly kind: "question";
+  readonly answer: string;
+}
+
+export interface PermissionTaskResolution {
+  readonly kind: "permission";
+  readonly decision: "allow" | "deny";
+  readonly note?: string;
+}
+
+export type GenerationTaskResolution =
+  | PlanTaskResolution
+  | QuestionTaskResolution
+  | PermissionTaskResolution;
+
+export type GenerationTaskData = {
+  readonly id: string;
+  readonly generationId: string;
+  readonly attemptId: string;
+  readonly status: "pending" | "resolved";
+  readonly resolution: GenerationTaskResolution | null;
+  readonly createdAt: Date;
+  readonly resolvedAt: Date | null;
+} & GenerationTaskRequest;
+
+export type GenerationEventType =
+  | "generation.created"
+  | "attempt.queued"
+  | "attempt.started"
+  | "output.delta"
+  | "attempt.waiting"
+  | "task.created"
+  | "task.resolved"
+  | "attempt.interrupted"
+  | "attempt.succeeded"
+  | "attempt.failed"
+  | "attempt.cancelled"
+  | "generation.succeeded"
+  | "generation.failed"
+  | "generation.cancelled";
+
+export interface GenerationEventDataMap {
+  readonly "generation.created": { readonly prompt: string };
+  readonly "attempt.queued": {
+    readonly number: number;
+    readonly reason: GenerationAttemptReason;
+  };
+  readonly "attempt.started": {
+    readonly number: number;
+    readonly reason: GenerationAttemptReason;
+  };
+  readonly "output.delta": { readonly delta: string };
+  readonly "attempt.waiting": { readonly taskId: string };
+  readonly "task.created": { readonly task: GenerationTaskRequest & { readonly id: string } };
+  readonly "task.resolved": {
+    readonly taskId: string;
+    readonly resolution: GenerationTaskResolution;
+  };
+  readonly "attempt.interrupted": { readonly number: number };
+  readonly "attempt.succeeded": { readonly number: number; readonly versionId: string };
+  readonly "attempt.failed": { readonly number: number; readonly error: string };
+  readonly "attempt.cancelled": { readonly number: number; readonly reason: string };
+  readonly "generation.succeeded": { readonly versionId: string };
+  readonly "generation.failed": { readonly error: string };
+  readonly "generation.cancelled": { readonly reason: string };
+}
+
+export type GenerationEvent<
+  Type extends GenerationEventType = GenerationEventType,
+> = Type extends GenerationEventType
+  ? {
+      readonly cursor: string;
+      readonly generationId: string;
+      readonly attemptId: string | null;
+      readonly type: Type;
+      readonly data: GenerationEventDataMap[Type];
+      readonly createdAt: Date;
+    }
+  : never;
+
+export interface GenerationEventPage {
+  readonly events: readonly GenerationEvent[];
+  readonly nextCursor: string | null;
+}
+
+export interface ResolveGenerationTaskInput {
+  readonly taskId: string;
+  readonly resolution: GenerationTaskResolution;
+}
+
+export interface GenerationWaitOptions {
+  readonly pollIntervalMs?: number;
+  readonly signal?: AbortSignal;
+}
+
+export interface GenerationEventOptions {
+  readonly after?: string;
+  readonly limit?: number;
+}
+
+export interface GenerationStreamOptions {
+  readonly after?: string;
+  readonly pollIntervalMs?: number;
+  readonly signal?: AbortSignal;
 }
 
 export interface VersionData<Framework extends FrameworkId = FrameworkId> {

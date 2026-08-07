@@ -2,19 +2,38 @@ import postgres from "postgres";
 import type {
   ChatData,
   FrameworkId,
+  GenerationAttemptData,
+  GenerationAttemptReason,
+  GenerationAttemptStatus,
   GenerationData,
+  GenerationEvent,
+  GenerationEventType,
+  GenerationStatus,
+  GenerationTaskData,
+  GenerationTaskRequest,
+  GenerationTaskResolution,
   MessageData,
+  ResolvedSkill,
   UserScope,
   VersionData,
   VersionFile,
 } from "./types.js";
 import type {
+  AppendGenerationEventRecord,
   CompleteGenerationRecord,
+  CreateAttemptRecord,
+  CreatedGeneration,
   CreateGenerationRecord,
+  PauseGenerationRecord,
   Repository,
+  ResolveGenerationTaskRecord,
 } from "./repository.js";
 import { createId } from "./utils.js";
-import { DatabaseNotReadyError, NotFoundError } from "./errors.js";
+import {
+  DatabaseNotReadyError,
+  GenerationStateError,
+  NotFoundError,
+} from "./errors.js";
 
 interface ChatRow {
   id: string;
@@ -29,7 +48,11 @@ interface ChatRow {
 interface GenerationRow {
   id: string;
   chat_id: string;
-  status: "pending" | "succeeded" | "failed";
+  base_version_id: string | null;
+  active_attempt_id: string;
+  attempt_count: number;
+  prompt: string;
+  status: GenerationStatus;
   model_provider: string;
   model_id: string;
   input_tokens: number | null;
@@ -37,7 +60,56 @@ interface GenerationRow {
   total_tokens: number | null;
   error: string | null;
   created_at: Date;
+  started_at: Date | null;
   completed_at: Date | null;
+}
+
+interface GenerationAttemptRow {
+  id: string;
+  generation_id: string;
+  number: number;
+  reason: GenerationAttemptReason;
+  status: GenerationAttemptStatus;
+  model_provider: string;
+  model_id: string;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  total_tokens: number | null;
+  finish_reason: string | null;
+  error: string | null;
+  created_at: Date;
+  started_at: Date | null;
+  completed_at: Date | null;
+}
+
+interface GenerationEventRow {
+  cursor: string | number | bigint;
+  generation_id: string;
+  attempt_id: string | null;
+  type: GenerationEventType;
+  data: unknown;
+  created_at: Date;
+}
+
+interface GenerationTaskRow {
+  id: string;
+  generation_id: string;
+  attempt_id: string;
+  status: "pending" | "resolved";
+  payload: GenerationTaskRequest;
+  resolution: GenerationTaskResolution | null;
+  created_at: Date;
+  resolved_at: Date | null;
+}
+
+interface SkillSnapshotRow {
+  name: string;
+  description: string;
+  category: string;
+  source: "skills.sh" | "file";
+  locator: string;
+  content_hash: string;
+  files: ResolvedSkill["files"];
 }
 
 interface VersionRow {
@@ -85,7 +157,11 @@ export class PostgresRepository implements Repository {
   async assertReady(): Promise<void> {
     if (this.#ready) return;
     const [row] = await this.#sql<{ ready: boolean }[]>`
-      SELECT to_regclass('viby.chats') IS NOT NULL AS ready
+      SELECT
+        to_regclass('viby.chats') IS NOT NULL
+        AND to_regclass('viby.generation_attempts') IS NOT NULL
+        AND to_regclass('viby.generation_events') IS NOT NULL
+        AND to_regclass('viby.generation_tasks') IS NOT NULL AS ready
     `;
     if (!row?.ready) throw new DatabaseNotReadyError();
     this.#ready = true;
@@ -136,30 +212,211 @@ export class PostgresRepository implements Repository {
     return rows.map(mapChat<Framework>);
   }
 
-  async createGeneration(scope: UserScope, input: CreateGenerationRecord): Promise<GenerationData> {
+  async createGeneration(
+    scope: UserScope,
+    input: CreateGenerationRecord,
+  ): Promise<CreatedGeneration> {
     await this.assertReady();
-    const row = await this.#sql.begin(async (sql) => {
+    const result = await this.#sql.begin(async (sql) => {
       const [generation] = await sql<GenerationRow[]>`
         INSERT INTO viby.generations (
-          id, tenant_id, user_id, chat_id, base_version_id, status, model_provider, model_id
+          id, tenant_id, user_id, chat_id, base_version_id, active_attempt_id,
+          attempt_count, prompt, status, model_provider, model_id
         )
         SELECT ${input.id}, ${scope.tenantId}, ${scope.userId}, id, ${input.baseVersionId},
-          'pending', ${input.modelProvider}, ${input.modelId}
+          ${input.attemptId}, 1, ${input.prompt}, 'queued', ${input.modelProvider}, ${input.modelId}
         FROM viby.chats
         WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId} AND id = ${input.chatId}
         RETURNING *
       `;
       if (!generation) throw new NotFoundError("Chat");
 
+      const [attempt] = await sql<GenerationAttemptRow[]>`
+        INSERT INTO viby.generation_attempts (
+          id, tenant_id, user_id, generation_id, number, reason, status, model_provider, model_id
+        ) VALUES (
+          ${input.attemptId}, ${scope.tenantId}, ${scope.userId}, ${input.id}, 1,
+          'initial', 'queued', ${input.modelProvider}, ${input.modelId}
+        )
+        RETURNING *
+      `;
+      if (!attempt) throw new Error("Postgres did not return the created attempt.");
+
       await sql`
         INSERT INTO viby.messages (
           id, tenant_id, user_id, chat_id, generation_id, role, content
         ) VALUES (
-          ${createId()}, ${scope.tenantId}, ${scope.userId}, ${input.chatId}, ${input.id}, 'user', ${input.prompt}
+          ${createId()}, ${scope.tenantId}, ${scope.userId}, ${input.chatId}, ${input.id},
+          'user', ${input.prompt}
         )
       `;
+      await sql`
+        INSERT INTO viby.generation_events (
+          tenant_id, user_id, generation_id, attempt_id, type, data
+        ) VALUES (
+          ${scope.tenantId}, ${scope.userId}, ${input.id}, ${input.attemptId},
+          'generation.created', ${sql.json({ prompt: input.prompt })}
+        )
+      `;
+      await sql`
+        INSERT INTO viby.generation_events (
+          tenant_id, user_id, generation_id, attempt_id, type, data
+        ) VALUES (
+          ${scope.tenantId}, ${scope.userId}, ${input.id}, ${input.attemptId},
+          'attempt.queued', ${sql.json({ number: 1, reason: "initial" })}
+        )
+      `;
+      return { generation, attempt };
+    });
 
-      for (const [position, skill] of input.skills.entries()) {
+    return {
+      generation: mapGeneration(result.generation),
+      attempt: mapAttempt(result.attempt),
+    };
+  }
+
+  async startGenerationAttempt(
+    scope: UserScope,
+    generationId: string,
+    attemptId: string,
+  ): Promise<GenerationAttemptData> {
+    await this.assertReady();
+    const row = await this.#sql.begin(async (sql) => {
+      const [generation] = await sql<GenerationRow[]>`
+        SELECT * FROM viby.generations
+        WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId} AND id = ${generationId}
+        FOR UPDATE
+      `;
+      if (!generation) throw new NotFoundError("Generation");
+      if (generation.active_attempt_id !== attemptId || generation.status !== "queued") {
+        throw new GenerationStateError(
+          generationId,
+          `Generation ${generationId} cannot start attempt ${attemptId} from ${generation.status}.`,
+        );
+      }
+
+      const [attempt] = await sql<GenerationAttemptRow[]>`
+        UPDATE viby.generation_attempts SET status = 'running', started_at = now()
+        WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+          AND generation_id = ${generationId} AND id = ${attemptId} AND status = 'queued'
+        RETURNING *
+      `;
+      if (!attempt) {
+        throw new GenerationStateError(generationId, `Attempt ${attemptId} is not queued.`);
+      }
+      await sql`
+        UPDATE viby.generations SET
+          status = 'running', started_at = COALESCE(started_at, now()),
+          completed_at = NULL, error = NULL
+        WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId} AND id = ${generationId}
+      `;
+      await sql`
+        INSERT INTO viby.generation_events (
+          tenant_id, user_id, generation_id, attempt_id, type, data
+        ) VALUES (
+          ${scope.tenantId}, ${scope.userId}, ${generationId}, ${attemptId},
+          'attempt.started', ${sql.json({ number: attempt.number, reason: attempt.reason })}
+        )
+      `;
+      return attempt;
+    });
+    return mapAttempt(row);
+  }
+
+  async createGenerationAttempt(
+    scope: UserScope,
+    input: CreateAttemptRecord,
+  ): Promise<GenerationAttemptData> {
+    await this.assertReady();
+    const row = await this.#sql.begin(async (sql) => {
+      const [generation] = await sql<GenerationRow[]>`
+        SELECT * FROM viby.generations
+        WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+          AND id = ${input.generationId}
+        FOR UPDATE
+      `;
+      if (!generation) throw new NotFoundError("Generation");
+
+      const allowed = input.reason === "retry"
+        ? generation.status === "failed" || generation.status === "cancelled"
+        : generation.status === "failed"
+          || generation.status === "cancelled"
+          || generation.status === "queued"
+          || generation.status === "running";
+      if (!allowed) {
+        throw new GenerationStateError(
+          generation.id,
+          `Generation ${generation.id} cannot ${input.reason} from ${generation.status}.`,
+        );
+      }
+
+      if (generation.status === "queued" || generation.status === "running") {
+        const [interrupted] = await sql<GenerationAttemptRow[]>`
+          UPDATE viby.generation_attempts SET status = 'interrupted', completed_at = now()
+          WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+            AND generation_id = ${generation.id} AND id = ${generation.active_attempt_id}
+            AND status IN ('queued', 'running')
+          RETURNING *
+        `;
+        if (interrupted) {
+          await sql`
+            INSERT INTO viby.generation_events (
+              tenant_id, user_id, generation_id, attempt_id, type, data
+            ) VALUES (
+              ${scope.tenantId}, ${scope.userId}, ${generation.id}, ${interrupted.id},
+              'attempt.interrupted', ${sql.json({ number: interrupted.number })}
+            )
+          `;
+        }
+      }
+
+      const number = generation.attempt_count + 1;
+      const [attempt] = await sql<GenerationAttemptRow[]>`
+        INSERT INTO viby.generation_attempts (
+          id, tenant_id, user_id, generation_id, number, reason, status, model_provider, model_id
+        ) VALUES (
+          ${input.id}, ${scope.tenantId}, ${scope.userId}, ${generation.id}, ${number},
+          ${input.reason}, 'queued', ${generation.model_provider}, ${generation.model_id}
+        )
+        RETURNING *
+      `;
+      if (!attempt) throw new Error("Postgres did not return the created attempt.");
+
+      await sql`
+        UPDATE viby.generations SET
+          status = 'queued', active_attempt_id = ${input.id}, attempt_count = ${number},
+          input_tokens = NULL, output_tokens = NULL, total_tokens = NULL,
+          finish_reason = NULL, error = NULL, completed_at = NULL
+        WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId} AND id = ${generation.id}
+      `;
+      await sql`
+        INSERT INTO viby.generation_events (
+          tenant_id, user_id, generation_id, attempt_id, type, data
+        ) VALUES (
+          ${scope.tenantId}, ${scope.userId}, ${generation.id}, ${input.id},
+          'attempt.queued', ${sql.json({ number, reason: input.reason })}
+        )
+      `;
+      return attempt;
+    });
+    return mapAttempt(row);
+  }
+
+  async attachGenerationSkills(
+    scope: UserScope,
+    generationId: string,
+    skills: readonly ResolvedSkill[],
+  ): Promise<void> {
+    await this.assertReady();
+    await this.#sql.begin(async (sql) => {
+      const [generation] = await sql<{ id: string }[]>`
+        SELECT id FROM viby.generations
+        WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId} AND id = ${generationId}
+        FOR UPDATE
+      `;
+      if (!generation) throw new NotFoundError("Generation");
+
+      for (const [position, skill] of skills.entries()) {
         const [snapshot] = await sql<{ id: string }[]>`
           INSERT INTO viby.skill_snapshots (
             id, tenant_id, user_id, source, locator, name, description, content_hash, files
@@ -177,15 +434,69 @@ export class PostgresRepository implements Repository {
           INSERT INTO viby.generation_skills (
             tenant_id, user_id, generation_id, skill_snapshot_id, category, position, activation
           ) VALUES (
-            ${scope.tenantId}, ${scope.userId}, ${input.id}, ${snapshot.id}, ${skill.category},
+            ${scope.tenantId}, ${scope.userId}, ${generationId}, ${snapshot.id}, ${skill.category},
             ${position}, ${skill.category === "core" ? "always" : "automatic"}
           )
           ON CONFLICT DO NOTHING
         `;
       }
-      return generation;
+      await sql`
+        UPDATE viby.generations SET skills_resolved_at = COALESCE(skills_resolved_at, now())
+        WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+          AND id = ${generationId}
+      `;
     });
-    return mapGeneration(row);
+  }
+
+  async getGenerationSkills(
+    scope: UserScope,
+    generationId: string,
+  ): Promise<ResolvedSkill[] | null> {
+    await this.assertReady();
+    const [generation] = await this.#sql<{ skills_resolved_at: Date | null }[]>`
+      SELECT skills_resolved_at FROM viby.generations
+      WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+        AND id = ${generationId}
+      LIMIT 1
+    `;
+    if (!generation) throw new NotFoundError("Generation");
+    if (!generation.skills_resolved_at) return null;
+    const rows = await this.#sql<SkillSnapshotRow[]>`
+      SELECT snapshot.name, snapshot.description, link.category, snapshot.source,
+        snapshot.locator, snapshot.content_hash, snapshot.files
+      FROM viby.generation_skills AS link
+      JOIN viby.skill_snapshots AS snapshot ON snapshot.id = link.skill_snapshot_id
+      WHERE link.tenant_id = ${scope.tenantId} AND link.user_id = ${scope.userId}
+        AND link.generation_id = ${generationId}
+      ORDER BY link.position
+    `;
+    return rows.map((row) => ({
+      name: row.name,
+      description: row.description,
+      category: row.category,
+      source: row.source,
+      locator: row.locator,
+      contentHash: row.content_hash,
+      files: row.files,
+    }));
+  }
+
+  async appendGenerationEvent<Type extends GenerationEventType>(
+    scope: UserScope,
+    input: AppendGenerationEventRecord<Type>,
+  ): Promise<void> {
+    await this.assertReady();
+    await this.#sql`
+      INSERT INTO viby.generation_events (
+        tenant_id, user_id, generation_id, attempt_id, type, data
+      )
+      SELECT ${scope.tenantId}, ${scope.userId}, id, ${input.attemptId}, ${input.type},
+        ${this.#sql.json(JSON.parse(JSON.stringify(input.data)))}
+      FROM viby.generations
+      WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+        AND id = ${input.generationId} AND status = 'running'
+        AND (${input.attemptId}::uuid IS NULL OR active_attempt_id = ${input.attemptId})
+    `;
   }
 
   async completeGeneration<Framework extends FrameworkId>(
@@ -194,25 +505,41 @@ export class PostgresRepository implements Repository {
   ): Promise<VersionData<Framework>> {
     await this.assertReady();
     const row = await this.#sql.begin(async (sql) => {
-      const [generation] = await sql<{ chat_id: string; status: string }[]>`
-        SELECT chat_id, status FROM viby.generations
-        WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId} AND id = ${input.generationId}
+      const [generation] = await sql<GenerationRow[]>`
+        SELECT * FROM viby.generations
+        WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+          AND id = ${input.generationId}
         FOR UPDATE
       `;
       if (!generation) throw new NotFoundError("Generation");
-      if (generation.status !== "pending") {
-        throw new Error(`Generation ${input.generationId} is already ${generation.status}.`);
+      if (generation.status !== "running" || generation.active_attempt_id !== input.attemptId) {
+        throw new GenerationStateError(
+          input.generationId,
+          `Generation ${input.generationId} cannot complete from ${generation.status}.`,
+        );
+      }
+
+      const [attempt] = await sql<GenerationAttemptRow[]>`
+        SELECT * FROM viby.generation_attempts
+        WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+          AND generation_id = ${input.generationId} AND id = ${input.attemptId}
+        FOR UPDATE
+      `;
+      if (!attempt || attempt.status !== "running") {
+        throw new GenerationStateError(input.generationId, `Attempt ${input.attemptId} is not running.`);
       }
 
       await sql`
         SELECT id FROM viby.chats
-        WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId} AND id = ${generation.chat_id}
+        WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+          AND id = ${generation.chat_id}
         FOR UPDATE
       `;
       const [numberRow] = await sql<{ number: number }[]>`
         SELECT COALESCE(MAX(number), 0)::integer + 1 AS number
         FROM viby.versions
-        WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId} AND chat_id = ${generation.chat_id}
+        WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+          AND chat_id = ${generation.chat_id}
       `;
       const versionId = createId();
       const [version] = await sql<VersionRow[]>`
@@ -248,28 +575,313 @@ export class PostgresRepository implements Repository {
         )
       `;
       await sql`
-        UPDATE viby.generations SET
+        UPDATE viby.generation_attempts SET
           status = 'succeeded', input_tokens = ${input.inputTokens},
           output_tokens = ${input.outputTokens}, total_tokens = ${input.totalTokens},
           finish_reason = ${input.finishReason}, completed_at = now()
+        WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId} AND id = ${input.attemptId}
+      `;
+      await sql`
+        UPDATE viby.generations SET
+          status = 'succeeded', input_tokens = ${input.inputTokens},
+          output_tokens = ${input.outputTokens}, total_tokens = ${input.totalTokens},
+          finish_reason = ${input.finishReason}, error = NULL, completed_at = now()
         WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId} AND id = ${input.generationId}
       `;
       await sql`
         UPDATE viby.chats SET title = ${input.title}, updated_at = now()
-        WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId} AND id = ${generation.chat_id}
+        WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+          AND id = ${generation.chat_id}
+      `;
+      await sql`
+        INSERT INTO viby.generation_events (
+          tenant_id, user_id, generation_id, attempt_id, type, data
+        ) VALUES (
+          ${scope.tenantId}, ${scope.userId}, ${input.generationId}, ${input.attemptId},
+          'attempt.succeeded', ${sql.json({ number: attempt.number, versionId })}
+        )
+      `;
+      await sql`
+        INSERT INTO viby.generation_events (
+          tenant_id, user_id, generation_id, attempt_id, type, data
+        ) VALUES (
+          ${scope.tenantId}, ${scope.userId}, ${input.generationId}, ${input.attemptId},
+          'generation.succeeded', ${sql.json({ versionId })}
+        )
       `;
       return version;
     });
     return mapVersion<Framework>(row);
   }
 
-  async failGeneration(scope: UserScope, generationId: string, error: string): Promise<void> {
+  async pauseGeneration(
+    scope: UserScope,
+    input: PauseGenerationRecord,
+  ): Promise<GenerationTaskData> {
     await this.assertReady();
-    await this.#sql`
-      UPDATE viby.generations SET status = 'failed', error = ${error.slice(0, 10_000)}, completed_at = now()
-      WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
-        AND id = ${generationId} AND status = 'pending'
-    `;
+    const row = await this.#sql.begin(async (sql) => {
+      const [generation] = await sql<GenerationRow[]>`
+        SELECT * FROM viby.generations
+        WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+          AND id = ${input.generationId}
+        FOR UPDATE
+      `;
+      if (!generation) throw new NotFoundError("Generation");
+      if (generation.status !== "running" || generation.active_attempt_id !== input.attemptId) {
+        throw new GenerationStateError(
+          generation.id,
+          `Generation ${generation.id} cannot wait for a task from ${generation.status}.`,
+        );
+      }
+      const [attempt] = await sql<GenerationAttemptRow[]>`
+        SELECT * FROM viby.generation_attempts
+        WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+          AND id = ${input.attemptId} AND generation_id = ${input.generationId}
+        FOR UPDATE
+      `;
+      if (!attempt || attempt.status !== "running") {
+        throw new GenerationStateError(generation.id, `Attempt ${input.attemptId} is not running.`);
+      }
+
+      const [task] = await sql<GenerationTaskRow[]>`
+        INSERT INTO viby.generation_tasks (
+          id, tenant_id, user_id, generation_id, attempt_id, kind, title, message, payload
+        ) VALUES (
+          ${input.taskId}, ${scope.tenantId}, ${scope.userId}, ${input.generationId},
+          ${input.attemptId}, ${input.task.kind}, ${input.task.title}, ${input.task.message},
+          ${sql.json(JSON.parse(JSON.stringify(input.task)))}
+        )
+        RETURNING id, generation_id, attempt_id, status, payload, resolution, created_at, resolved_at
+      `;
+      if (!task) throw new Error("Postgres did not return the created task.");
+
+      await sql`
+        INSERT INTO viby.messages (
+          id, tenant_id, user_id, chat_id, generation_id, role, content
+        ) VALUES (
+          ${createId()}, ${scope.tenantId}, ${scope.userId}, ${generation.chat_id},
+          ${input.generationId}, 'assistant', ${input.task.message}
+        )
+      `;
+      await sql`
+        UPDATE viby.generation_attempts SET
+          status = 'waiting', input_tokens = ${input.inputTokens},
+          output_tokens = ${input.outputTokens}, total_tokens = ${input.totalTokens},
+          finish_reason = ${input.finishReason}, completed_at = now()
+        WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId} AND id = ${input.attemptId}
+      `;
+      await sql`
+        UPDATE viby.generations SET
+          status = 'waiting', input_tokens = ${input.inputTokens},
+          output_tokens = ${input.outputTokens}, total_tokens = ${input.totalTokens},
+          finish_reason = ${input.finishReason}, error = NULL
+        WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId} AND id = ${input.generationId}
+      `;
+      await sql`
+        INSERT INTO viby.generation_events (
+          tenant_id, user_id, generation_id, attempt_id, type, data
+        ) VALUES (
+          ${scope.tenantId}, ${scope.userId}, ${input.generationId}, ${input.attemptId},
+          'attempt.waiting', ${sql.json({ taskId: input.taskId })}
+        )
+      `;
+      await sql`
+        INSERT INTO viby.generation_events (
+          tenant_id, user_id, generation_id, attempt_id, type, data
+        ) VALUES (
+          ${scope.tenantId}, ${scope.userId}, ${input.generationId}, ${input.attemptId},
+          'task.created', ${sql.json({ task: { id: input.taskId, ...input.task } })}
+        )
+      `;
+      return task;
+    });
+    return mapTask(row);
+  }
+
+  async resolveGenerationTask(
+    scope: UserScope,
+    input: ResolveGenerationTaskRecord,
+  ): Promise<GenerationAttemptData> {
+    await this.assertReady();
+    const row = await this.#sql.begin(async (sql) => {
+      const [generation] = await sql<GenerationRow[]>`
+        SELECT * FROM viby.generations
+        WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+          AND id = ${input.generationId}
+        FOR UPDATE
+      `;
+      if (!generation) throw new NotFoundError("Generation");
+      if (generation.status !== "waiting") {
+        throw new GenerationStateError(
+          generation.id,
+          `Generation ${generation.id} cannot resolve a task from ${generation.status}.`,
+        );
+      }
+
+      const [task] = await sql<GenerationTaskRow[]>`
+        SELECT id, generation_id, attempt_id, status, payload, resolution, created_at, resolved_at
+        FROM viby.generation_tasks
+        WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+          AND generation_id = ${input.generationId} AND id = ${input.taskId}
+        FOR UPDATE
+      `;
+      if (!task) throw new NotFoundError("Generation task");
+      if (task.status !== "pending") {
+        throw new GenerationStateError(generation.id, `Task ${input.taskId} is already resolved.`);
+      }
+
+      await sql`
+        UPDATE viby.generation_tasks SET
+          status = 'resolved', resolution = ${sql.json(JSON.parse(JSON.stringify(input.resolution)))},
+          resolved_at = now()
+        WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId} AND id = ${input.taskId}
+      `;
+      await sql`
+        INSERT INTO viby.messages (
+          id, tenant_id, user_id, chat_id, generation_id, role, content
+        ) VALUES (
+          ${createId()}, ${scope.tenantId}, ${scope.userId}, ${generation.chat_id},
+          ${input.generationId}, 'user', ${input.resolutionMessage}
+        )
+      `;
+
+      const number = generation.attempt_count + 1;
+      const [attempt] = await sql<GenerationAttemptRow[]>`
+        INSERT INTO viby.generation_attempts (
+          id, tenant_id, user_id, generation_id, number, reason, status, model_provider, model_id
+        ) VALUES (
+          ${input.attemptId}, ${scope.tenantId}, ${scope.userId}, ${generation.id}, ${number},
+          'task_resolution', 'queued', ${generation.model_provider}, ${generation.model_id}
+        )
+        RETURNING *
+      `;
+      if (!attempt) throw new Error("Postgres did not return the created attempt.");
+
+      await sql`
+        UPDATE viby.generations SET
+          status = 'queued', active_attempt_id = ${input.attemptId}, attempt_count = ${number},
+          input_tokens = NULL, output_tokens = NULL, total_tokens = NULL,
+          finish_reason = NULL, error = NULL, completed_at = NULL
+        WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId} AND id = ${generation.id}
+      `;
+      await sql`
+        INSERT INTO viby.generation_events (
+          tenant_id, user_id, generation_id, attempt_id, type, data
+        ) VALUES (
+          ${scope.tenantId}, ${scope.userId}, ${generation.id}, ${task.attempt_id},
+          'task.resolved', ${sql.json(JSON.parse(JSON.stringify({
+            taskId: input.taskId,
+            resolution: input.resolution,
+          })))}
+        )
+      `;
+      await sql`
+        INSERT INTO viby.generation_events (
+          tenant_id, user_id, generation_id, attempt_id, type, data
+        ) VALUES (
+          ${scope.tenantId}, ${scope.userId}, ${generation.id}, ${input.attemptId},
+          'attempt.queued', ${sql.json({ number, reason: "task_resolution" })}
+        )
+      `;
+      return attempt;
+    });
+    return mapAttempt(row);
+  }
+
+  async failGenerationAttempt(
+    scope: UserScope,
+    generationId: string,
+    attemptId: string,
+    error: string,
+  ): Promise<void> {
+    await this.assertReady();
+    const message = error.slice(0, 10_000);
+    await this.#sql.begin(async (sql) => {
+      const [generation] = await sql<GenerationRow[]>`
+        SELECT * FROM viby.generations
+        WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId} AND id = ${generationId}
+        FOR UPDATE
+      `;
+      if (!generation) throw new NotFoundError("Generation");
+      if (generation.active_attempt_id !== attemptId || generation.status !== "running") return;
+
+      const [attempt] = await sql<GenerationAttemptRow[]>`
+        UPDATE viby.generation_attempts SET
+          status = 'failed', error = ${message}, completed_at = now()
+        WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+          AND generation_id = ${generationId} AND id = ${attemptId} AND status = 'running'
+        RETURNING *
+      `;
+      if (!attempt) return;
+      await sql`
+        UPDATE viby.generations SET status = 'failed', error = ${message}, completed_at = now()
+        WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId} AND id = ${generationId}
+      `;
+      await sql`
+        INSERT INTO viby.generation_events (
+          tenant_id, user_id, generation_id, attempt_id, type, data
+        ) VALUES (
+          ${scope.tenantId}, ${scope.userId}, ${generationId}, ${attemptId},
+          'attempt.failed', ${sql.json({ number: attempt.number, error: message })}
+        )
+      `;
+      await sql`
+        INSERT INTO viby.generation_events (
+          tenant_id, user_id, generation_id, attempt_id, type, data
+        ) VALUES (
+          ${scope.tenantId}, ${scope.userId}, ${generationId}, ${attemptId},
+          'generation.failed', ${sql.json({ error: message })}
+        )
+      `;
+    });
+  }
+
+  async cancelGeneration(scope: UserScope, generationId: string, reason: string): Promise<boolean> {
+    await this.assertReady();
+    return this.#sql.begin(async (sql) => {
+      const [generation] = await sql<GenerationRow[]>`
+        SELECT * FROM viby.generations
+        WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId} AND id = ${generationId}
+        FOR UPDATE
+      `;
+      if (!generation) throw new NotFoundError("Generation");
+      if (generation.status === "succeeded" || generation.status === "failed" || generation.status === "cancelled") {
+        return false;
+      }
+
+      const message = reason.slice(0, 2_000);
+      const [attempt] = await sql<GenerationAttemptRow[]>`
+        UPDATE viby.generation_attempts SET
+          status = 'cancelled', error = ${message}, completed_at = now()
+        WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+          AND generation_id = ${generationId} AND id = ${generation.active_attempt_id}
+          AND status IN ('queued', 'running', 'waiting')
+        RETURNING *
+      `;
+      await sql`
+        UPDATE viby.generations SET status = 'cancelled', error = ${message}, completed_at = now()
+        WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId} AND id = ${generationId}
+      `;
+      if (attempt) {
+        await sql`
+          INSERT INTO viby.generation_events (
+            tenant_id, user_id, generation_id, attempt_id, type, data
+          ) VALUES (
+            ${scope.tenantId}, ${scope.userId}, ${generationId}, ${attempt.id},
+            'attempt.cancelled', ${sql.json({ number: attempt.number, reason: message })}
+          )
+        `;
+      }
+      await sql`
+        INSERT INTO viby.generation_events (
+          tenant_id, user_id, generation_id, attempt_id, type, data
+        ) VALUES (
+          ${scope.tenantId}, ${scope.userId}, ${generationId}, ${generation.active_attempt_id},
+          'generation.cancelled', ${sql.json({ reason: message })}
+        )
+      `;
+      return true;
+    });
   }
 
   async getGeneration(scope: UserScope, id: string): Promise<GenerationData | null> {
@@ -280,6 +892,75 @@ export class PostgresRepository implements Repository {
       LIMIT 1
     `;
     return row ? mapGeneration(row) : null;
+  }
+
+  async listGenerationAttempts(
+    scope: UserScope,
+    generationId: string,
+  ): Promise<GenerationAttemptData[]> {
+    await this.assertReady();
+    const rows = await this.#sql<GenerationAttemptRow[]>`
+      SELECT attempt.* FROM viby.generation_attempts AS attempt
+      JOIN viby.generations AS generation ON generation.id = attempt.generation_id
+      WHERE attempt.tenant_id = ${scope.tenantId} AND attempt.user_id = ${scope.userId}
+        AND attempt.generation_id = ${generationId}
+        AND generation.tenant_id = ${scope.tenantId} AND generation.user_id = ${scope.userId}
+      ORDER BY attempt.number
+    `;
+    return rows.map(mapAttempt);
+  }
+
+  async listGenerationEvents(
+    scope: UserScope,
+    generationId: string,
+    after: string,
+    limit: number,
+  ): Promise<GenerationEvent[]> {
+    await this.assertReady();
+    const rows = await this.#sql<GenerationEventRow[]>`
+      SELECT event.cursor, event.generation_id, event.attempt_id, event.type, event.data,
+        event.created_at
+      FROM viby.generation_events AS event
+      JOIN viby.generations AS generation ON generation.id = event.generation_id
+      WHERE event.tenant_id = ${scope.tenantId} AND event.user_id = ${scope.userId}
+        AND event.generation_id = ${generationId} AND event.cursor > ${after}
+        AND generation.tenant_id = ${scope.tenantId} AND generation.user_id = ${scope.userId}
+      ORDER BY event.cursor
+      LIMIT ${limit}
+    `;
+    return rows.map(mapEvent);
+  }
+
+  async listGenerationTasks(
+    scope: UserScope,
+    generationId: string,
+  ): Promise<GenerationTaskData[]> {
+    await this.assertReady();
+    const rows = await this.#sql<GenerationTaskRow[]>`
+      SELECT task.id, task.generation_id, task.attempt_id, task.status, task.payload,
+        task.resolution, task.created_at, task.resolved_at
+      FROM viby.generation_tasks AS task
+      JOIN viby.generations AS generation ON generation.id = task.generation_id
+      WHERE task.tenant_id = ${scope.tenantId} AND task.user_id = ${scope.userId}
+        AND task.generation_id = ${generationId}
+        AND generation.tenant_id = ${scope.tenantId} AND generation.user_id = ${scope.userId}
+      ORDER BY task.created_at, task.id
+    `;
+    return rows.map(mapTask);
+  }
+
+  async getVersionByGeneration<Framework extends FrameworkId>(
+    scope: UserScope,
+    generationId: string,
+  ): Promise<VersionData<Framework> | null> {
+    await this.assertReady();
+    const [row] = await this.#sql<VersionRow[]>`
+      SELECT * FROM viby.versions
+      WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+        AND generation_id = ${generationId}
+      LIMIT 1
+    `;
+    return row ? mapVersion<Framework>(row) : null;
   }
 
   async getVersion<Framework extends FrameworkId>(
@@ -367,6 +1048,10 @@ function mapGeneration(row: GenerationRow): GenerationData {
   return {
     id: row.id,
     chatId: row.chat_id,
+    baseVersionId: row.base_version_id,
+    activeAttemptId: row.active_attempt_id,
+    attemptCount: row.attempt_count,
+    prompt: row.prompt,
     status: row.status,
     modelProvider: row.model_provider,
     modelId: row.model_id,
@@ -375,8 +1060,53 @@ function mapGeneration(row: GenerationRow): GenerationData {
     totalTokens: row.total_tokens,
     error: row.error,
     createdAt: row.created_at,
+    startedAt: row.started_at,
     completedAt: row.completed_at,
   };
+}
+
+function mapAttempt(row: GenerationAttemptRow): GenerationAttemptData {
+  return {
+    id: row.id,
+    generationId: row.generation_id,
+    number: row.number,
+    reason: row.reason,
+    status: row.status,
+    modelProvider: row.model_provider,
+    modelId: row.model_id,
+    inputTokens: row.input_tokens,
+    outputTokens: row.output_tokens,
+    totalTokens: row.total_tokens,
+    finishReason: row.finish_reason,
+    error: row.error,
+    createdAt: row.created_at,
+    startedAt: row.started_at,
+    completedAt: row.completed_at,
+  };
+}
+
+function mapEvent(row: GenerationEventRow): GenerationEvent {
+  return {
+    cursor: String(row.cursor),
+    generationId: row.generation_id,
+    attemptId: row.attempt_id,
+    type: row.type,
+    data: row.data,
+    createdAt: row.created_at,
+  } as GenerationEvent;
+}
+
+function mapTask(row: GenerationTaskRow): GenerationTaskData {
+  return {
+    ...row.payload,
+    id: row.id,
+    generationId: row.generation_id,
+    attemptId: row.attempt_id,
+    status: row.status,
+    resolution: row.resolution,
+    createdAt: row.created_at,
+    resolvedAt: row.resolved_at,
+  } as GenerationTaskData;
 }
 
 function mapVersion<Framework extends FrameworkId>(row: VersionRow): VersionData<Framework> {
