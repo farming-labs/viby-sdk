@@ -30,6 +30,7 @@
     "docs",
     "migrations",
     "README.md",
+    "RELEASING.md",
     "LICENSE"
   ],
   "exports": {
@@ -46,11 +47,17 @@
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
     "test": "npm run test:unit",
-    "test:unit": "node --import tsx --test test/*.test.ts",
+    "test:unit": "node --import tsx --test test/*.test.ts test/*.test.mjs",
     "test:integration": "node --import tsx --test test/postgres.integration.test.ts",
     "test:package": "node scripts/package-smoke.mjs",
     "check": "npm run typecheck && npm test && npm run build",
-    "release:check": "npm run check && npm run test:package",
+    "bump": "bumpp",
+    "release": "npm run release:latest",
+    "release:latest": "bumpp",
+    "release:beta": "bumpp --preid beta",
+    "release:canary": "bumpp --preid canary",
+    "release:check": "node scripts/check-release-version.mjs && npm run check && npm run test:package",
+    "release:prepare": "node scripts/check-release-branch.mjs && npm run release:check",
     "release:guard": "node scripts/release-guard.mjs",
     "prepack": "npm run build",
     "prepublishOnly": "npm run release:check"
@@ -68,6 +75,7 @@
   },
   "devDependencies": {
     "@types/node": "^26.1.2",
+    "bumpp": "^10.4.1",
     "tsx": "^4.23.7",
     "typescript": "^7.0.2"
   }
