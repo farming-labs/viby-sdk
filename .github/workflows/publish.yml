@@ -1,7 +1,13 @@
 name: Publish
 
 on:
+  release:
+    types: [published]
   workflow_dispatch:
+
+concurrency:
+  group: npm-publish
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -9,7 +15,9 @@ permissions:
 
 jobs:
   npm:
+    if: github.event_name == 'release' || github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     environment: npm
     steps:
       - uses: actions/checkout@v7
@@ -17,7 +25,13 @@ jobs:
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
-          cache: npm
+          package-manager-cache: false
+      - name: Use an OIDC-capable npm CLI
+        run: npm install --global npm@11.18.0
       - run: npm ci
-      - run: npm run check
-      - run: npm publish
+      - name: Guard package version and release tag
+        run: npm run release:guard
+      - name: Publish public package with provenance
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

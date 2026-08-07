@@ -5,12 +5,53 @@ on:
   push:
     branches: [main]
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
 jobs:
-  check:
+  test:
+    name: Test (Node ${{ matrix.node }})
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [20, 22, 24]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - run: npm test
+
+  build:
+    name: Build and package
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build
+      - run: npm run test:package
+      - run: npm publish --dry-run --ignore-scripts
+      - run: npm ci --prefix examples/basic
+      - run: npm run typecheck --prefix examples/basic
+
+  postgres:
+    name: PostgreSQL integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
     services:
       postgres:
         image: postgres:16
@@ -25,15 +66,17 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
+    env:
+      TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/viby_test
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
       - run: npm ci
-      - run: npm run check
-      - run: node dist/cli.js db migrate
+      - run: npm run test:integration
+      - run: npm run build
+      - run: node dist/cli.js db status
         env:
-          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/viby_test
-      - run: npm pack --dry-run
+          DATABASE_URL: ${{ env.TEST_DATABASE_URL }}

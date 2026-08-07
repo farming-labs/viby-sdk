@@ -3,6 +3,8 @@
   "version": "0.2.0",
   "description": "Framework-agnostic SDK for building persistent, skill-guided vibe coding products.",
   "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -38,18 +40,25 @@
     "./package.json": "./package.json"
   },
   "bin": {
-    "viby": "./dist/cli.js"
+    "viby": "dist/cli.js"
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --test test/*.test.ts",
+    "test": "npm run test:unit",
+    "test:unit": "node --import tsx --test test/*.test.ts",
+    "test:integration": "node --import tsx --test test/postgres.integration.test.ts",
+    "test:package": "node scripts/package-smoke.mjs",
     "check": "npm run typecheck && npm test && npm run build",
-    "prepack": "npm run check"
+    "release:check": "npm run check && npm run test:package",
+    "release:guard": "node scripts/release-guard.mjs",
+    "prepack": "npm run build",
+    "prepublishOnly": "npm run release:check"
   },
   "publishConfig": {
     "access": "public",
-    "provenance": true
+    "provenance": true,
+    "registry": "https://registry.npmjs.org"
   },
   "dependencies": {
     "ai": "^7.0.52",
