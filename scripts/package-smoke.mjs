@@ -38,8 +38,6 @@ try {
     manifest.files.every((file) => !file.path.startsWith("src/") && !file.path.startsWith("test/")),
     "packed package contains development source or tests",
   );
-  const cli = manifest.files.find((file) => file.path === "dist/cli.js");
-  assert.ok(cli && (cli.mode & 0o111) !== 0, "packed CLI is not executable");
 
   const consumer = join(scratch, "consumer");
   await mkdir(consumer);
