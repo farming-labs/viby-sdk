@@ -2,10 +2,6 @@
 
 `@viby/sdk` is a framework-agnostic TypeScript SDK for building persistent, skill-guided vibe coding products. Your application owns authentication, model credentials, and Postgres. Viby owns chats, generation attempts, immutable source versions, iteration, and source downloads.
 
-This first release intentionally does not include preview hosting, deployment providers, GitHub connections, or a Viby API key.
-
-The versioned contracts live in [`docs/api`](./docs/api): the [Viby v1 API](./docs/api/v1.md) is the shipped contract, while the [v0 core capability reference](./docs/api/v0-core.md) is the audited parity roadmap with third-party surfaces explicitly separated.
-
 ## Install
 
 ```bash
