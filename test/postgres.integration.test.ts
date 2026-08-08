@@ -50,6 +50,13 @@ test("persists a durable generation, iteration, events, and download in Postgres
         const search = await options?.trace?.start("search");
         await search?.delta("src/");
         await search?.complete({ query: "version", path: "src", matches: 1 });
+        const toolCall = await options?.toolCalls?.start({
+          providerCallId: "postgres-tool-call-1",
+          name: "workspace.inspect",
+          effect: "read",
+          arguments: { path: "src/index.ts", apiKey: "must-not-be-stored" },
+        });
+        await toolCall?.succeed({ found: true, accessToken: "must-not-be-stored" });
       }
       return {
         kind: "project",
@@ -95,6 +102,8 @@ test("persists a durable generation, iteration, events, and download in Postgres
       "part.started",
       "part.delta",
       "part.completed",
+      "part.started",
+      "part.completed",
       "attempt.succeeded",
       "generation.succeeded",
     ]);
@@ -113,11 +122,25 @@ test("persists a durable generation, iteration, events, and download in Postgres
     assert.deepEqual(persistedMessages[0]?.parts.map((part) => part.type), ["text"]);
     assert.deepEqual(persistedMessages[1]?.parts.map((part) => part.type), [
       "search",
+      "tool-call",
       "file-edit",
       "text",
       "usage",
     ]);
     assert.ok(persistedMessages[1]?.parts.every((part) => part.attemptId));
+    const [persistedToolCall] = await generation.toolCalls();
+    assert.ok(persistedToolCall);
+    assert.equal(persistedToolCall.status, "succeeded");
+    assert.equal(persistedToolCall.attemptId, (await generation.attempts())[0]?.id);
+    assert.equal(persistedToolCall.messageId, persistedMessages[1]?.id);
+    assert.deepEqual(persistedToolCall.arguments, {
+      path: "src/index.ts",
+      apiKey: "[REDACTED]",
+    });
+    assert.deepEqual(persistedToolCall.result, {
+      found: true,
+      accessToken: "[REDACTED]",
+    });
     assert.equal((await persistedChat.listVersions()).items.length, 2);
     assert.equal(calls[1]?.previousFiles[0]?.content, "export const version = 1;\n");
 

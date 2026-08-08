@@ -23,7 +23,7 @@ Status meanings:
 | Source state | Read, replace, download, and restore current chat files | Read, change, download, fork, and restore immutable versions |
 | Preview | Hosted VM preview with a short-lived access token | Optional sandbox-backed preview session; never guaranteed by core |
 | Deployment | Creates and deploys a Vercel project | Future deployment adapter; no vendor identifiers in core records |
-| Tools | Hosted MCP server connections and agent actions | Shipped source workspace tools plus host-owned connections and credentials |
+| Tools | Hosted MCP server connections and agent actions | Shipped provider-neutral durable tool calls and source workspace tools plus host-owned connections and credentials |
 | Identity | v0 account/team, privacy, and write permissions | Host passes `tenantId` and `userId`; authorization stays app-owned |
 
 v0 v2 removed public version resources. Viby intentionally keeps immutable versions because deterministic downloads, branching, restoration, auditability, and provider-independent source history are core SDK properties. Applications may still present the simpler v0-style model by treating `chat.latestVersion()` as current workspace state.
@@ -121,6 +121,7 @@ v0 v2 makes its VM an implicit property of every chat. Viby keeps execution opti
 Viby separates a portable tool call from the credentialed connection used to fulfill it.
 
 - Core may define typed tools, calls, results, approval tasks, and durable events.
+- Typed calls and results, attempt/message ownership, redaction, and external-effect idempotency are shipped in core.
 - The host supplies tool implementations and authorizes each external effect.
 - MCP discovery, OAuth grants, refresh tokens, and connection storage remain host-owned.
 - Webhook delivery may be implemented by an optional event sink; in-process consumers can read durable generation events directly.

@@ -19,6 +19,9 @@ import type {
   VersionFile,
   VersionOrigin,
   SourceChange,
+  JsonValue,
+  ToolCallData,
+  ToolCallEffect,
 } from "./types.js";
 import type {
   CreateSandboxLeaseRecord,
@@ -164,6 +167,39 @@ export interface AppendGenerationEventRecord<Type extends GenerationEventType> {
   readonly data: GenerationEventDataMap[Type];
 }
 
+export interface CreateToolCallRecord {
+  readonly id: string;
+  readonly generationId: string;
+  readonly attemptId: string;
+  readonly leaseToken: string;
+  readonly providerCallId: string;
+  readonly name: string;
+  readonly effect: ToolCallEffect;
+  readonly arguments: JsonValue;
+  readonly idempotencyKey?: string;
+}
+
+export interface CreatedToolCall {
+  readonly toolCall: ToolCallData;
+  readonly created: boolean;
+}
+
+export interface CompleteToolCallRecord {
+  readonly id: string;
+  readonly generationId: string;
+  readonly attemptId: string;
+  readonly leaseToken: string;
+  readonly result: JsonValue;
+}
+
+export interface FailToolCallRecord {
+  readonly id: string;
+  readonly generationId: string;
+  readonly attemptId: string;
+  readonly leaseToken: string;
+  readonly error: string;
+}
+
 export interface ClaimGenerationAttemptRecord<Framework extends FrameworkId = FrameworkId> {
   readonly workerId: string;
   readonly leaseToken: string;
@@ -253,6 +289,9 @@ export interface Repository {
     scope: UserScope,
     input: AppendGenerationEventRecord<Type>,
   ): Promise<void>;
+  createToolCall(scope: UserScope, input: CreateToolCallRecord): Promise<CreatedToolCall>;
+  completeToolCall(scope: UserScope, input: CompleteToolCallRecord): Promise<ToolCallData>;
+  failToolCall(scope: UserScope, input: FailToolCallRecord): Promise<ToolCallData>;
   completeGeneration<Framework extends FrameworkId>(
     scope: UserScope,
     input: CompleteGenerationRecord<Framework>,
@@ -285,6 +324,7 @@ export interface Repository {
     limit: number,
   ): Promise<GenerationEvent[]>;
   listGenerationTasks(scope: UserScope, generationId: string): Promise<GenerationTaskData[]>;
+  listToolCalls(scope: UserScope, generationId: string): Promise<ToolCallData[]>;
   getVersionByGeneration<Framework extends FrameworkId>(
     scope: UserScope,
     generationId: string,

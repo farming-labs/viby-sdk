@@ -187,6 +187,29 @@ export interface MessageData {
   readonly createdAt: Date;
 }
 
+export type ToolCallEffect = "read" | "write" | "external";
+export type ToolCallStatus = "pending" | "succeeded" | "failed";
+
+export interface ToolCallData<
+  Arguments extends JsonValue = JsonValue,
+  Result extends JsonValue = JsonValue,
+> {
+  readonly id: string;
+  readonly generationId: string;
+  readonly attemptId: string;
+  readonly messageId: string | null;
+  readonly providerCallId: string;
+  readonly name: string;
+  readonly effect: ToolCallEffect;
+  readonly arguments: Arguments;
+  readonly result: Result | null;
+  readonly status: ToolCallStatus;
+  readonly error: string | null;
+  readonly idempotencyKey: string | null;
+  readonly createdAt: Date;
+  readonly completedAt: Date | null;
+}
+
 export const MESSAGE_PART_TYPES = [
   "text",
   "status",

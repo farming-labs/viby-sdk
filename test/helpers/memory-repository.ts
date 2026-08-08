@@ -12,6 +12,7 @@ import type {
   MessagePartInput,
   ResolvedSkill,
   SourceChange,
+  ToolCallData,
   UserScope,
   VersionData,
   VersionFile,
@@ -26,11 +27,15 @@ import type {
   ChatPageCursor,
   ClaimGenerationAttemptRecord,
   CompleteGenerationRecord,
+  CompleteToolCallRecord,
   CreateAttemptRecord,
   CreatedGeneration,
   CreateGenerationRecord,
+  CreateToolCallRecord,
+  CreatedToolCall,
   CreateSourceVersionRecord,
   ForkVersionRecord,
+  FailToolCallRecord,
   GenerationWorkerLease,
   ImportedChat,
   ImportChatRecord,
@@ -44,11 +49,22 @@ import type {
   VersionPageCursor,
 } from "../../src/repository.js";
 import { createId } from "../../src/utils.js";
-import { GenerationStateError, NotFoundError } from "../../src/errors.js";
+import { ConfigurationError, GenerationStateError, NotFoundError } from "../../src/errors.js";
+import { normalizeAndRedactToolPayload } from "../../src/redaction.js";
 
 interface ScopedRecord {
   tenantId: string;
   userId: string;
+}
+
+interface MemoryMessageInput {
+  readonly chatId: string;
+  readonly generationId: string;
+  readonly attemptId: string;
+  readonly role: "user" | "assistant";
+  readonly content: string;
+  readonly parts: readonly MessagePartInput[];
+  readonly createdAt: Date;
 }
 
 export class MemoryRepository implements Repository {
@@ -63,6 +79,7 @@ export class MemoryRepository implements Repository {
   readonly tasks = new Map<string, GenerationTaskData & ScopedRecord>();
   readonly skills = new Map<string, ResolvedSkill[]>();
   readonly sandboxLeases = new Map<string, SandboxLeaseData & ScopedRecord>();
+  readonly toolCalls = new Map<string, ToolCallData & ScopedRecord>();
   readonly workerLeaseTokens = new Map<string, string>();
   closed = false;
   #cursor = 0;
@@ -299,7 +316,7 @@ export class MemoryRepository implements Repository {
     };
     this.generations.set(generation.id, generation);
     this.attempts.set(attempt.id, attempt);
-    this.messages.push(createMemoryMessage(scope, {
+    this.#addMessage(scope, {
       chatId: input.chatId,
       generationId: input.id,
       attemptId: input.attemptId,
@@ -307,7 +324,7 @@ export class MemoryRepository implements Repository {
       content: input.prompt,
       parts: [{ type: "text", data: { text: input.prompt } }],
       createdAt: now,
-    }));
+    });
     this.#append(scope, input.id, input.attemptId, "generation.created", {
       prompt: input.prompt,
     });
@@ -539,6 +556,115 @@ export class MemoryRepository implements Repository {
     this.#append(scope, input.generationId, input.attemptId, input.type, input.data);
   }
 
+  async createToolCall(
+    scope: UserScope,
+    input: CreateToolCallRecord,
+  ): Promise<CreatedToolCall> {
+    const generation = this.#requireGeneration(scope, input.generationId);
+    const attempt = this.#requireAttempt(scope, input.attemptId);
+    if (
+      generation.status !== "running"
+      || generation.activeAttemptId !== attempt.id
+      || !this.#hasWorkerLease(attempt, input.leaseToken)
+    ) {
+      throw new GenerationStateError(input.generationId, "The generation worker lease is no longer active.");
+    }
+    const providerCallId = normalizeMemoryToolText(input.providerCallId, "provider call id", 500);
+    const name = normalizeMemoryToolText(input.name, "tool name", 200);
+    const idempotencyKey = input.idempotencyKey === undefined
+      ? null
+      : normalizeMemoryToolText(input.idempotencyKey, "idempotency key", 500);
+    if (input.effect === "external" && idempotencyKey === null) {
+      throw new ConfigurationError(`External tool ${name} requires an idempotency key.`);
+    }
+    const existing = [...this.toolCalls.values()].find((toolCall) => (
+      inScope(toolCall, scope)
+      && (input.effect === "external"
+        ? toolCall.effect === "external"
+          && toolCall.name === name
+          && toolCall.idempotencyKey === idempotencyKey
+        : toolCall.generationId === input.generationId
+          && toolCall.attemptId === input.attemptId
+          && toolCall.providerCallId === providerCallId)
+    ));
+    if (existing) return { toolCall: existing, created: false };
+    const toolCall: ToolCallData & ScopedRecord = {
+      id: input.id,
+      generationId: input.generationId,
+      attemptId: input.attemptId,
+      messageId: null,
+      providerCallId,
+      name,
+      effect: input.effect,
+      arguments: normalizeAndRedactToolPayload(input.arguments),
+      result: null,
+      status: "pending",
+      error: null,
+      idempotencyKey,
+      createdAt: new Date(),
+      completedAt: null,
+      ...scope,
+    };
+    this.toolCalls.set(toolCall.id, toolCall);
+    return { toolCall, created: true };
+  }
+
+  async completeToolCall(
+    scope: UserScope,
+    input: CompleteToolCallRecord,
+  ): Promise<ToolCallData> {
+    return this.#settleToolCall(scope, input, "succeeded");
+  }
+
+  async failToolCall(
+    scope: UserScope,
+    input: FailToolCallRecord,
+  ): Promise<ToolCallData> {
+    return this.#settleToolCall(scope, input, "failed");
+  }
+
+  async #settleToolCall(
+    scope: UserScope,
+    input: CompleteToolCallRecord | FailToolCallRecord,
+    status: "succeeded" | "failed",
+  ): Promise<ToolCallData> {
+    const toolCall = this.toolCalls.get(input.id);
+    if (
+      !toolCall
+      || !inScope(toolCall, scope)
+      || toolCall.generationId !== input.generationId
+      || toolCall.attemptId !== input.attemptId
+    ) throw new NotFoundError("Tool call");
+    if (toolCall.status !== "pending") return toolCall;
+    const generation = this.#requireGeneration(scope, input.generationId);
+    const attempt = this.#requireAttempt(scope, input.attemptId);
+    if (generation.activeAttemptId !== attempt.id || !this.#hasWorkerLease(attempt, input.leaseToken)) {
+      throw new GenerationStateError(input.generationId, "The generation worker lease is no longer active.");
+    }
+    const updated: ToolCallData & ScopedRecord = {
+      ...toolCall,
+      status,
+      result: status === "succeeded"
+        ? normalizeAndRedactToolPayload((input as CompleteToolCallRecord).result)
+        : null,
+      error: status === "failed"
+        ? normalizeMemoryToolText((input as FailToolCallRecord).error, "tool error", 10_000)
+        : null,
+      completedAt: new Date(),
+    };
+    this.toolCalls.set(updated.id, updated);
+    return updated;
+  }
+
+  async listToolCalls(scope: UserScope, generationId: string): Promise<ToolCallData[]> {
+    this.#requireGeneration(scope, generationId);
+    return [...this.toolCalls.values()]
+      .filter((toolCall) => inScope(toolCall, scope) && toolCall.generationId === generationId)
+      .sort((left, right) => (
+        left.createdAt.getTime() - right.createdAt.getTime() || left.id.localeCompare(right.id)
+      ));
+  }
+
   async completeGeneration<Framework extends FrameworkId>(
     scope: UserScope,
     input: CompleteGenerationRecord<Framework>,
@@ -592,7 +718,7 @@ export class MemoryRepository implements Repository {
       error: null,
       completedAt,
     });
-    this.messages.push(createMemoryMessage(scope, {
+    this.#addMessage(scope, {
       chatId: generation.chatId,
       generationId: generation.id,
       attemptId: input.attemptId,
@@ -600,7 +726,7 @@ export class MemoryRepository implements Repository {
       content: input.assistantMessage,
       parts: input.assistantParts,
       createdAt: completedAt,
-    }));
+    });
     this.#append(scope, generation.id, attempt.id, "attempt.succeeded", {
       number: attempt.number,
       versionId: version.id,
@@ -654,7 +780,7 @@ export class MemoryRepository implements Repository {
       totalTokens: input.totalTokens,
       error: null,
     });
-    this.messages.push(createMemoryMessage(scope, {
+    this.#addMessage(scope, {
       chatId: generation.chatId,
       generationId: generation.id,
       attemptId: input.attemptId,
@@ -662,7 +788,7 @@ export class MemoryRepository implements Repository {
       content: input.task.message,
       parts: input.assistantParts,
       createdAt: now,
-    }));
+    });
     this.#append(scope, generation.id, attempt.id, "attempt.waiting", { taskId: task.id });
     this.#append(scope, generation.id, attempt.id, "task.created", {
       task: { id: task.id, ...input.task },
@@ -689,7 +815,7 @@ export class MemoryRepository implements Repository {
       resolution: input.resolution,
       resolvedAt: now,
     } as GenerationTaskData & ScopedRecord);
-    this.messages.push(createMemoryMessage(scope, {
+    this.#addMessage(scope, {
       chatId: generation.chatId,
       generationId: generation.id,
       attemptId: input.attemptId,
@@ -697,7 +823,7 @@ export class MemoryRepository implements Repository {
       content: input.resolutionMessage,
       parts: [{ type: "text", data: { text: input.resolutionMessage } }],
       createdAt: now,
-    }));
+    });
 
     const number = generation.attemptCount + 1;
     const attempt: GenerationAttemptData & ScopedRecord = {
@@ -967,6 +1093,23 @@ export class MemoryRepository implements Repository {
     });
   }
 
+  #addMessage(scope: UserScope, input: MemoryMessageInput): void {
+    const message = createMemoryMessage(scope, input);
+    this.messages.push(message);
+    for (const part of input.parts) {
+      if (part.type !== "tool-call") continue;
+      const toolCall = this.toolCalls.get(part.data.toolCallId);
+      if (
+        toolCall
+        && inScope(toolCall, scope)
+        && toolCall.generationId === input.generationId
+        && toolCall.attemptId === input.attemptId
+      ) {
+        this.toolCalls.set(toolCall.id, { ...toolCall, messageId: message.id });
+      }
+    }
+  }
+
   #requireGeneration(scope: UserScope, id: string): GenerationData & ScopedRecord {
     const generation = this.generations.get(id);
     if (!generation || !inScope(generation, scope)) throw new NotFoundError("Generation");
@@ -1018,15 +1161,7 @@ function sortChats<Item extends ChatData>(chats: Item[]): Item[] {
 
 function createMemoryMessage(
   scope: UserScope,
-  input: {
-    readonly chatId: string;
-    readonly generationId: string;
-    readonly attemptId: string;
-    readonly role: "user" | "assistant";
-    readonly content: string;
-    readonly parts: readonly MessagePartInput[];
-    readonly createdAt: Date;
-  },
+  input: MemoryMessageInput,
 ): MessageData & ScopedRecord {
   const id = createId();
   const parts = input.parts.map((part, position) => ({
@@ -1049,6 +1184,14 @@ function createMemoryMessage(
     createdAt: input.createdAt,
     ...scope,
   };
+}
+
+function normalizeMemoryToolText(value: string, label: string, maxLength: number): string {
+  const normalized = value.trim();
+  if (!normalized || normalized.length > maxLength) {
+    throw new ConfigurationError(`The ${label} must contain 1-${maxLength} characters.`);
+  }
+  return normalized;
 }
 
 function compareMessages(left: MessageData, right: MessageData): number {

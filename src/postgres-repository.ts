@@ -19,6 +19,9 @@ import type {
   MessagePartType,
   ResolvedSkill,
   SourceChange,
+  ToolCallData,
+  ToolCallEffect,
+  ToolCallStatus,
   UserScope,
   VersionData,
   VersionFile,
@@ -33,11 +36,15 @@ import type {
   ChatPageCursor,
   ClaimGenerationAttemptRecord,
   CompleteGenerationRecord,
+  CompleteToolCallRecord,
   CreateAttemptRecord,
   CreatedGeneration,
   CreateGenerationRecord,
+  CreateToolCallRecord,
+  CreatedToolCall,
   CreateSourceVersionRecord,
   ForkVersionRecord,
+  FailToolCallRecord,
   GenerationWorkerLease,
   ImportedChat,
   ImportChatRecord,
@@ -51,7 +58,9 @@ import type {
   VersionPageCursor,
 } from "./repository.js";
 import { createId } from "./utils.js";
+import { normalizeAndRedactToolPayload } from "./redaction.js";
 import {
+  ConfigurationError,
   DatabaseNotReadyError,
   GenerationStateError,
   NotFoundError,
@@ -177,6 +186,23 @@ interface MessagePartRow {
   created_at: Date;
 }
 
+interface ToolCallRow {
+  id: string;
+  generation_id: string;
+  attempt_id: string;
+  message_id: string | null;
+  provider_call_id: string;
+  name: string;
+  effect: ToolCallEffect;
+  arguments: ToolCallData["arguments"];
+  result: ToolCallData["result"];
+  status: ToolCallStatus;
+  error: string | null;
+  idempotency_key: string | null;
+  created_at: Date;
+  completed_at: Date | null;
+}
+
 interface VersionFileRow {
   path: string;
   content: string;
@@ -225,7 +251,8 @@ export class PostgresRepository implements Repository {
         AND to_regclass('viby.generation_tasks') IS NOT NULL
         AND to_regclass('viby.sandbox_leases') IS NOT NULL
         AND to_regclass('viby.version_changes') IS NOT NULL
-        AND to_regclass('viby.message_parts') IS NOT NULL AS ready
+        AND to_regclass('viby.message_parts') IS NOT NULL
+        AND to_regclass('viby.tool_calls') IS NOT NULL AS ready
     `;
     if (!row?.ready) throw new DatabaseNotReadyError();
     this.#ready = true;
@@ -975,6 +1002,127 @@ export class PostgresRepository implements Repository {
     }
   }
 
+  async createToolCall(
+    scope: UserScope,
+    input: CreateToolCallRecord,
+  ): Promise<CreatedToolCall> {
+    await this.assertReady();
+    const providerCallId = normalizeToolCallText(input.providerCallId, "provider call id", 500);
+    const name = normalizeToolCallText(input.name, "tool name", 200);
+    const idempotencyKey = input.idempotencyKey === undefined
+      ? null
+      : normalizeToolCallText(input.idempotencyKey, "idempotency key", 500);
+    if (input.effect === "external" && idempotencyKey === null) {
+      throw new ConfigurationError(`External tool ${name} requires an idempotency key.`);
+    }
+    const argumentsValue = normalizeAndRedactToolPayload(input.arguments);
+
+    return this.#sql.begin(async (sql) => {
+      await assertActiveToolAttempt(sql, scope, input);
+      const existing = input.effect === "external"
+        ? await sql<ToolCallRow[]>`
+            SELECT call.* FROM viby.tool_calls AS call
+            WHERE call.tenant_id = ${scope.tenantId} AND call.user_id = ${scope.userId}
+              AND call.name = ${name} AND call.idempotency_key = ${idempotencyKey}
+            LIMIT 1
+          `
+        : await sql<ToolCallRow[]>`
+            SELECT call.* FROM viby.tool_calls AS call
+            WHERE call.tenant_id = ${scope.tenantId} AND call.user_id = ${scope.userId}
+              AND call.generation_id = ${input.generationId}
+              AND call.attempt_id = ${input.attemptId}
+              AND call.provider_call_id = ${providerCallId}
+            LIMIT 1
+          `;
+      if (existing[0]) return { toolCall: mapToolCall(existing[0]), created: false };
+
+      const rows = await sql<ToolCallRow[]>`
+        INSERT INTO viby.tool_calls (
+          id, tenant_id, user_id, generation_id, attempt_id, provider_call_id,
+          name, effect, arguments, status, idempotency_key
+        ) VALUES (
+          ${input.id}, ${scope.tenantId}, ${scope.userId}, ${input.generationId},
+          ${input.attemptId}, ${providerCallId}, ${name}, ${input.effect},
+          ${sql.json(argumentsValue)}, 'pending', ${idempotencyKey}
+        )
+        ON CONFLICT DO NOTHING
+        RETURNING *
+      `;
+      if (rows[0]) return { toolCall: mapToolCall(rows[0]), created: true };
+
+      const [raced] = input.effect === "external"
+        ? await sql<ToolCallRow[]>`
+            SELECT call.* FROM viby.tool_calls AS call
+            WHERE call.tenant_id = ${scope.tenantId} AND call.user_id = ${scope.userId}
+              AND call.name = ${name} AND call.idempotency_key = ${idempotencyKey}
+            LIMIT 1
+          `
+        : await sql<ToolCallRow[]>`
+            SELECT call.* FROM viby.tool_calls AS call
+            WHERE call.tenant_id = ${scope.tenantId} AND call.user_id = ${scope.userId}
+              AND call.generation_id = ${input.generationId}
+              AND call.attempt_id = ${input.attemptId}
+              AND call.provider_call_id = ${providerCallId}
+            LIMIT 1
+          `;
+      if (!raced) throw new Error("Postgres did not return the created tool call.");
+      return { toolCall: mapToolCall(raced), created: false };
+    });
+  }
+
+  async completeToolCall(
+    scope: UserScope,
+    input: CompleteToolCallRecord,
+  ): Promise<ToolCallData> {
+    return this.#settleToolCall(scope, input, "succeeded");
+  }
+
+  async failToolCall(
+    scope: UserScope,
+    input: FailToolCallRecord,
+  ): Promise<ToolCallData> {
+    return this.#settleToolCall(scope, input, "failed");
+  }
+
+  async #settleToolCall(
+    scope: UserScope,
+    input: CompleteToolCallRecord | FailToolCallRecord,
+    status: "succeeded" | "failed",
+  ): Promise<ToolCallData> {
+    await this.assertReady();
+    const result = status === "succeeded"
+      ? normalizeAndRedactToolPayload((input as CompleteToolCallRecord).result)
+      : null;
+    const error = status === "failed"
+      ? normalizeToolCallText((input as FailToolCallRecord).error, "tool error", 10_000)
+      : null;
+    const rows = await this.#sql<ToolCallRow[]>`
+      UPDATE viby.tool_calls AS call SET
+        status = ${status}, result = ${result === null ? null : this.#sql.json(result)},
+        error = ${error}, completed_at = now()
+      FROM viby.generations AS generation, viby.generation_attempts AS attempt
+      WHERE call.tenant_id = ${scope.tenantId} AND call.user_id = ${scope.userId}
+        AND call.id = ${input.id} AND call.generation_id = ${input.generationId}
+        AND call.attempt_id = ${input.attemptId} AND call.status = 'pending'
+        AND generation.id = call.generation_id
+        AND generation.tenant_id = call.tenant_id AND generation.user_id = call.user_id
+        AND generation.status = 'running' AND generation.active_attempt_id = attempt.id
+        AND attempt.id = call.attempt_id AND attempt.status = 'running'
+        AND attempt.lease_token = ${input.leaseToken} AND attempt.lease_expires_at > now()
+      RETURNING call.*
+    `;
+    if (rows[0]) return mapToolCall(rows[0]);
+    const [existing] = await this.#sql<ToolCallRow[]>`
+      SELECT call.* FROM viby.tool_calls AS call
+      WHERE call.tenant_id = ${scope.tenantId} AND call.user_id = ${scope.userId}
+        AND call.id = ${input.id} AND call.generation_id = ${input.generationId}
+        AND call.attempt_id = ${input.attemptId}
+    `;
+    if (!existing) throw new NotFoundError("Tool call");
+    if (existing.status !== "pending") return mapToolCall(existing);
+    throw new GenerationStateError(input.generationId, "The generation worker lease is no longer active.");
+  }
+
   async completeGeneration<Framework extends FrameworkId>(
     scope: UserScope,
     input: CompleteGenerationRecord<Framework>,
@@ -1422,6 +1570,19 @@ export class PostgresRepository implements Repository {
     return rows.map(mapEvent);
   }
 
+  async listToolCalls(scope: UserScope, generationId: string): Promise<ToolCallData[]> {
+    await this.assertReady();
+    const rows = await this.#sql<ToolCallRow[]>`
+      SELECT call.* FROM viby.tool_calls AS call
+      JOIN viby.generations AS generation ON generation.id = call.generation_id
+      WHERE call.tenant_id = ${scope.tenantId} AND call.user_id = ${scope.userId}
+        AND call.generation_id = ${generationId}
+        AND generation.tenant_id = ${scope.tenantId} AND generation.user_id = ${scope.userId}
+      ORDER BY call.created_at, call.id
+    `;
+    return rows.map(mapToolCall);
+  }
+
   async listGenerationTasks(
     scope: UserScope,
     generationId: string,
@@ -1823,6 +1984,63 @@ async function insertMessage(
       )
     `;
   }
+  const toolCallIds = input.parts.flatMap((part) => (
+    part.type === "tool-call" ? [part.data.toolCallId] : []
+  ));
+  if (toolCallIds.length > 0) {
+    await sql`
+      UPDATE viby.tool_calls SET message_id = ${messageId}
+      WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+        AND generation_id = ${input.generationId} AND attempt_id = ${input.attemptId}
+        AND id = ANY(${sql.array(toolCallIds)}::uuid[])
+    `;
+  }
+}
+
+async function assertActiveToolAttempt(
+  sql: postgres.TransactionSql,
+  scope: UserScope,
+  input: Pick<CreateToolCallRecord, "generationId" | "attemptId" | "leaseToken">,
+): Promise<void> {
+  const rows = await sql<{ id: string }[]>`
+    SELECT attempt.id
+    FROM viby.generations AS generation
+    JOIN viby.generation_attempts AS attempt ON attempt.id = generation.active_attempt_id
+    WHERE generation.tenant_id = ${scope.tenantId} AND generation.user_id = ${scope.userId}
+      AND generation.id = ${input.generationId} AND generation.status = 'running'
+      AND attempt.id = ${input.attemptId} AND attempt.status = 'running'
+      AND attempt.lease_token = ${input.leaseToken} AND attempt.lease_expires_at > now()
+  `;
+  if (rows.length === 0) {
+    throw new GenerationStateError(input.generationId, "The generation worker lease is no longer active.");
+  }
+}
+
+function mapToolCall(row: ToolCallRow): ToolCallData {
+  return {
+    id: row.id,
+    generationId: row.generation_id,
+    attemptId: row.attempt_id,
+    messageId: row.message_id,
+    providerCallId: row.provider_call_id,
+    name: row.name,
+    effect: row.effect,
+    arguments: row.arguments,
+    result: row.result,
+    status: row.status,
+    error: row.error,
+    idempotencyKey: row.idempotency_key,
+    createdAt: row.created_at,
+    completedAt: row.completed_at,
+  };
+}
+
+function normalizeToolCallText(value: string, label: string, maxLength: number): string {
+  const normalized = value.trim();
+  if (!normalized || normalized.length > maxLength) {
+    throw new ConfigurationError(`The ${label} must contain 1-${maxLength} characters.`);
+  }
+  return normalized;
 }
 
 function mapSandboxLease<Framework extends FrameworkId>(

@@ -13,8 +13,11 @@ import type {
   MessageData,
   MessagePartDataMap,
   MessagePartType,
+  JsonValue,
   ResolvedSkill,
   SourceChange,
+  ToolCallData,
+  ToolCallEffect,
   VersionFile,
 } from "./types.js";
 import { normalizeProjectPath, sha256 } from "./utils.js";
@@ -128,10 +131,35 @@ export interface AgentTraceWriter {
   start<Type extends MessagePartType>(type: Type): Promise<AgentTracePart<Type>>;
 }
 
+export interface AgentToolCallInput<Arguments extends JsonValue = JsonValue> {
+  readonly providerCallId: string;
+  readonly name: string;
+  readonly effect: ToolCallEffect;
+  readonly arguments: Arguments;
+  readonly idempotencyKey?: string;
+}
+
+export interface AgentToolCall<
+  Arguments extends JsonValue = JsonValue,
+  Result extends JsonValue = JsonValue,
+> {
+  readonly toolCall: ToolCallData<Arguments, Result>;
+  readonly created: boolean;
+  succeed(result: Result): Promise<ToolCallData<Arguments, Result>>;
+  fail(error: string): Promise<ToolCallData<Arguments, Result>>;
+}
+
+export interface AgentToolCallWriter {
+  start<Arguments extends JsonValue = JsonValue, Result extends JsonValue = JsonValue>(
+    input: AgentToolCallInput<Arguments>,
+  ): Promise<AgentToolCall<Arguments, Result>>;
+}
+
 export interface GeneratorOptions {
   readonly signal?: AbortSignal;
   readonly onDelta?: (delta: string) => void | Promise<void>;
   readonly trace?: AgentTraceWriter;
+  readonly toolCalls?: AgentToolCallWriter;
 }
 
 export interface ProjectGenerator<Framework extends FrameworkId = FrameworkId> {
