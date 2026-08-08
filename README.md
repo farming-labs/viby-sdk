@@ -148,6 +148,29 @@ try {
 
 Commands use a separate executable and argument list instead of an interpolated shell command. Sessions support streamed output, relative file reads and writes, optional public port URLs, abort signals, and idempotent cleanup. `viby.close()` stops any session the application left open.
 
+### E2B
+
+Install E2B only when that is the provider your product uses:
+
+```bash
+npm install e2b
+```
+
+```ts
+import { e2bSandbox } from "@viby/sdk/sandbox/e2b";
+
+const viby = createViby({
+  framework: "farm",
+  model,
+  sandbox: e2bSandbox({
+    apiKey: process.env.E2B_API_KEY,
+    template: "base",
+  }),
+});
+```
+
+The adapter maps Viby timeouts, environment variables, file operations, abort signals, output callbacks, and port URLs to the E2B SDK. Arguments are POSIX-quoted before reaching E2B's shell command API.
+
 ## Run and stream asynchronously
 
 `chat.start` persists a queued generation and its first attempt before model execution begins, then immediately returns an addressable generation handle:

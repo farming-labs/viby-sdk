@@ -29,6 +29,8 @@ try {
     "dist/index.js",
     "dist/index.d.ts",
     "dist/cli.js",
+    "dist/sandbox-e2b.js",
+    "dist/sandbox-e2b.d.ts",
     "migrations/0001_initial.sql",
     "migrations/0002_durable_generations.sql",
   ]) {
