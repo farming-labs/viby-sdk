@@ -1,5 +1,6 @@
 import { posix } from "node:path";
 import { ConfigurationError } from "./errors.js";
+import { sandboxCapabilities } from "./sandbox.js";
 import type {
   SandboxAdapter,
   SandboxCommand,
@@ -101,6 +102,12 @@ export function cloudflareSandbox<Binding extends object>(
   const normalized = normalizeOptions(options);
   return {
     provider: "cloudflare",
+    capabilities: sandboxCapabilities({
+      files: true,
+      commands: true,
+      commandStreaming: true,
+      portUrls: normalized.preview !== undefined,
+    }),
     async create(input) {
       const id = typeof normalized.id === "function"
         ? sandboxId(normalized.id(input.context))

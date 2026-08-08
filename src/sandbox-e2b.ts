@@ -1,5 +1,6 @@
 import { posix } from "node:path";
 import { Sandbox as E2BSandbox } from "e2b";
+import { sandboxCapabilities } from "./sandbox.js";
 import type {
   SandboxAdapter,
   SandboxCommand,
@@ -76,6 +77,12 @@ export function e2bSandbox(
 ): SandboxAdapter {
   return {
     provider: "e2b",
+    capabilities: sandboxCapabilities({
+      files: true,
+      commands: true,
+      commandStreaming: true,
+      portUrls: true,
+    }),
     async create(input) {
       const client = await factory({
         ...(options.template ? { template: options.template } : {}),

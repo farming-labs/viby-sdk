@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { posix } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { ConfigurationError } from "./errors.js";
+import { sandboxCapabilities } from "./sandbox.js";
 import type {
   SandboxAdapter,
   SandboxCommand,
@@ -62,6 +63,12 @@ export function dockerSandbox(
   const normalized = normalizeOptions(options);
   return {
     provider: "docker",
+    capabilities: sandboxCapabilities({
+      files: true,
+      commands: true,
+      commandStreaming: true,
+      portUrls: true,
+    }),
     async create(input) {
       const result = await runner.run({
         executable: normalized.dockerPath,

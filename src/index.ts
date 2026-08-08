@@ -8,7 +8,11 @@ export {
 } from "./client.js";
 export { skillRead } from "./skills.js";
 export { DownloadArtifact } from "./download.js";
-export { SandboxSession } from "./sandbox.js";
+export {
+  SANDBOX_CAPABILITY_NAMES,
+  SandboxSession,
+  sandboxCapabilities,
+} from "./sandbox.js";
 export {
   ConfigurationError,
   DatabaseNotReadyError,
@@ -24,6 +28,8 @@ export {
 } from "./errors.js";
 export type {
   SandboxAdapter,
+  SandboxCapabilities,
+  SandboxCapability,
   SandboxCommand,
   SandboxCommandResult,
   SandboxCreateContext,

@@ -13,6 +13,7 @@ import type {
   SandboxOperationOptions,
   SandboxOutputEvent,
 } from "../src/sandbox.js";
+import { sandboxCapabilities } from "../src/sandbox.js";
 import { SkillResolver } from "../src/skills.js";
 import type { FrameworkId } from "../src/types.js";
 import { MemoryRepository } from "./helpers/memory-repository.js";
@@ -69,6 +70,12 @@ class FakeSandboxInstance implements SandboxInstance {
 
 class FakeSandboxAdapter implements SandboxAdapter {
   readonly provider = "fake";
+  readonly capabilities = sandboxCapabilities({
+    files: true,
+    commands: true,
+    commandStreaming: true,
+    portUrls: true,
+  });
   readonly creates: SandboxCreateInput[] = [];
   readonly instances: FakeSandboxInstance[] = [];
   failWrites = false;
@@ -130,6 +137,9 @@ test("materializes an immutable version through a provider-agnostic sandbox adap
 
   assert.equal(session.id, "sandbox_test");
   assert.equal(session.provider, "fake");
+  assert.equal(session.supports("commandStreaming"), true);
+  assert.equal(session.supports("backgroundProcesses"), false);
+  assert.deepEqual(session.capabilities, adapter.capabilities);
   assert.deepEqual(adapter.creates[0], {
     context: {
       tenantId: "tenant-a",
@@ -198,6 +208,35 @@ test("validates sandbox input and requires an adapter", async () => {
   );
   await session.stop();
   await viby.close();
+
+  const incomplete = await importedVersion({
+    provider: "incomplete",
+    capabilities: sandboxCapabilities({ commands: true }),
+    create: (input) => adapter.create(input),
+  });
+  await assert.rejects(
+    () => incomplete.version.sandbox(),
+    /must support files and commands/,
+  );
+  await incomplete.viby.close();
+});
+
+test("normalizes immutable provider-agnostic capability records", () => {
+  const capabilities = sandboxCapabilities({ files: true, commands: true });
+  assert.deepEqual(capabilities, {
+    files: true,
+    commands: true,
+    commandStreaming: false,
+    portUrls: false,
+    backgroundProcesses: false,
+    reconnect: false,
+    snapshots: false,
+  });
+  assert.equal(Object.isFrozen(capabilities), true);
+  assert.throws(
+    () => sandboxCapabilities({ vendorFeature: true } as never),
+    /Unknown sandbox capability/,
+  );
 });
 
 test("cleans up failed materialization and active sessions on client close", async () => {
