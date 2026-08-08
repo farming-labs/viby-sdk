@@ -11,6 +11,7 @@ export {
 export { skillRead } from "./skills.js";
 export { DownloadArtifact } from "./download.js";
 export { AgentWorkspace } from "./agent-workspace.js";
+export { AgentProjectGenerator } from "./agent-runner.js";
 export { MESSAGE_PART_TYPES } from "./types.js";
 export type {
   AgentWorkspaceCommitInput,
@@ -73,6 +74,7 @@ export type {
 export type {
   BuiltInSkillCategory,
   ApplySourceChangesInput,
+  AgentRunnerConfig,
   ChatData,
   ChatMetadata,
   CreateChatInput,

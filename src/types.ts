@@ -44,9 +44,20 @@ export interface VibyConfig<Framework extends FrameworkId = FrameworkId> {
   readonly skills?: SkillGroups;
   readonly sandbox?: SandboxAdapter;
   readonly sandboxPolicy?: SandboxCommandPolicy;
+  readonly agent?: AgentRunnerConfig;
   readonly generation?: {
     readonly execution?: "embedded" | "worker";
   };
+}
+
+export interface AgentRunnerConfig {
+  readonly maxSteps?: number;
+  readonly maxDurationMs?: number;
+  readonly maxTokens?: number;
+  readonly maxCommands?: number;
+  readonly commandTimeoutMs?: number;
+  readonly maxCommandOutputBytes?: number;
+  readonly sandboxPorts?: readonly number[];
 }
 
 export interface UserScope {

@@ -254,6 +254,76 @@ test("materializes an immutable version through a provider-agnostic sandbox adap
   await viby.close();
 });
 
+test("connects a capability-discovered sandbox to a generation agent and cleans it up", async () => {
+  const adapter = new FakeSandboxAdapter();
+  const repository = new MemoryRepository();
+  let observedSandbox = false;
+  const viby = createVibyWithDependencies(
+    {
+      framework: "farm",
+      model: "test/mock" as LanguageModel,
+      skills: {},
+      sandbox: adapter,
+      agent: { maxDurationMs: 10_000, sandboxPorts: [3000] },
+    },
+    {
+      repository,
+      generator: {
+        async generate(input): Promise<GeneratorOutput> {
+          assert.ok(input.sandbox);
+          observedSandbox = true;
+          assert.equal(input.sandbox.supports("commands"), true);
+          assert.equal(Buffer.from(await input.sandbox.readFile("test.js")).toString(), 'console.log("ready")\n');
+          assert.equal((await input.sandbox.run({ command: "npm", args: ["test"] })).exitCode, 0);
+          return {
+            kind: "changes",
+            title: "Sandbox verified",
+            summary: "Verified the base version before editing.",
+            changes: [{
+              type: "write",
+              path: "test.js",
+              content: 'console.log("updated")\n',
+              mediaType: "text/javascript",
+            }],
+            usage: {
+              inputTokens: 1,
+              inputTokenDetails: {
+                noCacheTokens: 1,
+                cacheReadTokens: 0,
+                cacheWriteTokens: 0,
+              },
+              outputTokens: 1,
+              outputTokenDetails: { textTokens: 1, reasoningTokens: 0 },
+              totalTokens: 2,
+            },
+            finishReason: "stop",
+          };
+        },
+      },
+      skillResolver: new SkillResolver({}),
+    },
+  );
+  const chat = await viby.forUser({ tenantId: "tenant-a", userId: "user-a" }).chats.import({
+    source: {
+      type: "files",
+      files: [
+        { path: "package.json", content: '{"scripts":{"test":"node test.js"}}\n' },
+        { path: "test.js", content: 'console.log("ready")\n' },
+      ],
+    },
+  });
+  const version = await chat.latestVersion();
+  assert.ok(version);
+  const updated = await version.iterate({ prompt: "Verify and update the test" });
+
+  assert.equal(observedSandbox, true);
+  assert.equal(adapter.creates.length, 1);
+  assert.deepEqual(adapter.creates[0]?.ports, [3000]);
+  assert.equal(adapter.instances[0]?.stopCalls, 1);
+  assert.equal((await updated.files()).find((file) => file.path === "test.js")?.content, 'console.log("updated")\n');
+  await viby.close();
+});
+
 test("validates sandbox input and requires an adapter", async () => {
   const withoutAdapter = await importedVersion();
   await assert.rejects(() => withoutAdapter.version.sandbox(), SandboxUnavailableError);

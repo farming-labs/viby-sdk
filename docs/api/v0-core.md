@@ -68,7 +68,7 @@ Viby does not copy v0's privacy enum, author identity, account URLs, or hosted w
 
 ## Messages and agent trace
 
-v0 v2 messages contain ordered parts such as text, thinking, file reads, file edits, searches, shell commands, tool calls, and agent actions. Viby now persists a provider-neutral discriminated union for the durable result narrative. Resumable lifecycle events remain the next layer for rendering live trace progress.
+v0 v2 messages contain ordered parts such as text, thinking, file reads, file edits, searches, shell commands, tool calls, and agent actions. Viby persists a provider-neutral discriminated union for the durable result narrative plus resumable part lifecycle events for rendering live trace progress.
 
 | Capability | v0 v2 | Viby-native surface | Status |
 | --- | --- | --- | --- |
@@ -115,6 +115,7 @@ v0 v2 makes its VM an implicit property of every chat. Viby keeps execution opti
 | Long-running process | persistent VM services | provider-neutral background process handle | Shipped |
 | Reconnect after host restart | chat VM identity | durable sandbox lease and adapter reconnect | Shipped |
 | Screenshot/browser inspection | hosted agent tools | portable host-supplied browser tool | Planned |
+| Agent sandbox tools | implicit hosted VM tools | common tools selected strictly from discovered adapter capabilities | Shipped |
 
 ## Tools, MCP, webhooks, and integrations
 
