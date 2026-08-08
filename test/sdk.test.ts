@@ -361,8 +361,8 @@ test("updates JSON chat metadata and paginates chats, messages, and versions", a
   assert.equal(messageIds.length, 6);
   assert.equal(new Set(messageIds).size, 6);
 
-  await new Promise((resolve) => setTimeout(resolve, 2));
   const secondChat = await user.chats.create({ title: "Second chat" });
+  await new Promise((resolve) => setTimeout(resolve, 2));
   const refreshed = await updated.update({ metadata: updated.metadata });
   const chatPageOne = await user.chats.list({ limit: 1 });
   assert.equal(chatPageOne.items[0]?.id, refreshed.id);
