@@ -41,6 +41,8 @@ try {
     "dist/sandbox-modal.d.ts",
     "dist/sandbox-cloudflare.js",
     "dist/sandbox-cloudflare.d.ts",
+    "dist/sandbox-conformance.js",
+    "dist/sandbox-conformance.d.ts",
     "migrations/0001_initial.sql",
     "migrations/0002_durable_generations.sql",
   ]) {
@@ -75,6 +77,18 @@ try {
         'if (typeof DownloadArtifact !== "function") throw new Error("DownloadArtifact export is missing");',
         'if (typeof SandboxSession !== "function") throw new Error("SandboxSession export is missing");',
         'if (skillRead("./skills").source !== "file") throw new Error("skillRead export is invalid");',
+      ].join("\n"),
+    ],
+    { cwd: consumer },
+  );
+  await execute(
+    node,
+    [
+      "--input-type=module",
+      "--eval",
+      [
+        'import { verifySandboxAdapter } from "@viby/sdk/sandbox/conformance";',
+        'if (typeof verifySandboxAdapter !== "function") throw new Error("sandbox conformance export is missing");',
       ].join("\n"),
     ],
     { cwd: consumer },

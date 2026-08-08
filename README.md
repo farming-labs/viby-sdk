@@ -150,6 +150,8 @@ Commands use a separate executable and argument list instead of an interpolated 
 
 Inspect `sandbox.capabilities` or call `sandbox.supports("portUrls")` before using optional behavior. The typed capability record is provider-neutral and reports what the configured adapter implements; unsupported future primitives such as background processes, reconnect, and snapshots remain `false` until the adapter exposes them through Viby.
 
+Adapter authors can import `verifySandboxAdapter` from `@viby/sdk/sandbox/conformance` in their own test suite. The caller supplies a harmless runtime-specific command and fixture credentials; Viby verifies capability declarations, text and binary file roundtrips, commands, streaming, port URLs, and idempotent cleanup without assuming a framework, image, or provider.
+
 ### E2B
 
 Install E2B only when that is the provider your product uses:

@@ -62,6 +62,10 @@
       "types": "./dist/sandbox-cloudflare.d.ts",
       "import": "./dist/sandbox-cloudflare.js"
     },
+    "./sandbox/conformance": {
+      "types": "./dist/sandbox-conformance.d.ts",
+      "import": "./dist/sandbox-conformance.js"
+    },
     "./package.json": "./package.json"
   },
   "bin": {
