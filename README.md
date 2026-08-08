@@ -193,6 +193,26 @@ const viby = createViby({
 
 Vercel OIDC authentication is automatic in a linked Vercel project. Outside Vercel, pass `token`, `teamId`, and `projectId` together. Viby creates non-persistent execution sandboxes, declares requested preview ports at creation, and maps command output streams into the common callback.
 
+### Local Docker
+
+Docker requires no JavaScript provider dependency:
+
+```ts
+import { dockerSandbox } from "@viby/sdk/sandbox/docker";
+
+const viby = createViby({
+  framework: "farm",
+  model,
+  sandbox: dockerSandbox({
+    image: "node:24-bookworm-slim",
+    cpus: 2,
+    memoryMb: 2048,
+  }),
+});
+```
+
+The adapter uses the local Docker CLI and daemon. It never bind-mounts generated source: files are streamed into a labeled, read-only-root container with dropped capabilities, `no-new-privileges`, PID/CPU/memory limits, and a size-limited temporary workspace. Use it for trusted local or single-tenant infrastructure; a Docker daemon is not a substitute for a hardened multi-tenant cloud sandbox.
+
 ## Run and stream asynchronously
 
 `chat.start` persists a queued generation and its first attempt before model execution begins, then immediately returns an addressable generation handle:

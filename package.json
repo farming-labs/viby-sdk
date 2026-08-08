@@ -46,6 +46,10 @@
       "types": "./dist/sandbox-vercel.d.ts",
       "import": "./dist/sandbox-vercel.js"
     },
+    "./sandbox/docker": {
+      "types": "./dist/sandbox-docker.d.ts",
+      "import": "./dist/sandbox-docker.js"
+    },
     "./package.json": "./package.json"
   },
   "bin": {
@@ -57,6 +61,7 @@
     "test": "npm run test:unit",
     "test:unit": "node --import tsx --test test/*.test.ts test/*.test.mjs",
     "test:integration": "node --import tsx --test test/postgres.integration.test.ts",
+    "test:docker": "node --import tsx --test test/integration/sandbox-docker.test.ts",
     "test:package": "node scripts/package-smoke.mjs",
     "check": "npm run typecheck && npm test && npm run build",
     "bump": "bumpp",
