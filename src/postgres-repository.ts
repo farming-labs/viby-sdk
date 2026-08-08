@@ -1421,7 +1421,7 @@ export class PostgresRepository implements Repository {
       SELECT
         ${input.id}, ${scope.tenantId}, ${scope.userId}, chat.id, version.id,
         ${input.context.framework}, ${input.provider}, ${input.sandboxId},
-        ${this.#sql.array([...input.ports])}, ${input.expiresAt}
+        ${this.#sql.array([...input.ports])}::integer[], ${input.expiresAt}
       FROM viby.chats AS chat
       JOIN viby.versions AS version ON version.chat_id = chat.id
       WHERE chat.id = ${input.context.chatId}
