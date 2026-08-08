@@ -1,6 +1,7 @@
 import { posix } from "node:path";
 import type { ModalClientParams, SandboxCreateParams } from "modal";
 import { ConfigurationError } from "./errors.js";
+import { sandboxCapabilities } from "./sandbox.js";
 import type {
   SandboxAdapter,
   SandboxCommand,
@@ -106,6 +107,12 @@ export function modalSandbox(
   const normalized = normalizeOptions(options);
   return {
     provider: "modal",
+    capabilities: sandboxCapabilities({
+      files: true,
+      commands: true,
+      commandStreaming: true,
+      portUrls: true,
+    }),
     async create(input) {
       const name = typeof normalized.name === "function"
         ? validString(normalized.name(input.context), "Modal sandbox name")

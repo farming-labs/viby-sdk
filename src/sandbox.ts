@@ -8,8 +8,45 @@ const MAX_ENVIRONMENT_BYTES = 128_000;
 const MAX_ENVIRONMENT_ENTRIES = 256;
 const MAX_PORTS = 16;
 
+export const SANDBOX_CAPABILITY_NAMES = [
+  "files",
+  "commands",
+  "commandStreaming",
+  "portUrls",
+  "backgroundProcesses",
+  "reconnect",
+  "snapshots",
+] as const;
+
+export type SandboxCapability = typeof SANDBOX_CAPABILITY_NAMES[number];
+
+export type SandboxCapabilities = Readonly<Record<SandboxCapability, boolean>>;
+
+export function sandboxCapabilities(
+  capabilities: Partial<SandboxCapabilities> = {},
+): SandboxCapabilities {
+  if (!capabilities || typeof capabilities !== "object" || Array.isArray(capabilities)) {
+    throw new ConfigurationError("Sandbox capabilities must be an object.");
+  }
+  const unknown = Object.keys(capabilities).filter((key) => (
+    !SANDBOX_CAPABILITY_NAMES.includes(key as SandboxCapability)
+  ));
+  if (unknown.length > 0) {
+    throw new ConfigurationError(`Unknown sandbox capability: ${unknown[0]}`);
+  }
+  for (const [name, enabled] of Object.entries(capabilities)) {
+    if (typeof enabled !== "boolean") {
+      throw new ConfigurationError(`Sandbox capability ${name} must be a boolean.`);
+    }
+  }
+  return Object.freeze(Object.fromEntries(
+    SANDBOX_CAPABILITY_NAMES.map((name) => [name, capabilities[name] ?? false]),
+  ) as unknown as SandboxCapabilities);
+}
+
 export interface SandboxAdapter {
   readonly provider: string;
+  readonly capabilities: SandboxCapabilities;
   create(input: SandboxCreateInput): Promise<SandboxInstance>;
 }
 
@@ -79,12 +116,19 @@ export interface SandboxInstance {
 export class SandboxSession {
   readonly id: string;
   readonly provider: string;
+  readonly capabilities: SandboxCapabilities;
   readonly #instance: SandboxInstance;
   readonly #onStopped: () => void;
   #stopPromise: Promise<void> | null = null;
 
-  constructor(provider: string, instance: SandboxInstance, onStopped: () => void = () => {}) {
+  constructor(
+    provider: string,
+    capabilities: SandboxCapabilities,
+    instance: SandboxInstance,
+    onStopped: () => void = () => {},
+  ) {
     this.provider = normalizeProvider(provider);
+    this.capabilities = sandboxCapabilities(capabilities);
     this.id = normalizeSandboxId(instance.id);
     this.#instance = instance;
     this.#onStopped = onStopped;
@@ -92,6 +136,13 @@ export class SandboxSession {
 
   get stopped(): boolean {
     return this.#stopPromise !== null;
+  }
+
+  supports(capability: SandboxCapability): boolean {
+    if (!SANDBOX_CAPABILITY_NAMES.includes(capability)) {
+      throw new ConfigurationError(`Unknown sandbox capability: ${String(capability)}`);
+    }
+    return this.capabilities[capability];
   }
 
   async writeFiles(
@@ -228,10 +279,16 @@ export class SandboxRegistry {
       ports: normalized.ports,
       ...(normalized.signal ? { signal: normalized.signal } : {}),
     };
+    const capabilities = sandboxCapabilities(adapter.capabilities);
+    if (!capabilities.files || !capabilities.commands) {
+      throw new ConfigurationError(
+        "Sandbox adapters must support files and commands to materialize a Viby version.",
+      );
+    }
     const instance = await sandboxOperation(adapter.provider, "create sandbox", () => (
       adapter.create(createInput)
     ));
-    const session = new SandboxSession(adapter.provider, instance, () => {
+    const session = new SandboxSession(adapter.provider, capabilities, instance, () => {
       this.#sessions.delete(session);
     });
     this.#sessions.add(session);

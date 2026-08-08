@@ -3,6 +3,7 @@ import { Writable } from "node:stream";
 import { Sandbox as VercelSandbox } from "@vercel/sandbox";
 import type { NetworkPolicy } from "@vercel/sandbox";
 import { ConfigurationError } from "./errors.js";
+import { sandboxCapabilities } from "./sandbox.js";
 import type {
   SandboxAdapter,
   SandboxCommand,
@@ -100,6 +101,12 @@ export function vercelSandbox(
   validateOptions(options);
   return {
     provider: "vercel",
+    capabilities: sandboxCapabilities({
+      files: true,
+      commands: true,
+      commandStreaming: true,
+      portUrls: true,
+    }),
     async create(input) {
       if (input.ports.length > MAX_VERCEL_PORTS) {
         throw new ConfigurationError(

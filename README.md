@@ -148,6 +148,8 @@ try {
 
 Commands use a separate executable and argument list instead of an interpolated shell command. Sessions support streamed output, relative file reads and writes, optional public port URLs, abort signals, and idempotent cleanup. `viby.close()` stops any session the application left open.
 
+Inspect `sandbox.capabilities` or call `sandbox.supports("portUrls")` before using optional behavior. The typed capability record is provider-neutral and reports what the configured adapter implements; unsupported future primitives such as background processes, reconnect, and snapshots remain `false` until the adapter exposes them through Viby.
+
 ### E2B
 
 Install E2B only when that is the provider your product uses:

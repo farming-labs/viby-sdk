@@ -8,6 +8,7 @@ import {
   type DaytonaConfig,
 } from "@daytona/sdk";
 import { ConfigurationError } from "./errors.js";
+import { sandboxCapabilities } from "./sandbox.js";
 import type {
   SandboxAdapter,
   SandboxCommand,
@@ -142,6 +143,12 @@ export function daytonaSandbox(
   const normalized = normalizeOptions(options);
   return {
     provider: "daytona",
+    capabilities: sandboxCapabilities({
+      files: true,
+      commands: true,
+      commandStreaming: true,
+      portUrls: true,
+    }),
     async create(input) {
       const name = typeof normalized.name === "function"
         ? normalizeOptionalString(normalized.name(input.context), "Daytona sandbox name")
