@@ -266,6 +266,16 @@ export type MessagePart<Type extends MessagePartType = MessagePartType> =
 export type MessagePartInput<Type extends MessagePartType = MessagePartType> =
   Type extends MessagePartType
     ? {
+        readonly id?: string;
+        readonly type: Type;
+        readonly data: MessagePartDataMap[Type];
+      }
+    : never;
+
+export type DurableMessagePartInput<Type extends MessagePartType = MessagePartType> =
+  Type extends MessagePartType
+    ? {
+        readonly id: string;
         readonly type: Type;
         readonly data: MessagePartDataMap[Type];
       }
@@ -377,6 +387,10 @@ export type GenerationEventType =
   | "attempt.queued"
   | "attempt.started"
   | "output.delta"
+  | "part.started"
+  | "part.delta"
+  | "part.completed"
+  | "part.failed"
   | "attempt.waiting"
   | "task.created"
   | "task.resolved"
@@ -399,6 +413,21 @@ export interface GenerationEventDataMap {
     readonly reason: GenerationAttemptReason;
   };
   readonly "output.delta": { readonly delta: string };
+  readonly "part.started": {
+    readonly partId: string;
+    readonly position: number;
+    readonly type: MessagePartType;
+  };
+  readonly "part.delta": { readonly partId: string; readonly delta: string };
+  readonly "part.completed": { readonly part: DurableMessagePartInput };
+  readonly "part.failed": {
+    readonly partId: string;
+    readonly error: {
+      readonly message: string;
+      readonly code: string | null;
+      readonly retryable: boolean;
+    };
+  };
   readonly "attempt.waiting": { readonly taskId: string };
   readonly "task.created": { readonly task: GenerationTaskRequest & { readonly id: string } };
   readonly "task.resolved": {

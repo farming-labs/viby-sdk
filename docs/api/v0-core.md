@@ -78,6 +78,7 @@ v0 v2 messages contain ordered parts such as text, thinking, file reads, file ed
 | Send async | Send Message Async | `chat.start` or `version.startIteration` | Shipped |
 | Send streaming | Send Message Streaming | `generation.stream` | Shipped |
 | Ordered message parts | `Message.parts` | typed durable agent parts linked to messages, generations, and attempts | Shipped |
+| Live part lifecycle | streaming message part events | started, delta, completed, and failed events on the durable generation cursor | Shipped |
 | Final text and finish reason | message content and `finishReason` | message content plus attempt finish reason | Partial |
 | Token and credit usage | per-message usage | token usage is durable; currency/cost policy is host-owned | Partial |
 | Resolve blocking work | Resolve Task sync/async/streaming | typed `generation.resolve` followed by wait or stream | Shipped |

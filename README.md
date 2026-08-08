@@ -376,7 +376,7 @@ const generation = await chat.start({
 });
 
 for await (const event of generation.stream()) {
-  if (event.type === "output.delta") {
+  if (event.type.startsWith("part.")) {
     sendToBrowser(event);
   }
 }
@@ -396,6 +396,8 @@ for await (const event of generation.stream({ after: lastCursor })) {
   lastCursor = event.cursor;
 }
 ```
+
+Agent trace parts use four lifecycle events: `part.started`, `part.delta`, `part.completed`, and `part.failed`. Started events establish a stable part id, type, and trace position; deltas append live display data; completion carries the typed durable part; and failures carry a redaction-safe error. Completed trace parts retain the same id in the final assistant message. Saving the normal generation cursor is sufficient to resume both lifecycle and trace events.
 
 Stopping an event iterator only disconnects that subscriber. Explicitly cancel the underlying model call with:
 
@@ -555,6 +557,7 @@ Included now:
 - ordered typed message parts with generation and attempt ownership
 - asynchronous generation handles
 - resumable event cursors and streamed output deltas
+- resumable started, delta, completed, and failed agent trace events
 - cancellation, retry, and process recovery
 - embedded or durable generation-worker execution with fenced leases and heartbeats
 - immutable attempt history and usage
