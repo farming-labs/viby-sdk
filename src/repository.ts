@@ -1,5 +1,6 @@
 import type {
   ChatData,
+  ChatMetadata,
   FrameworkId,
   GenerationAttemptData,
   GenerationAttemptReason,
@@ -22,6 +23,7 @@ export interface ImportChatRecord<Framework extends FrameworkId = FrameworkId> {
   readonly chatId: string;
   readonly versionId: string;
   readonly title: string;
+  readonly metadata: ChatMetadata;
   readonly summary: string;
   readonly framework: Framework;
   readonly files: readonly VersionFile[];
@@ -48,8 +50,33 @@ export interface ForkVersionRecord<Framework extends FrameworkId = FrameworkId> 
   readonly versionId: string;
   readonly sourceVersionId: string;
   readonly title: string;
+  readonly metadata: ChatMetadata;
   readonly summary: string;
   readonly framework: Framework;
+}
+
+export interface UpdateChatRecord {
+  readonly title: string;
+  readonly metadata: ChatMetadata;
+}
+
+export interface RepositoryPage<Item> {
+  readonly items: Item[];
+  readonly hasMore: boolean;
+}
+
+export interface ChatPageCursor {
+  readonly updatedAt: Date;
+  readonly id: string;
+}
+
+export interface MessagePageCursor {
+  readonly createdAt: Date;
+  readonly id: string;
+}
+
+export interface VersionPageCursor {
+  readonly number: number;
 }
 
 export interface RestoreVersionRecord<Framework extends FrameworkId = FrameworkId> {
@@ -128,7 +155,7 @@ export interface Repository {
   close(): Promise<void>;
   createChat<Framework extends FrameworkId>(
     scope: UserScope,
-    input: { id: string; title: string; framework: Framework },
+    input: { id: string; title: string; metadata: ChatMetadata; framework: Framework },
   ): Promise<ChatData<Framework>>;
   importChat<Framework extends FrameworkId>(
     scope: UserScope,
@@ -146,6 +173,11 @@ export interface Repository {
     scope: UserScope,
     input: RestoreVersionRecord<Framework>,
   ): Promise<VersionData<Framework>>;
+  updateChat<Framework extends FrameworkId>(
+    scope: UserScope,
+    id: string,
+    input: UpdateChatRecord,
+  ): Promise<ChatData<Framework>>;
   getChat<Framework extends FrameworkId>(
     scope: UserScope,
     id: string,
@@ -154,6 +186,11 @@ export interface Repository {
     scope: UserScope,
     limit: number,
   ): Promise<Array<ChatData<Framework>>>;
+  listChatPage<Framework extends FrameworkId>(
+    scope: UserScope,
+    limit: number,
+    after: ChatPageCursor | null,
+  ): Promise<RepositoryPage<ChatData<Framework>>>;
   createGeneration(scope: UserScope, input: CreateGenerationRecord): Promise<CreatedGeneration>;
   startGenerationAttempt(
     scope: UserScope,
@@ -221,6 +258,18 @@ export interface Repository {
     scope: UserScope,
     chatId: string,
   ): Promise<Array<VersionData<Framework>>>;
+  listVersionPage<Framework extends FrameworkId>(
+    scope: UserScope,
+    chatId: string,
+    limit: number,
+    after: VersionPageCursor | null,
+  ): Promise<RepositoryPage<VersionData<Framework>>>;
   listMessages(scope: UserScope, chatId: string): Promise<MessageData[]>;
+  listMessagePage(
+    scope: UserScope,
+    chatId: string,
+    limit: number,
+    after: MessagePageCursor | null,
+  ): Promise<RepositoryPage<MessageData>>;
   getVersionFiles(scope: UserScope, versionId: string): Promise<VersionFile[]>;
 }

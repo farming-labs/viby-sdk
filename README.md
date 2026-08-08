@@ -213,11 +213,24 @@ The ZIP is the raw framework-native source project. It contains no deployment ve
 ```ts
 const chat = await userViby.chats.get(chatId);
 const latest = await chat.latestVersion();
-const messages = await chat.listMessages();
-const versions = await chat.listVersions();
+const messages = await chat.listMessages({ limit: 20 });
+const versions = await chat.listVersions({ limit: 20 });
+
+const nextMessages = messages.nextCursor
+  ? await chat.listMessages({ after: messages.nextCursor, limit: 20 })
+  : null;
 ```
 
-All reads and writes are constrained by both `tenantId` and `userId`.
+Chat metadata is application-defined JSON and can store product state such as favorites, tags, or workspace references:
+
+```ts
+const updated = await chat.update({
+  title: "Customer analytics",
+  metadata: { favorite: true, workspaceId: "workspace_123" },
+});
+```
+
+Pagination cursors are opaque and stable for the resource ordering. All reads and writes remain constrained by both `tenantId` and `userId`.
 
 ## Skill categories
 

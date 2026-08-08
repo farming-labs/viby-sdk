@@ -179,6 +179,7 @@ test("resumes a durable running record after its original process is gone", asyn
   const chat = await repository.createChat(scope, {
     id: "59d16c6e-d4e0-4e57-8101-0471568526f4",
     title: "Dashboard",
+    metadata: {},
     framework: "farm",
   });
   const generationId = "a6c2b008-d89e-4874-a63a-b40d7f81b15d";

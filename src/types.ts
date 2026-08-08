@@ -50,6 +50,28 @@ export interface UserScope {
 
 export interface CreateChatInput {
   readonly title?: string;
+  readonly metadata?: ChatMetadata;
+}
+
+export type JsonValue = string | number | boolean | null | JsonValue[] | {
+  readonly [key: string]: JsonValue;
+};
+
+export type ChatMetadata = Readonly<Record<string, JsonValue>>;
+
+export interface UpdateChatInput {
+  readonly title?: string;
+  readonly metadata?: ChatMetadata;
+}
+
+export interface PageOptions {
+  readonly limit?: number;
+  readonly after?: string;
+}
+
+export interface CursorPage<Item> {
+  readonly items: readonly Item[];
+  readonly nextCursor: string | null;
 }
 
 export interface SourceFileInput {
@@ -71,6 +93,7 @@ export type ImportProjectSource =
 export interface ImportProjectInput {
   readonly title?: string;
   readonly summary?: string;
+  readonly metadata?: ChatMetadata;
   readonly source: ImportProjectSource;
 }
 
@@ -106,6 +129,7 @@ export interface ApplySourceChangesInput {
 export interface ForkVersionInput {
   readonly title?: string;
   readonly summary?: string;
+  readonly metadata?: ChatMetadata;
 }
 
 export interface RestoreVersionInput {
@@ -141,6 +165,7 @@ export interface ChatData<Framework extends FrameworkId = FrameworkId> {
   readonly tenantId: string;
   readonly userId: string;
   readonly title: string;
+  readonly metadata: ChatMetadata;
   readonly framework: Framework;
   readonly createdAt: Date;
   readonly updatedAt: Date;

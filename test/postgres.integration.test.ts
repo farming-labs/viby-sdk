@@ -100,8 +100,8 @@ test("persists a durable generation, iteration, events, and download in Postgres
     const persistedVersion = await persistedChat.getVersion(second.id);
     assert.equal(persistedVersion.number, 2);
     assert.equal(persistedVersion.parentVersionId, outcome.version.id);
-    assert.equal((await persistedChat.listMessages()).length, 4);
-    assert.equal((await persistedChat.listVersions()).length, 2);
+    assert.equal((await persistedChat.listMessages()).items.length, 4);
+    assert.equal((await persistedChat.listVersions()).items.length, 2);
     assert.equal(calls[1]?.previousFiles[0]?.content, "export const version = 1;\n");
 
     const artifact = await persistedVersion.download();
@@ -150,6 +150,36 @@ test("persists a durable generation, iteration, events, and download in Postgres
     assert.equal(restoredVersion.parentVersionId, importedVersion.id);
     assert.equal((await restoredVersion.files()).some((file) => file.path === "package.json"), true);
     assert.equal((await editedVersion.files()).some((file) => file.path === "fixtures/package.json"), true);
+
+    const updatedChat = await persistedChat.update({
+      title: "Updated Postgres integration",
+      metadata: { favorite: true, labels: ["integration", "postgres"] },
+    });
+    assert.deepEqual((await user.chats.get(updatedChat.id)).metadata, updatedChat.metadata);
+
+    const messagePageOne = await updatedChat.listMessages({ limit: 2 });
+    assert.equal(messagePageOne.items.length, 2);
+    assert.ok(messagePageOne.nextCursor);
+    const messagePageTwo = await updatedChat.listMessages({
+      limit: 2,
+      after: messagePageOne.nextCursor,
+    });
+    assert.equal(messagePageTwo.items.length, 2);
+    assert.equal(messagePageTwo.nextCursor, null);
+
+    const versionPageOne = await updatedChat.listVersions({ limit: 1 });
+    assert.equal(versionPageOne.items.length, 1);
+    assert.ok(versionPageOne.nextCursor);
+    const versionPageTwo = await updatedChat.listVersions({
+      limit: 1,
+      after: versionPageOne.nextCursor,
+    });
+    assert.equal(versionPageTwo.items.length, 1);
+    assert.equal(versionPageTwo.nextCursor, null);
+
+    const chatPage = await user.chats.list({ limit: 1 });
+    assert.equal(chatPage.items[0]?.id, updatedChat.id);
+    assert.ok(chatPage.nextCursor);
   } finally {
     await viby.close();
   }
