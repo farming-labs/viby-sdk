@@ -130,12 +130,11 @@ Viby separates a portable tool call from the credentialed connection used to ful
 
 ## Prioritized parity backlog
 
-Capability discovery, the adapter conformance suite, background processes, readiness checks, durable sandbox leases, reconnect-by-ID, generation worker leases with heartbeats, sandbox command policy enforcement, immutable agent workspace change sets, and typed durable message parts are shipped.
+Capability discovery, the adapter conformance suite, background processes, readiness checks, durable sandbox leases, reconnect-by-ID, generation worker leases with heartbeats, sandbox command policy enforcement, immutable agent workspace change sets, typed durable message parts, and permission-gated agent sandbox actions are shipped.
 
-1. Permission decisions around agent-initiated sandbox actions.
-2. Optional sandbox-backed preview sessions and a host-proxy contract.
-3. Attachments, generation-scoped model/skill configuration, file locks, lookup, deletion, search, and outbound event sinks.
-4. Explicit Git and deployment adapters after the portable generation workflow is complete.
+1. Optional sandbox-backed preview sessions and a host-proxy contract.
+2. Attachments, generation-scoped model/skill configuration, file locks, lookup, deletion, search, and outbound event sinks.
+3. Explicit Git and deployment adapters after the portable generation workflow is complete.
 
 ## Persistence rules
 

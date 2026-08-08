@@ -1,5 +1,9 @@
 import type { LanguageModel } from "ai";
-import type { SandboxAdapter, SandboxCommandPolicy } from "./sandbox.js";
+import type {
+  SandboxAdapter,
+  SandboxCommandPolicy,
+  SandboxCommandProposedAction,
+} from "./sandbox.js";
 
 export type FrameworkId =
   | "farm"
@@ -377,6 +381,7 @@ export interface PermissionTaskRequest {
   readonly message: string;
   readonly action: string;
   readonly permissions: readonly string[];
+  readonly proposedAction?: SandboxCommandProposedAction;
 }
 
 export type GenerationTaskRequest =

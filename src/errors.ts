@@ -1,3 +1,5 @@
+import type { SandboxCommandProposedAction } from "./sandbox.js";
+
 export class VibyError extends Error {
   readonly code: string;
 
@@ -101,6 +103,21 @@ export class SandboxCommandDeniedError extends VibyError {
     this.name = "SandboxCommandDeniedError";
     this.provider = provider;
     this.action = action;
+    this.reason = reason;
+  }
+}
+
+export class SandboxCommandApprovalRequiredError extends VibyError {
+  readonly proposedAction: SandboxCommandProposedAction;
+  readonly reason: string;
+
+  constructor(proposedAction: SandboxCommandProposedAction, reason: string) {
+    super(
+      "sandbox_command_approval_required",
+      `Sandbox command requires approval for ${proposedAction.provider}: ${reason}`,
+    );
+    this.name = "SandboxCommandApprovalRequiredError";
+    this.proposedAction = proposedAction;
     this.reason = reason;
   }
 }

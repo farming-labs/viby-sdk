@@ -1,11 +1,12 @@
 import {
   ConfigurationError,
+  SandboxCommandApprovalRequiredError,
   SandboxCommandDeniedError,
   SandboxError,
   SandboxUnavailableError,
 } from "./errors.js";
 import type { FrameworkId, UserScope, VersionFile } from "./types.js";
-import { createId, errorMessage, normalizeProjectPath } from "./utils.js";
+import { createId, errorMessage, normalizeProjectPath, sha256 } from "./utils.js";
 
 const DEFAULT_SANDBOX_TIMEOUT_MS = 300_000;
 const MAX_SANDBOX_TIMEOUT_MS = 86_400_000;
@@ -145,6 +146,9 @@ export interface SandboxCommandPolicyRequest<Framework extends FrameworkId = Fra
 }
 
 export type SandboxCommandPolicyDecision =
+  | { readonly decision: "allow" }
+  | { readonly decision: "deny"; readonly reason: string }
+  | { readonly decision: "approval-required"; readonly reason: string }
   | { readonly allow: true }
   | { readonly allow: false; readonly reason: string };
 
@@ -164,6 +168,32 @@ export interface SandboxCommandPolicyOptions {
 export interface SandboxCommandAuthorization<Framework extends FrameworkId = FrameworkId> {
   readonly policy: SandboxCommandPolicy;
   readonly context: SandboxCreateContext<Framework>;
+  readonly approvedActionKeys?: ReadonlySet<string>;
+  readonly deniedActionKeys?: ReadonlySet<string>;
+}
+
+export interface SandboxResolvedCommandActions {
+  readonly approvedActionKeys?: readonly string[];
+  readonly deniedActionKeys?: readonly string[];
+}
+
+export interface SandboxCommandProposedAction<Framework extends FrameworkId = FrameworkId> {
+  readonly type: "sandbox-command";
+  readonly idempotencyKey: string;
+  readonly provider: string;
+  readonly action: "run" | "start";
+  readonly context: SandboxCreateContext<Framework> | null;
+  readonly command: {
+    readonly command: string;
+    readonly args: readonly string[];
+    readonly cwd: string;
+    readonly environment: readonly string[];
+    readonly timeoutMs: number;
+  };
+}
+
+export interface SandboxCommandGrant {
+  readonly proposedAction: SandboxCommandProposedAction;
 }
 
 export function sandboxCommandPolicy(options: SandboxCommandPolicyOptions): SandboxCommandPolicy {
@@ -190,30 +220,30 @@ export function sandboxCommandPolicy(options: SandboxCommandPolicyOptions): Sand
   return (request) => {
     const command = request.command.command;
     if (!actions.has(request.action)) {
-      return { allow: false, reason: `${request.action} commands are not allowed.` };
+      return { decision: "deny", reason: `${request.action} commands are not allowed.` };
     }
     if (denyCommands.has(command)) {
-      return { allow: false, reason: `${command} is explicitly denied.` };
+      return { decision: "deny", reason: `${command} is explicitly denied.` };
     }
     if (allowCommands.size > 0 && !allowCommands.has(command)) {
-      return { allow: false, reason: `${command} is not in the command allowlist.` };
+      return { decision: "deny", reason: `${command} is not in the command allowlist.` };
     }
     if (maxTimeoutMs !== null && request.command.timeoutMs > maxTimeoutMs) {
-      return { allow: false, reason: `Command timeout exceeds ${maxTimeoutMs}ms.` };
+      return { decision: "deny", reason: `Command timeout exceeds ${maxTimeoutMs}ms.` };
     }
     if (maxArgs !== null && request.command.args.length > maxArgs) {
-      return { allow: false, reason: `Command has more than ${maxArgs} arguments.` };
+      return { decision: "deny", reason: `Command has more than ${maxArgs} arguments.` };
     }
     const disallowedEnvironment = request.command.environment.find((name) => (
       environment !== null && !environment.has(name)
     ));
     if (disallowedEnvironment) {
       return {
-        allow: false,
+        decision: "deny",
         reason: `Environment variable ${disallowedEnvironment} is not allowed.`,
       };
     }
-    return { allow: true };
+    return { decision: "allow" };
   };
 }
 
@@ -314,6 +344,7 @@ export class SandboxSession {
   readonly #instance: SandboxInstance;
   readonly #onStopped: () => void | Promise<void>;
   readonly #authorization: SandboxCommandAuthorization | null;
+  readonly #grants = new WeakSet<object>();
   #stopPromise: Promise<void> | null = null;
 
   constructor(
@@ -361,17 +392,33 @@ export class SandboxSession {
     ));
   }
 
-  async run(command: SandboxCommand): Promise<SandboxCommandResult> {
+  async authorizeCommand(
+    command: SandboxCommand,
+    action: "run" | "start" = "run",
+  ): Promise<SandboxCommandGrant> {
     this.#assertRunning();
     const normalized = normalizeCommand(command);
-    await this.#authorize("run", normalized);
+    const proposedAction = await this.#authorize(action, normalized);
+    const grant: SandboxCommandGrant = Object.freeze({ proposedAction });
+    this.#grants.add(grant);
+    return grant;
+  }
+
+  async run(
+    command: SandboxCommand,
+    grant?: SandboxCommandGrant,
+  ): Promise<SandboxCommandResult> {
+    this.#assertRunning();
+    const normalized = normalizeCommand(command);
+    if (grant) this.#consumeGrant("run", normalized, grant);
+    else await this.#authorize("run", normalized);
     const result = await sandboxOperation(this.provider, "run command", () => (
       this.#instance.run(normalized)
     ));
     return validateCommandResult(this.provider, "run command", result);
   }
 
-  async start(command: SandboxCommand): Promise<SandboxProcess> {
+  async start(command: SandboxCommand, grant?: SandboxCommandGrant): Promise<SandboxProcess> {
     this.#assertRunning();
     if (!this.capabilities.backgroundProcesses || !this.#instance.start) {
       throw new SandboxUnavailableError(
@@ -379,7 +426,8 @@ export class SandboxSession {
       );
     }
     const normalized = normalizeCommand(command);
-    await this.#authorize("start", normalized);
+    if (grant) this.#consumeGrant("start", normalized, grant);
+    else await this.#authorize("start", normalized);
     const process = await sandboxOperation(this.provider, "start process", () => (
       this.#instance.start!(normalized)
     ));
@@ -496,12 +544,74 @@ export class SandboxSession {
     }
   }
 
-  async #authorize(action: "run" | "start", command: SandboxCommand): Promise<void> {
-    if (!this.#authorization) return;
-    const request: SandboxCommandPolicyRequest = {
+  async #authorize(
+    action: "run" | "start",
+    command: SandboxCommand,
+  ): Promise<SandboxCommandProposedAction> {
+    const proposedAction = createSandboxCommandProposedAction(
+      this.provider,
+      action,
+      this.#authorization?.context ?? null,
+      command,
+    );
+    if (!this.#authorization) return proposedAction;
+    const request = this.#commandPolicyRequest(action, command);
+    let rawDecision: SandboxCommandPolicyDecision;
+    try {
+      rawDecision = await this.#authorization.policy(request);
+    } catch (error) {
+      if (
+        error instanceof SandboxCommandDeniedError
+        || error instanceof SandboxCommandApprovalRequiredError
+      ) throw error;
+      throw new SandboxError(
+        this.provider,
+        "authorize command",
+        `The command policy failed: ${errorMessage(error)}`,
+        { cause: error },
+      );
+    }
+    const decision = normalizeCommandPolicyDecision(rawDecision);
+    if (!decision) {
+      throw new SandboxError(
+        this.provider,
+        "authorize command",
+        "The command policy returned an invalid decision.",
+      );
+    }
+    if (decision.decision === "allow") return proposedAction;
+    const reason = decision.reason?.trim();
+    if (!reason || reason.length > 1_000) {
+      throw new SandboxError(
+        this.provider,
+        "authorize command",
+        `The command policy returned an invalid ${decision.decision} reason.`,
+      );
+    }
+    if (decision.decision === "deny") {
+      throw new SandboxCommandDeniedError(this.provider, action, reason);
+    }
+    if (this.#authorization.deniedActionKeys?.has(proposedAction.idempotencyKey)) {
+      throw new SandboxCommandDeniedError(
+        this.provider,
+        action,
+        "The proposed action was denied.",
+      );
+    }
+    if (this.#authorization.approvedActionKeys?.has(proposedAction.idempotencyKey)) {
+      return proposedAction;
+    }
+    throw new SandboxCommandApprovalRequiredError(proposedAction, reason);
+  }
+
+  #commandPolicyRequest(
+    action: "run" | "start",
+    command: SandboxCommand,
+  ): SandboxCommandPolicyRequest {
+    return {
       action,
       provider: this.provider,
-      context: { ...this.#authorization.context },
+      context: { ...this.#authorization!.context },
       command: {
         command: command.command,
         args: [...(command.args ?? [])],
@@ -510,37 +620,86 @@ export class SandboxSession {
         timeoutMs: command.timeoutMs ?? DEFAULT_SANDBOX_TIMEOUT_MS,
       },
     };
-    let decision: SandboxCommandPolicyDecision;
-    try {
-      decision = await this.#authorization.policy(request);
-    } catch (error) {
-      if (error instanceof SandboxCommandDeniedError) throw error;
-      throw new SandboxError(
-        this.provider,
-        "authorize command",
-        `The command policy failed: ${errorMessage(error)}`,
-        { cause: error },
-      );
-    }
-    if (!decision || typeof decision !== "object" || typeof decision.allow !== "boolean") {
-      throw new SandboxError(
-        this.provider,
-        "authorize command",
-        "The command policy returned an invalid decision.",
-      );
-    }
-    if (!decision.allow) {
-      const reason = decision.reason?.trim();
-      if (!reason || reason.length > 1_000) {
-        throw new SandboxError(
-          this.provider,
-          "authorize command",
-          "The command policy returned an invalid denial reason.",
-        );
-      }
-      throw new SandboxCommandDeniedError(this.provider, action, reason);
-    }
   }
+
+  #consumeGrant(
+    action: "run" | "start",
+    command: SandboxCommand,
+    grant: SandboxCommandGrant,
+  ): void {
+    const proposedAction = createSandboxCommandProposedAction(
+      this.provider,
+      action,
+      this.#authorization?.context ?? null,
+      command,
+    );
+    if (
+      !this.#grants.has(grant)
+      || grant.proposedAction.idempotencyKey !== proposedAction.idempotencyKey
+    ) {
+      throw new SandboxError(this.provider, "authorize command", "The command approval grant is invalid.");
+    }
+    this.#grants.delete(grant);
+  }
+}
+
+function normalizeCommandPolicyDecision(
+  decision: SandboxCommandPolicyDecision,
+): Exclude<SandboxCommandPolicyDecision, { readonly allow: boolean }> | null {
+  if (!decision || typeof decision !== "object" || Array.isArray(decision)) return null;
+  if ("allow" in decision) {
+    if (decision.allow === true) return { decision: "allow" };
+    if (decision.allow === false) return { decision: "deny", reason: decision.reason };
+    return null;
+  }
+  if (!["allow", "deny", "approval-required"].includes(decision.decision)) return null;
+  return decision;
+}
+
+export function sandboxCommandProposedAction<Framework extends FrameworkId>(
+  request: SandboxCommandPolicyRequest<Framework>,
+): SandboxCommandProposedAction<Framework> {
+  return createSandboxCommandProposedAction(
+    request.provider,
+    request.action,
+    request.context,
+    {
+      command: request.command.command,
+      args: request.command.args,
+      cwd: request.command.cwd,
+      env: Object.fromEntries(request.command.environment.map((name) => [name, ""])),
+      timeoutMs: request.command.timeoutMs,
+    },
+  );
+}
+
+function createSandboxCommandProposedAction<Framework extends FrameworkId>(
+  provider: string,
+  action: "run" | "start",
+  context: SandboxCreateContext<Framework> | null,
+  input: SandboxCommand,
+): SandboxCommandProposedAction<Framework> {
+  const command = {
+    command: input.command,
+    args: [...(input.args ?? [])],
+    cwd: input.cwd ?? ".",
+    environment: Object.keys(input.env ?? {}).sort(),
+    timeoutMs: input.timeoutMs ?? DEFAULT_SANDBOX_TIMEOUT_MS,
+  };
+  const canonical = JSON.stringify({
+    provider,
+    action,
+    context,
+    command,
+  });
+  return {
+    type: "sandbox-command",
+    idempotencyKey: `sandbox-command:${sha256(canonical)}`,
+    provider,
+    action,
+    context: context ? { ...context } : null,
+    command,
+  };
 }
 
 export class SandboxRegistry {
@@ -572,6 +731,7 @@ export class SandboxRegistry {
     },
     files: readonly VersionFile[],
     options: SandboxOpenOptions = {},
+    resolvedActions: SandboxResolvedCommandActions = {},
   ): Promise<SandboxSession> {
     if (!adapter) {
       throw new SandboxUnavailableError(
@@ -608,6 +768,7 @@ export class SandboxRegistry {
       scope,
       lease.id,
       createInput.context,
+      resolvedActions,
     );
     try {
       await session.writeFiles(files.map((file) => ({
@@ -683,6 +844,7 @@ export class SandboxRegistry {
       scope,
       lease.id,
       lease.context,
+      {},
     );
   }
 
@@ -722,11 +884,17 @@ export class SandboxRegistry {
     scope: UserScope,
     leaseId: string,
     context: SandboxCreateContext,
+    resolvedActions: SandboxResolvedCommandActions,
   ): SandboxSession {
     const session = new SandboxSession(provider, capabilities, instance, async () => {
       this.#sessions.delete(session);
       await this.store.closeSandboxLease(scope, leaseId, "stopped");
-    }, leaseId, this.policy ? { policy: this.policy, context } : null);
+    }, leaseId, {
+      policy: this.policy ?? (() => ({ decision: "allow" })),
+      context,
+      approvedActionKeys: new Set(resolvedActions.approvedActionKeys ?? []),
+      deniedActionKeys: new Set(resolvedActions.deniedActionKeys ?? []),
+    });
     this.#sessions.add(session);
     return session;
   }

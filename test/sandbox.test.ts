@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { LanguageModel } from "ai";
+import { MockLanguageModelV4 } from "ai/test";
+import { AgentProjectGenerator } from "../src/agent-runner.js";
 import { createVibyWithDependencies } from "../src/client.js";
 import {
+  SandboxCommandApprovalRequiredError,
   SandboxCommandDeniedError,
   SandboxError,
   SandboxUnavailableError,
@@ -21,10 +24,41 @@ import type {
   SandboxProcessInstance,
   SandboxReconnectInput,
 } from "../src/sandbox.js";
-import { sandboxCapabilities, sandboxCommandPolicy } from "../src/sandbox.js";
+import { SandboxSession, sandboxCapabilities, sandboxCommandPolicy } from "../src/sandbox.js";
 import { SkillResolver } from "../src/skills.js";
 import type { FrameworkId } from "../src/types.js";
 import { MemoryRepository } from "./helpers/memory-repository.js";
+
+const modelUsage = {
+  inputTokens: { total: 10, noCache: 10, cacheRead: undefined, cacheWrite: undefined },
+  outputTokens: { total: 20, text: 20, reasoning: undefined },
+};
+
+function modelToolCall(toolCallId: string, toolName: string, input: unknown) {
+  return {
+    content: [{
+      type: "tool-call" as const,
+      toolCallId,
+      toolName,
+      input: JSON.stringify(input),
+    }],
+    finishReason: { unified: "tool-calls" as const, raw: undefined },
+    usage: modelUsage,
+    warnings: [],
+  };
+}
+
+function modelCompletion(title: string, summary: string) {
+  return {
+    content: [{
+      type: "text" as const,
+      text: JSON.stringify({ outcome: "complete", title, summary, task: null }),
+    }],
+    finishReason: { unified: "stop" as const, raw: undefined },
+    usage: modelUsage,
+    warnings: [],
+  };
+}
 
 class UnusedGenerator<Framework extends FrameworkId> implements ProjectGenerator<Framework> {
   async generate(_input: GeneratorInput<Framework>): Promise<GeneratorOutput> {
@@ -489,6 +523,209 @@ test("enforces custom command policy before every adapter execution", async () =
   );
   assert.equal(adapter.instances[0]!.commands.length, 1);
   assert.equal(adapter.instances[0]!.backgroundCommands.length, 0);
+  await viby.close();
+});
+
+test("binds approval grants to one exact sandbox action without exposing secrets", async () => {
+  const adapter = new FakeSandboxAdapter();
+  const policy: SandboxCommandPolicy = () => ({
+    decision: "approval-required",
+    reason: "Commands require a user decision.",
+  });
+  const { version, viby } = await importedVersion(adapter, policy);
+  const session = await version.sandbox();
+  const command = {
+    command: "pnpm",
+    args: ["test"],
+    env: { API_TOKEN: "never-persist-this" },
+    timeoutMs: 5_000,
+  };
+  let approval: SandboxCommandApprovalRequiredError | undefined;
+
+  await assert.rejects(
+    () => session.authorizeCommand(command),
+    (error: unknown) => {
+      assert.ok(error instanceof SandboxCommandApprovalRequiredError);
+      approval = error;
+      return true;
+    },
+  );
+  assert.ok(approval);
+  assert.deepEqual(approval.proposedAction.command.environment, ["API_TOKEN"]);
+  assert.equal(JSON.stringify(approval.proposedAction).includes("never-persist-this"), false);
+  assert.equal(adapter.instances[0]!.commands.length, 0);
+
+  const approvedInstance = new FakeSandboxInstance();
+  const approvedSession = new SandboxSession(
+    adapter.provider,
+    adapter.capabilities,
+    approvedInstance,
+    undefined,
+    undefined,
+    {
+      policy,
+      context: approval.proposedAction.context!,
+      approvedActionKeys: new Set([approval.proposedAction.idempotencyKey]),
+    },
+  );
+  const grant = await approvedSession.authorizeCommand(command);
+  await assert.rejects(
+    () => approvedSession.run({ ...command, args: ["build"] }, grant),
+    /approval grant is invalid/,
+  );
+  await approvedSession.run(command, grant);
+  await assert.rejects(() => approvedSession.run(command, grant), /approval grant is invalid/);
+  assert.equal(approvedInstance.commands.length, 1);
+
+  const deniedInstance = new FakeSandboxInstance();
+  const deniedSession = new SandboxSession(
+    adapter.provider,
+    adapter.capabilities,
+    deniedInstance,
+    undefined,
+    undefined,
+    {
+      policy,
+      context: approval.proposedAction.context!,
+      deniedActionKeys: new Set([approval.proposedAction.idempotencyKey]),
+    },
+  );
+  await assert.rejects(
+    () => deniedSession.authorizeCommand(command),
+    (error: unknown) => error instanceof SandboxCommandDeniedError
+      && error.reason === "The proposed action was denied.",
+  );
+  assert.equal(deniedInstance.commands.length, 0);
+
+  const background = { command: "pnpm", args: ["dev"] };
+  let backgroundApproval: SandboxCommandApprovalRequiredError | undefined;
+  await assert.rejects(
+    () => approvedSession.authorizeCommand(background, "start"),
+    (error: unknown) => {
+      assert.ok(error instanceof SandboxCommandApprovalRequiredError);
+      backgroundApproval = error;
+      return true;
+    },
+  );
+  assert.ok(backgroundApproval);
+  const backgroundSession = new SandboxSession(
+    adapter.provider,
+    adapter.capabilities,
+    approvedInstance,
+    undefined,
+    undefined,
+    {
+      policy,
+      context: backgroundApproval.proposedAction.context!,
+      approvedActionKeys: new Set([backgroundApproval.proposedAction.idempotencyKey]),
+    },
+  );
+  const backgroundGrant = await backgroundSession.authorizeCommand(background, "start");
+  await backgroundSession.start(background, backgroundGrant);
+  assert.equal(approvedInstance.backgroundCommands.length, 1);
+  await session.stop();
+  await approvedSession.stop();
+  await deniedSession.stop();
+  await backgroundSession.stop();
+  await viby.close();
+});
+
+test("pauses an agent command for approval and resumes it idempotently", async () => {
+  const adapter = new FakeSandboxAdapter();
+  const repository = new MemoryRepository();
+  const commandInput = {
+    command: "pnpm",
+    args: ["test"],
+    cwd: null,
+    timeoutMs: null,
+  };
+  const model = new MockLanguageModelV4({
+    doGenerate: [
+      modelToolCall("approval-command", "sandbox_run_command", commandInput),
+      modelToolCall("approved-command", "sandbox_run_command", commandInput),
+      modelToolCall("replayed-command", "sandbox_run_command", commandInput),
+      modelToolCall("write-after-approval", "workspace_write_file", {
+        path: "test.js",
+        content: 'console.log("approved")\n',
+        mediaType: "text/javascript",
+      }),
+      modelCompletion("Approved iteration", "Ran the approved command and updated the project."),
+    ],
+  });
+  const viby = createVibyWithDependencies(
+    {
+      framework: "farm",
+      model,
+      skills: {},
+      sandbox: adapter,
+      sandboxPolicy: () => ({
+        decision: "approval-required",
+        reason: "A user must approve package scripts.",
+      }),
+      agent: {
+        maxSteps: 10,
+        maxDurationMs: 10_000,
+        maxTokens: 10_000,
+        maxCommands: 4,
+      },
+    },
+    {
+      repository,
+      generator: new AgentProjectGenerator(model, {
+        maxSteps: 10,
+        maxDurationMs: 10_000,
+        maxTokens: 10_000,
+        maxCommands: 4,
+      }),
+      skillResolver: new SkillResolver({}),
+    },
+  );
+  const chat = await viby.forUser({ tenantId: "tenant-a", userId: "user-a" }).chats.import({
+    source: {
+      type: "files",
+      files: [
+        { path: "package.json", content: '{"scripts":{"test":"node test.js"}}\n' },
+        { path: "test.js", content: 'console.log("ready")\n' },
+      ],
+    },
+  });
+  const version = await chat.latestVersion();
+  assert.ok(version);
+  const generation = await version.startIteration({ prompt: "Test, then update the project" });
+
+  let outcome = await generation.wait({ pollIntervalMs: 10 });
+  assert.equal(outcome.status, "waiting");
+  if (outcome.status !== "waiting") throw new Error("Expected an approval task");
+  const [task] = outcome.tasks;
+  assert.equal(task?.kind, "permission");
+  if (!task || task.kind !== "permission") throw new Error("Expected a permission task");
+  assert.equal(task.proposedAction?.type, "sandbox-command");
+  assert.equal(task.proposedAction?.command.command, "pnpm");
+  assert.equal(adapter.instances[0]!.commands.length, 0);
+
+  await generation.resolve({
+    taskId: task.id,
+    resolution: { kind: "permission", decision: "allow" },
+  });
+  outcome = await generation.wait({ pollIntervalMs: 10 });
+  assert.equal(outcome.status, "succeeded");
+  assert.equal(adapter.instances[1]!.commands.length, 1);
+  assert.equal(adapter.instances.reduce((total, instance) => total + instance.commands.length, 0), 1);
+
+  const calls = await generation.toolCalls();
+  const commandCall = calls.find((call) => call.name === "sandbox.run-command");
+  assert.ok(commandCall);
+  assert.equal(commandCall.effect, "external");
+  assert.equal(commandCall.idempotencyKey, task.proposedAction?.idempotencyKey);
+  assert.equal(commandCall.status, "succeeded");
+  assert.equal(calls.filter((call) => call.name === "sandbox.run-command").length, 1);
+  const events = (await generation.events({ limit: 100 })).events;
+  assert.equal(events.some((event) => event.type === "part.failed"), false);
+  assert.equal(events.filter((event) => (
+    event.type === "part.completed" && event.data.part.type === "command"
+  )).length, 2);
+  assert.equal((await generation.attempts()).length, 2);
+  assert.equal((await generation.tasks())[0]?.status, "resolved");
   await viby.close();
 });
 
