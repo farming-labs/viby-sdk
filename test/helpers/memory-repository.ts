@@ -8,6 +8,8 @@ import type {
   GenerationEventType,
   GenerationTaskData,
   MessageData,
+  MessagePart,
+  MessagePartInput,
   ResolvedSkill,
   SourceChange,
   UserScope,
@@ -297,15 +299,15 @@ export class MemoryRepository implements Repository {
     };
     this.generations.set(generation.id, generation);
     this.attempts.set(attempt.id, attempt);
-    this.messages.push({
-      id: createId(),
+    this.messages.push(createMemoryMessage(scope, {
       chatId: input.chatId,
       generationId: input.id,
+      attemptId: input.attemptId,
       role: "user",
       content: input.prompt,
+      parts: [{ type: "text", data: { text: input.prompt } }],
       createdAt: now,
-      ...scope,
-    });
+    }));
     this.#append(scope, input.id, input.attemptId, "generation.created", {
       prompt: input.prompt,
     });
@@ -590,15 +592,15 @@ export class MemoryRepository implements Repository {
       error: null,
       completedAt,
     });
-    this.messages.push({
-      id: createId(),
+    this.messages.push(createMemoryMessage(scope, {
       chatId: generation.chatId,
       generationId: generation.id,
+      attemptId: input.attemptId,
       role: "assistant",
       content: input.assistantMessage,
+      parts: input.assistantParts,
       createdAt: completedAt,
-      ...scope,
-    });
+    }));
     this.#append(scope, generation.id, attempt.id, "attempt.succeeded", {
       number: attempt.number,
       versionId: version.id,
@@ -652,15 +654,15 @@ export class MemoryRepository implements Repository {
       totalTokens: input.totalTokens,
       error: null,
     });
-    this.messages.push({
-      id: createId(),
+    this.messages.push(createMemoryMessage(scope, {
       chatId: generation.chatId,
       generationId: generation.id,
+      attemptId: input.attemptId,
       role: "assistant",
       content: input.task.message,
+      parts: input.assistantParts,
       createdAt: now,
-      ...scope,
-    });
+    }));
     this.#append(scope, generation.id, attempt.id, "attempt.waiting", { taskId: task.id });
     this.#append(scope, generation.id, attempt.id, "task.created", {
       task: { id: task.id, ...input.task },
@@ -687,15 +689,15 @@ export class MemoryRepository implements Repository {
       resolution: input.resolution,
       resolvedAt: now,
     } as GenerationTaskData & ScopedRecord);
-    this.messages.push({
-      id: createId(),
+    this.messages.push(createMemoryMessage(scope, {
       chatId: generation.chatId,
       generationId: generation.id,
+      attemptId: input.attemptId,
       role: "user",
       content: input.resolutionMessage,
+      parts: [{ type: "text", data: { text: input.resolutionMessage } }],
       createdAt: now,
-      ...scope,
-    });
+    }));
 
     const number = generation.attemptCount + 1;
     const attempt: GenerationAttemptData & ScopedRecord = {
@@ -1012,6 +1014,41 @@ function sortChats<Item extends ChatData>(chats: Item[]): Item[] {
   return chats.sort((left, right) => (
     right.updatedAt.getTime() - left.updatedAt.getTime() || right.id.localeCompare(left.id)
   ));
+}
+
+function createMemoryMessage(
+  scope: UserScope,
+  input: {
+    readonly chatId: string;
+    readonly generationId: string;
+    readonly attemptId: string;
+    readonly role: "user" | "assistant";
+    readonly content: string;
+    readonly parts: readonly MessagePartInput[];
+    readonly createdAt: Date;
+  },
+): MessageData & ScopedRecord {
+  const id = createId();
+  const parts = input.parts.map((part, position) => ({
+    id: createId(),
+    messageId: id,
+    generationId: input.generationId,
+    attemptId: input.attemptId,
+    position,
+    type: part.type,
+    data: JSON.parse(JSON.stringify(part.data)) as MessagePart["data"],
+    createdAt: input.createdAt,
+  } as MessagePart));
+  return {
+    id,
+    chatId: input.chatId,
+    generationId: input.generationId,
+    role: input.role,
+    content: input.content,
+    parts,
+    createdAt: input.createdAt,
+    ...scope,
+  };
 }
 
 function compareMessages(left: MessageData, right: MessageData): number {

@@ -328,6 +328,12 @@ test("persists and resolves plan, question, and permission tasks before completi
   outcome = await generation.wait({ pollIntervalMs: 10 });
   assert.equal(outcome.status, "succeeded");
   assert.equal(calls[3]?.tasks.length, 3);
+  const messages = await chat.listMessages();
+  const waitingMessages = messages.items.filter((message) => (
+    message.role === "assistant" && message.parts.some((part) => part.type === "status")
+  ));
+  assert.equal(waitingMessages.length, 3);
+  assert.ok(waitingMessages.every((message) => message.parts[0]?.type === "status"));
   assert.deepEqual(
     (await generation.tasks()).map((task) => [task.kind, task.status]),
     [["plan", "resolved"], ["question", "resolved"], ["permission", "resolved"]],

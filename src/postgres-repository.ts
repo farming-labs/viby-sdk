@@ -14,6 +14,9 @@ import type {
   GenerationTaskRequest,
   GenerationTaskResolution,
   MessageData,
+  MessagePart,
+  MessagePartInput,
+  MessagePartType,
   ResolvedSkill,
   SourceChange,
   UserScope,
@@ -163,6 +166,17 @@ interface MessageRow {
   created_at: Date;
 }
 
+interface MessagePartRow {
+  id: string;
+  message_id: string;
+  generation_id: string | null;
+  attempt_id: string | null;
+  position: number;
+  type: MessagePartType;
+  data: MessagePart["data"];
+  created_at: Date;
+}
+
 interface VersionFileRow {
   path: string;
   content: string;
@@ -210,7 +224,8 @@ export class PostgresRepository implements Repository {
         AND to_regclass('viby.generation_events') IS NOT NULL
         AND to_regclass('viby.generation_tasks') IS NOT NULL
         AND to_regclass('viby.sandbox_leases') IS NOT NULL
-        AND to_regclass('viby.version_changes') IS NOT NULL AS ready
+        AND to_regclass('viby.version_changes') IS NOT NULL
+        AND to_regclass('viby.message_parts') IS NOT NULL AS ready
     `;
     if (!row?.ready) throw new DatabaseNotReadyError();
     this.#ready = true;
@@ -584,14 +599,14 @@ export class PostgresRepository implements Repository {
       `;
       if (!attempt) throw new Error("Postgres did not return the created attempt.");
 
-      await sql`
-        INSERT INTO viby.messages (
-          id, tenant_id, user_id, chat_id, generation_id, role, content
-        ) VALUES (
-          ${createId()}, ${scope.tenantId}, ${scope.userId}, ${input.chatId}, ${input.id},
-          'user', ${input.prompt}
-        )
-      `;
+      await insertMessage(sql, scope, {
+        chatId: input.chatId,
+        generationId: input.id,
+        attemptId: input.attemptId,
+        role: "user",
+        content: input.prompt,
+        parts: [{ type: "text", data: { text: input.prompt } }],
+      });
       await sql`
         INSERT INTO viby.generation_events (
           tenant_id, user_id, generation_id, attempt_id, type, data
@@ -1039,14 +1054,14 @@ export class PostgresRepository implements Repository {
         `;
       }
 
-      await sql`
-        INSERT INTO viby.messages (
-          id, tenant_id, user_id, chat_id, generation_id, role, content
-        ) VALUES (
-          ${createId()}, ${scope.tenantId}, ${scope.userId}, ${generation.chat_id},
-          ${input.generationId}, 'assistant', ${input.assistantMessage}
-        )
-      `;
+      await insertMessage(sql, scope, {
+        chatId: generation.chat_id,
+        generationId: input.generationId,
+        attemptId: input.attemptId,
+        role: "assistant",
+        content: input.assistantMessage,
+        parts: input.assistantParts,
+      });
       await sql`
         UPDATE viby.generation_attempts SET
           status = 'succeeded', input_tokens = ${input.inputTokens},
@@ -1129,14 +1144,14 @@ export class PostgresRepository implements Repository {
       `;
       if (!task) throw new Error("Postgres did not return the created task.");
 
-      await sql`
-        INSERT INTO viby.messages (
-          id, tenant_id, user_id, chat_id, generation_id, role, content
-        ) VALUES (
-          ${createId()}, ${scope.tenantId}, ${scope.userId}, ${generation.chat_id},
-          ${input.generationId}, 'assistant', ${input.task.message}
-        )
-      `;
+      await insertMessage(sql, scope, {
+        chatId: generation.chat_id,
+        generationId: input.generationId,
+        attemptId: input.attemptId,
+        role: "assistant",
+        content: input.task.message,
+        parts: input.assistantParts,
+      });
       await sql`
         UPDATE viby.generation_attempts SET
           status = 'waiting', input_tokens = ${input.inputTokens},
@@ -1210,14 +1225,14 @@ export class PostgresRepository implements Repository {
           resolved_at = now()
         WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId} AND id = ${input.taskId}
       `;
-      await sql`
-        INSERT INTO viby.messages (
-          id, tenant_id, user_id, chat_id, generation_id, role, content
-        ) VALUES (
-          ${createId()}, ${scope.tenantId}, ${scope.userId}, ${generation.chat_id},
-          ${input.generationId}, 'user', ${input.resolutionMessage}
-        )
-      `;
+      await insertMessage(sql, scope, {
+        chatId: generation.chat_id,
+        generationId: input.generationId,
+        attemptId: input.attemptId,
+        role: "user",
+        content: input.resolutionMessage,
+        parts: [{ type: "text", data: { text: input.resolutionMessage } }],
+      });
 
       const number = generation.attempt_count + 1;
       const [attempt] = await sql<GenerationAttemptRow[]>`
@@ -1512,7 +1527,7 @@ export class PostgresRepository implements Repository {
       WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId} AND chat_id = ${chatId}
       ORDER BY created_at, id
     `;
-    return rows.map(mapMessage);
+    return this.#messagesWithParts(scope, rows);
   }
 
   async listMessagePage(
@@ -1546,7 +1561,26 @@ export class PostgresRepository implements Repository {
           ORDER BY date_trunc('milliseconds', created_at), id
           LIMIT ${limit + 1}
         `;
-    return createPage(rows.map(mapMessage), limit);
+    return createPage(await this.#messagesWithParts(scope, rows), limit);
+  }
+
+  async #messagesWithParts(scope: UserScope, rows: readonly MessageRow[]): Promise<MessageData[]> {
+    if (rows.length === 0) return [];
+    const messageIds = rows.map((row) => row.id);
+    const partRows = await this.#sql<MessagePartRow[]>`
+      SELECT id, message_id, generation_id, attempt_id, position, type, data, created_at
+      FROM viby.message_parts
+      WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+        AND message_id = ANY(${this.#sql.array(messageIds)}::uuid[])
+      ORDER BY message_id, position
+    `;
+    const parts = new Map<string, MessagePart[]>();
+    for (const row of partRows) {
+      const current = parts.get(row.message_id) ?? [];
+      current.push(mapMessagePart(row));
+      parts.set(row.message_id, current);
+    }
+    return rows.map((row) => mapMessage(row, parts.get(row.id) ?? []));
   }
 
   async getVersionFiles(scope: UserScope, versionId: string): Promise<VersionFile[]> {
@@ -1731,15 +1765,64 @@ function mapVersion<Framework extends FrameworkId>(row: VersionRow): VersionData
   };
 }
 
-function mapMessage(row: MessageRow): MessageData {
+function mapMessage(row: MessageRow, parts: readonly MessagePart[]): MessageData {
   return {
     id: row.id,
     chatId: row.chat_id,
     generationId: row.generation_id,
     role: row.role,
     content: row.content,
+    parts,
     createdAt: row.created_at,
   };
+}
+
+function mapMessagePart(row: MessagePartRow): MessagePart {
+  return {
+    id: row.id,
+    messageId: row.message_id,
+    generationId: row.generation_id,
+    attemptId: row.attempt_id,
+    position: row.position,
+    type: row.type,
+    data: row.data,
+    createdAt: row.created_at,
+  } as MessagePart;
+}
+
+async function insertMessage(
+  sql: postgres.TransactionSql,
+  scope: UserScope,
+  input: {
+    readonly chatId: string;
+    readonly generationId: string;
+    readonly attemptId: string;
+    readonly role: "user" | "assistant";
+    readonly content: string;
+    readonly parts: readonly MessagePartInput[];
+  },
+): Promise<void> {
+  const messageId = createId();
+  await sql`
+    INSERT INTO viby.messages (
+      id, tenant_id, user_id, chat_id, generation_id, role, content
+    ) VALUES (
+      ${messageId}, ${scope.tenantId}, ${scope.userId}, ${input.chatId},
+      ${input.generationId}, ${input.role}, ${input.content}
+    )
+  `;
+  for (const [position, part] of input.parts.entries()) {
+    await sql`
+      INSERT INTO viby.message_parts (
+        id, tenant_id, user_id, message_id, generation_id, attempt_id,
+        position, type, data
+      ) VALUES (
+        ${createId()}, ${scope.tenantId}, ${scope.userId}, ${messageId},
+        ${input.generationId}, ${input.attemptId}, ${position}, ${part.type},
+        ${sql.json(JSON.parse(JSON.stringify(part.data)))}
+      )
+    `;
+  }
 }
 
 function mapSandboxLease<Framework extends FrameworkId>(

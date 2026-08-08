@@ -18,7 +18,7 @@ Status meanings:
 | Concern | v0 API v2 | Viby decision |
 | --- | --- | --- |
 | Primary state | A VM-backed chat is the current mutable workspace | A chat owns immutable, parent-linked source versions; keep this stronger history model |
-| Conversation history | Messages contain ordered agent-trace parts | Add portable typed message parts while retaining durable generation events |
+| Conversation history | Messages contain ordered agent-trace parts | Portable typed message parts plus durable generation events |
 | Generation modes | Separate sync, async, and SSE endpoints | Keep `generate`, `start`/`wait`, and resumable `stream` methods over one durable generation |
 | Source state | Read, replace, download, and restore current chat files | Read, change, download, fork, and restore immutable versions |
 | Preview | Hosted VM preview with a short-lived access token | Optional sandbox-backed preview session; never guaranteed by core |
@@ -68,7 +68,7 @@ Viby does not copy v0's privacy enum, author identity, account URLs, or hosted w
 
 ## Messages and agent trace
 
-v0 v2 messages contain ordered parts such as text, thinking, file reads, file edits, searches, shell commands, tool calls, and agent actions. This is the largest portable parity gap because applications need the trace to render useful progress and audit what happened.
+v0 v2 messages contain ordered parts such as text, thinking, file reads, file edits, searches, shell commands, tool calls, and agent actions. Viby now persists a provider-neutral discriminated union for the durable result narrative. Resumable lifecycle events remain the next layer for rendering live trace progress.
 
 | Capability | v0 v2 | Viby-native surface | Status |
 | --- | --- | --- | --- |
@@ -77,7 +77,7 @@ v0 v2 messages contain ordered parts such as text, thinking, file reads, file ed
 | Send sync | Send Message | `chat.generate` or `version.iterate` | Shipped |
 | Send async | Send Message Async | `chat.start` or `version.startIteration` | Shipped |
 | Send streaming | Send Message Streaming | `generation.stream` | Shipped |
-| Ordered message parts | `Message.parts` | typed durable agent parts linked to attempts | Planned |
+| Ordered message parts | `Message.parts` | typed durable agent parts linked to messages, generations, and attempts | Shipped |
 | Final text and finish reason | message content and `finishReason` | message content plus attempt finish reason | Partial |
 | Token and credit usage | per-message usage | token usage is durable; currency/cost policy is host-owned | Partial |
 | Resolve blocking work | Resolve Task sync/async/streaming | typed `generation.resolve` followed by wait or stream | Shipped |
@@ -127,13 +127,12 @@ Viby separates a portable tool call from the credentialed connection used to ful
 
 ## Prioritized parity backlog
 
-Capability discovery, the adapter conformance suite, background processes, readiness checks, durable sandbox leases, reconnect-by-ID, generation worker leases with heartbeats, sandbox command policy enforcement, and immutable agent workspace change sets are shipped.
+Capability discovery, the adapter conformance suite, background processes, readiness checks, durable sandbox leases, reconnect-by-ID, generation worker leases with heartbeats, sandbox command policy enforcement, immutable agent workspace change sets, and typed durable message parts are shipped.
 
 1. Permission decisions around agent-initiated sandbox actions.
-2. Typed message parts for file operations, commands, tools, status, errors, and usage.
-3. Optional sandbox-backed preview sessions and a host-proxy contract.
-4. Attachments, generation-scoped model/skill configuration, file locks, lookup, deletion, search, and outbound event sinks.
-5. Explicit Git and deployment adapters after the portable generation workflow is complete.
+2. Optional sandbox-backed preview sessions and a host-proxy contract.
+3. Attachments, generation-scoped model/skill configuration, file locks, lookup, deletion, search, and outbound event sinks.
+4. Explicit Git and deployment adapters after the portable generation workflow is complete.
 
 ## Persistence rules
 

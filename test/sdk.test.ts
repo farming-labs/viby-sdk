@@ -10,6 +10,7 @@ import type {
   ProjectGenerator,
 } from "../src/generator.js";
 import { SkillResolver } from "../src/skills.js";
+import { MESSAGE_PART_TYPES } from "../src/types.js";
 import type { FrameworkId, VersionFile } from "../src/types.js";
 import { sha256 } from "../src/utils.js";
 import { GenerationError, NotFoundError } from "../src/errors.js";
@@ -72,6 +73,21 @@ function setup() {
   return { viby, repository, generator };
 }
 
+test("publishes the complete stable message part vocabulary", () => {
+  assert.deepEqual(MESSAGE_PART_TYPES, [
+    "text",
+    "status",
+    "reasoning-summary",
+    "file-read",
+    "file-edit",
+    "search",
+    "command",
+    "tool-call",
+    "error",
+    "usage",
+  ]);
+});
+
 test("creates a tenant-scoped chat, generation, immutable version, and source ZIP", async () => {
   const { viby, repository, generator } = setup();
   const user = viby.forUser({ tenantId: "tenant-a", userId: "user-a" });
@@ -96,6 +112,44 @@ test("creates a tenant-scoped chat, generation, immutable version, and source ZI
 
   await viby.close();
   assert.equal(repository.closed, true);
+});
+
+test("persists typed ordered message parts with message, generation, and attempt ownership", async () => {
+  const { viby } = setup();
+  const chat = await viby
+    .forUser({ tenantId: "tenant-a", userId: "user-a" })
+    .chats.create({ title: "Message parts" });
+  const version = await chat.generate({ prompt: "Build a dashboard" });
+  const messages = (await chat.listMessages()).items;
+
+  assert.equal(messages.length, 2);
+  assert.deepEqual(messages[0]?.parts.map((part) => part.type), ["text"]);
+  assert.deepEqual(messages[1]?.parts.map((part) => part.type), [
+    "file-edit",
+    "text",
+    "usage",
+  ]);
+  const assistant = messages[1]!;
+  assert.equal(assistant.generationId, version.generationId);
+  assert.ok(assistant.parts.every((part, position) => (
+    part.messageId === assistant.id
+    && part.generationId === version.generationId
+    && part.attemptId
+    && part.position === position
+  )));
+  const edit = assistant.parts[0]!;
+  assert.equal(edit.type, "file-edit");
+  if (edit.type !== "file-edit") throw new Error("Expected a file edit part");
+  assert.deepEqual(edit.data, { operation: "write", path: "src/index.ts" });
+  const usagePart = assistant.parts[2]!;
+  assert.equal(usagePart.type, "usage");
+  if (usagePart.type !== "usage") throw new Error("Expected a usage part");
+  assert.deepEqual(usagePart.data, {
+    inputTokens: 10,
+    outputTokens: 20,
+    totalTokens: 30,
+  });
+  await viby.close();
 });
 
 test("imports normalized source files without invoking the model", async () => {

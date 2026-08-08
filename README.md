@@ -500,6 +500,32 @@ const updated = await chat.update({
 
 Pagination cursors are opaque and stable for the resource ordering. All reads and writes remain constrained by both `tenantId` and `userId`.
 
+## Render typed message parts
+
+Every message retains its plain `content` for simple transcripts and also exposes ordered, discriminated `parts` for richer agent interfaces:
+
+```ts
+const { items: messages } = await chat.listMessages();
+
+for (const message of messages) {
+  for (const part of message.parts) {
+    switch (part.type) {
+      case "text":
+        console.log(part.data.text);
+        break;
+      case "file-edit":
+        console.log(part.data.operation);
+        break;
+      case "usage":
+        console.log(part.data.totalTokens);
+        break;
+    }
+  }
+}
+```
+
+The durable part types are `text`, `status`, `reasoning-summary`, `file-read`, `file-edit`, `search`, `command`, `tool-call`, `error`, and `usage`. Each part is linked to its message and, when applicable, the logical generation and immutable attempt. `reasoning-summary` is provider-safe summary text; Viby does not expose or promise hidden model reasoning.
+
 ## Skill categories
 
 Built-in categories are `core`, `product`, `design`, `frontend`, `backend`, `data`, `ai`, `testing`, `security`, `accessibility`, `performance`, and `delivery`. Custom category names are accepted.
@@ -526,6 +552,7 @@ Included now:
 - tenant- and user-scoped Postgres persistence
 - Viby-owned migrations
 - chats and messages
+- ordered typed message parts with generation and attempt ownership
 - asynchronous generation handles
 - resumable event cursors and streamed output deltas
 - cancellation, retry, and process recovery
