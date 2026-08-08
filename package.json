@@ -42,6 +42,10 @@
       "types": "./dist/sandbox-e2b.d.ts",
       "import": "./dist/sandbox-e2b.js"
     },
+    "./sandbox/vercel": {
+      "types": "./dist/sandbox-vercel.d.ts",
+      "import": "./dist/sandbox-vercel.js"
+    },
     "./package.json": "./package.json"
   },
   "bin": {
@@ -82,15 +86,21 @@
     "zod": "^4.4.3"
   },
   "peerDependencies": {
+    "@vercel/sandbox": "^3.0.0",
     "e2b": "^2.38.2"
   },
   "peerDependenciesMeta": {
+    "@vercel/sandbox": {
+      "optional": true
+    },
     "e2b": {
       "optional": true
     }
   },
   "devDependencies": {
     "@types/node": "^26.1.2",
+    "@vercel/sandbox": "^3.0.0",
+    "@vercel/sandbox": "^3.0.0",
     "bumpp": "^10.4.1",
     "e2b": "^2.38.2",
     "tsx": "^4.23.7",
