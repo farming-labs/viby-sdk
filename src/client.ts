@@ -27,6 +27,7 @@ import type {
   VersionFile,
   VibyConfig,
 } from "./types.js";
+import type { SandboxAdapter, SandboxOpenOptions } from "./sandbox.js";
 import type { ProjectGenerator } from "./generator.js";
 import type { Repository } from "./repository.js";
 import { AiProjectGenerator } from "./generator.js";
@@ -58,6 +59,7 @@ import {
   encodeVersionCursor,
 } from "./cursors.js";
 import { normalizeChatMetadata } from "./metadata.js";
+import { SandboxRegistry, type SandboxSession } from "./sandbox.js";
 
 const DEFAULT_POLL_INTERVAL_MS = 100;
 const DEFAULT_EVENT_LIMIT = 100;
@@ -129,7 +131,9 @@ class VibyClient<Framework extends FrameworkId> implements Viby<Framework> {
   readonly #skillResolver: SkillResolver;
   readonly #modelProvider: string;
   readonly #modelId: string;
+  readonly #sandbox: SandboxAdapter | undefined;
   readonly #registry = new GenerationRunRegistry();
+  readonly #sandboxes = new SandboxRegistry();
   readonly #runner: GenerationRunner<Framework>;
 
   constructor(
@@ -137,6 +141,7 @@ class VibyClient<Framework extends FrameworkId> implements Viby<Framework> {
     dependencies: ClientDependencies<Framework>,
   ) {
     this.framework = config.framework;
+    this.#sandbox = config.sandbox;
     this.#repository = dependencies.repository;
     this.#skillResolver = dependencies.skillResolver;
     if (typeof config.model === "string") {
@@ -168,12 +173,19 @@ class VibyClient<Framework extends FrameworkId> implements Viby<Framework> {
       registry: this.#registry,
       modelProvider: this.#modelProvider,
       modelId: this.#modelId,
+      sandbox: this.#sandbox,
+      sandboxes: this.#sandboxes,
     });
   }
 
   async close(): Promise<void> {
     await this.#registry.abortAll("Viby client closed.");
-    await this.#repository.close();
+    const [sandboxes, repository] = await Promise.allSettled([
+      this.#sandboxes.stopAll(),
+      this.#repository.close(),
+    ]);
+    if (sandboxes.status === "rejected") throw sandboxes.reason;
+    if (repository.status === "rejected") throw repository.reason;
   }
 }
 
@@ -185,6 +197,8 @@ interface ScopedDependencies<Framework extends FrameworkId> {
   readonly registry: GenerationRunRegistry;
   readonly modelProvider: string;
   readonly modelId: string;
+  readonly sandbox: SandboxAdapter | undefined;
+  readonly sandboxes: SandboxRegistry;
 }
 
 export class ScopedViby<Framework extends FrameworkId = FrameworkId> {
@@ -728,6 +742,16 @@ export class Version<Framework extends FrameworkId = FrameworkId> {
 
   files(): Promise<VersionFile[]> {
     return this.#dependencies.repository.getVersionFiles(this.#dependencies.scope, this.id);
+  }
+
+  async sandbox(options: SandboxOpenOptions = {}): Promise<SandboxSession> {
+    return this.#dependencies.sandboxes.open(
+      this.#dependencies.sandbox,
+      this.#dependencies.scope,
+      this.#data,
+      await this.files(),
+      options,
+    );
   }
 
   async generation(): Promise<GenerationData | null> {

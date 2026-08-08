@@ -118,6 +118,36 @@ const restored = await importedVersion!.restore();
 
 Every generation attempt is stored, including failures and token usage. Successful attempts create immutable versions with a parent relationship and complete source snapshot.
 
+## Run a version in an isolated sandbox
+
+Pass any compatible sandbox adapter when constructing Viby. The core SDK does not own provider credentials and does not require a particular sandbox vendor.
+
+```ts
+const viby = createViby({
+  framework: "farm",
+  model,
+  sandbox: yourSandboxAdapter,
+});
+
+const sandbox = await version.sandbox({
+  timeoutMs: 5 * 60_000,
+  ports: [3000],
+});
+
+try {
+  const install = await sandbox.run({ command: "pnpm", args: ["install"] });
+  const build = await sandbox.run({ command: "pnpm", args: ["build"] });
+
+  if (install.exitCode !== 0 || build.exitCode !== 0) {
+    throw new Error(build.stderr || install.stderr);
+  }
+} finally {
+  await sandbox.stop();
+}
+```
+
+Commands use a separate executable and argument list instead of an interpolated shell command. Sessions support streamed output, relative file reads and writes, optional public port URLs, abort signals, and idempotent cleanup. `viby.close()` stops any session the application left open.
+
 ## Run and stream asynchronously
 
 `chat.start` persists a queued generation and its first attempt before model execution begins, then immediately returns an addressable generation handle:

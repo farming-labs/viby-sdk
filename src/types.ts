@@ -1,4 +1,5 @@
 import type { LanguageModel } from "ai";
+import type { SandboxAdapter } from "./sandbox.js";
 
 export type FrameworkId =
   | "farm"
@@ -41,6 +42,7 @@ export interface VibyConfig<Framework extends FrameworkId = FrameworkId> {
   readonly framework: Framework;
   readonly model: LanguageModel;
   readonly skills?: SkillGroups;
+  readonly sandbox?: SandboxAdapter;
 }
 
 export interface UserScope {

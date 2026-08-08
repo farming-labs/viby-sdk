@@ -8,6 +8,7 @@ export {
 } from "./client.js";
 export { skillRead } from "./skills.js";
 export { DownloadArtifact } from "./download.js";
+export { SandboxSession } from "./sandbox.js";
 export {
   ConfigurationError,
   DatabaseNotReadyError,
@@ -17,8 +18,22 @@ export {
   GenerationTaskRequiredError,
   NotFoundError,
   SkillResolutionError,
+  SandboxError,
+  SandboxUnavailableError,
   VibyError,
 } from "./errors.js";
+export type {
+  SandboxAdapter,
+  SandboxCommand,
+  SandboxCommandResult,
+  SandboxCreateContext,
+  SandboxCreateInput,
+  SandboxFile,
+  SandboxInstance,
+  SandboxOpenOptions,
+  SandboxOperationOptions,
+  SandboxOutputEvent,
+} from "./sandbox.js";
 export type { GenerationOutcome, Viby } from "./client.js";
 export type {
   BuiltInSkillCategory,

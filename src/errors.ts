@@ -83,3 +83,27 @@ export class SkillResolutionError extends VibyError {
     this.name = "SkillResolutionError";
   }
 }
+
+export class SandboxUnavailableError extends VibyError {
+  constructor(message: string) {
+    super("sandbox_unavailable", message);
+    this.name = "SandboxUnavailableError";
+  }
+}
+
+export class SandboxError extends VibyError {
+  readonly provider: string;
+  readonly operation: string;
+
+  constructor(
+    provider: string,
+    operation: string,
+    message: string,
+    options?: ErrorOptions,
+  ) {
+    super("sandbox_error", `${provider} could not ${operation}: ${message}`, options);
+    this.name = "SandboxError";
+    this.provider = provider;
+    this.operation = operation;
+  }
+}
