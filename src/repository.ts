@@ -17,6 +17,7 @@ import type {
   VersionData,
   VersionFile,
   VersionOrigin,
+  SourceChange,
 } from "./types.js";
 import type {
   CreateSandboxLeaseRecord,
@@ -48,6 +49,7 @@ export interface CreateSourceVersionRecord<Framework extends FrameworkId = Frame
   readonly title: string;
   readonly summary: string;
   readonly files: readonly VersionFile[];
+  readonly changes: readonly SourceChange[];
 }
 
 export interface ForkVersionRecord<Framework extends FrameworkId = FrameworkId> {
@@ -123,6 +125,7 @@ export interface CompleteGenerationRecord<Framework extends FrameworkId = Framew
   readonly title: string;
   readonly summary: string;
   readonly files: readonly VersionFile[];
+  readonly changes: readonly SourceChange[] | null;
   readonly assistantMessage: string;
   readonly inputTokens: number | null;
   readonly outputTokens: number | null;
@@ -309,6 +312,7 @@ export interface Repository {
     after: MessagePageCursor | null,
   ): Promise<RepositoryPage<MessageData>>;
   getVersionFiles(scope: UserScope, versionId: string): Promise<VersionFile[]>;
+  getVersionChanges(scope: UserScope, versionId: string): Promise<SourceChange[]>;
   createSandboxLease<Framework extends FrameworkId>(
     scope: UserScope,
     input: CreateSandboxLeaseRecord<Framework>,

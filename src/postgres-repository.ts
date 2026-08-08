@@ -15,6 +15,7 @@ import type {
   GenerationTaskResolution,
   MessageData,
   ResolvedSkill,
+  SourceChange,
   UserScope,
   VersionData,
   VersionFile,
@@ -208,7 +209,8 @@ export class PostgresRepository implements Repository {
         AND to_regclass('viby.generation_attempts') IS NOT NULL
         AND to_regclass('viby.generation_events') IS NOT NULL
         AND to_regclass('viby.generation_tasks') IS NOT NULL
-        AND to_regclass('viby.sandbox_leases') IS NOT NULL AS ready
+        AND to_regclass('viby.sandbox_leases') IS NOT NULL
+        AND to_regclass('viby.version_changes') IS NOT NULL AS ready
     `;
     if (!row?.ready) throw new DatabaseNotReadyError();
     this.#ready = true;
@@ -330,6 +332,17 @@ export class PostgresRepository implements Repository {
           ) VALUES (
             ${createId()}, ${scope.tenantId}, ${scope.userId}, ${input.id}, ${file.path},
             ${file.content}, ${file.mediaType}, ${file.size}, ${file.checksum}
+          )
+        `;
+      }
+
+      for (const [position, change] of input.changes.entries()) {
+        await sql`
+          INSERT INTO viby.version_changes (
+            tenant_id, user_id, version_id, position, change
+          ) VALUES (
+            ${scope.tenantId}, ${scope.userId}, ${input.id}, ${position},
+            ${sql.json(JSON.parse(JSON.stringify(change)))}
           )
         `;
       }
@@ -1015,6 +1028,17 @@ export class PostgresRepository implements Repository {
         `;
       }
 
+      for (const [position, change] of (input.changes ?? []).entries()) {
+        await sql`
+          INSERT INTO viby.version_changes (
+            tenant_id, user_id, version_id, position, change
+          ) VALUES (
+            ${scope.tenantId}, ${scope.userId}, ${versionId}, ${position},
+            ${sql.json(JSON.parse(JSON.stringify(change)))}
+          )
+        `;
+      }
+
       await sql`
         INSERT INTO viby.messages (
           id, tenant_id, user_id, chat_id, generation_id, role, content
@@ -1540,6 +1564,17 @@ export class PostgresRepository implements Repository {
       size: row.size,
       checksum: row.checksum,
     }));
+  }
+
+  async getVersionChanges(scope: UserScope, versionId: string): Promise<SourceChange[]> {
+    await this.assertReady();
+    const rows = await this.#sql<{ change: SourceChange }[]>`
+      SELECT change FROM viby.version_changes
+      WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+        AND version_id = ${versionId}
+      ORDER BY position
+    `;
+    return rows.map((row) => row.change);
   }
 
   async createSandboxLease<Framework extends FrameworkId>(

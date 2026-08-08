@@ -21,6 +21,7 @@ import type {
   PageOptions,
   ResolveGenerationTaskInput,
   RestoreVersionInput,
+  SourceChange,
   UserScope,
   UpdateChatInput,
   VersionData,
@@ -54,7 +55,11 @@ import {
 } from "./utils.js";
 import { createSourceDownload, type DownloadArtifact } from "./download.js";
 import { importProjectFiles } from "./project-import.js";
-import { applySourceChanges } from "./source-changes.js";
+import { applySourceChanges, normalizeSourceChanges } from "./source-changes.js";
+import {
+  AgentWorkspace,
+  type AgentWorkspaceCommitInput,
+} from "./agent-workspace.js";
 import {
   decodeChatCursor,
   decodeMessageCursor,
@@ -803,10 +808,11 @@ export class Version<Framework extends FrameworkId = FrameworkId> {
 
   async apply(input: ApplySourceChangesInput): Promise<Version<Framework>> {
     if (!input) throw new ConfigurationError("A source change set is required.");
-    const files = applySourceChanges(await this.files(), input.changes);
+    const changes = normalizeSourceChanges(input.changes);
+    const files = applySourceChanges(await this.files(), changes);
     const title = normalizeVersionTitle(input.title ?? this.title);
     const summary = input.summary?.trim()
-      || `Applied ${input.changes.length} source change${input.changes.length === 1 ? "" : "s"}.`;
+      || `Applied ${changes.length} source change${changes.length === 1 ? "" : "s"}.`;
     if (summary.length > 2_000) {
       throw new ConfigurationError("A version summary cannot exceed 2,000 characters.");
     }
@@ -821,6 +827,7 @@ export class Version<Framework extends FrameworkId = FrameworkId> {
         title,
         summary,
         files,
+        changes,
       },
     );
     return new Version(data, this.#dependencies);
@@ -876,6 +883,17 @@ export class Version<Framework extends FrameworkId = FrameworkId> {
 
   files(): Promise<VersionFile[]> {
     return this.#dependencies.repository.getVersionFiles(this.#dependencies.scope, this.id);
+  }
+
+  changes(): Promise<SourceChange[]> {
+    return this.#dependencies.repository.getVersionChanges(this.#dependencies.scope, this.id);
+  }
+
+  async workspace(): Promise<AgentWorkspace<Version<Framework>>> {
+    return new AgentWorkspace(
+      await this.files(),
+      (changes, input: AgentWorkspaceCommitInput) => this.apply({ ...input, changes }),
+    );
   }
 
   async sandbox(options: SandboxOpenOptions = {}): Promise<SandboxSession> {
@@ -1129,6 +1147,10 @@ class GenerationRunner<Framework extends FrameworkId> {
         return;
       }
 
+      const files = output.kind === "changes"
+        ? applySourceChanges(previousFiles, output.changes)
+        : output.files;
+      const changes = output.kind === "changes" ? output.changes : null;
       await this.#dependencies.repository.completeGeneration(scope, {
         generationId,
         attemptId,
@@ -1137,7 +1159,8 @@ class GenerationRunner<Framework extends FrameworkId> {
         framework: chat.framework,
         title: output.title,
         summary: output.summary,
-        files: output.files,
+        files,
+        changes,
         assistantMessage: output.summary,
         inputTokens: output.usage.inputTokens ?? null,
         outputTokens: output.usage.outputTokens ?? null,

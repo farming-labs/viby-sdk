@@ -49,6 +49,22 @@ function taskOutput(task: GenerationTaskRequest): GeneratorOutput {
   return { kind: "task", task, usage, finishReason: "stop" };
 }
 
+function changesOutput(): GeneratorOutput {
+  return {
+    kind: "changes",
+    title: "Durable dashboard iteration",
+    summary: "Applied an immutable generated change set.",
+    changes: [{
+      type: "write",
+      path: "src/index.ts",
+      content: "export const version = 2;\n",
+      mediaType: "text/javascript",
+    }],
+    usage,
+    finishReason: "stop",
+  };
+}
+
 function setup(generator: ProjectGenerator<"farm">) {
   const repository = new MemoryRepository();
   const viby = createVibyWithDependencies(
@@ -171,6 +187,34 @@ test("retries a failed generation as a new immutable attempt", async () => {
     (await generation.attempts()).map((attempt) => [attempt.number, attempt.reason, attempt.status]),
     [[1, "initial", "failed"], [2, "retry", "succeeded"]],
   );
+  await viby.close();
+});
+
+test("applies and persists generated changes without replacing the base snapshot", async () => {
+  const outputs = [projectOutput(1), changesOutput()];
+  const generator: ProjectGenerator<"farm"> = {
+    async generate() {
+      const output = outputs.shift();
+      if (!output) throw new Error("Missing generator output");
+      return output;
+    },
+  };
+  const { viby } = setup(generator);
+  const chat = await viby
+    .forUser({ tenantId: "tenant-a", userId: "user-a" })
+    .chats.create();
+  const first = await chat.generate({ prompt: "Build a dashboard" });
+  const second = await first.iterate({ prompt: "Update the dashboard" });
+
+  assert.equal((await first.files())[0]?.content, "export const version = 1;\n");
+  assert.equal((await second.files())[0]?.content, "export const version = 2;\n");
+  assert.deepEqual(await first.changes(), []);
+  assert.deepEqual(await second.changes(), [{
+    type: "write",
+    path: "src/index.ts",
+    content: "export const version = 2;\n",
+    mediaType: "text/javascript",
+  }]);
   await viby.close();
 });
 

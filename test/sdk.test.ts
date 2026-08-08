@@ -3,6 +3,7 @@ import { test } from "node:test";
 import type { LanguageModel, LanguageModelUsage } from "ai";
 import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
 import { createVibyWithDependencies } from "../src/client.js";
+import { AgentWorkspace } from "../src/agent-workspace.js";
 import type {
   GeneratorInput,
   GeneratorOutput,
@@ -226,7 +227,163 @@ test("applies writes, deletes, and moves as an immutable child snapshot", async 
   assert.equal((await first.files()).find((file) => file.path === "src/index.ts")?.content,
     "export const version = 1;\n");
   assert.ok((await first.files()).some((file) => file.path === "src/old.ts"));
+  assert.deepEqual(await first.changes(), []);
+  assert.deepEqual(await second.changes(), [
+    { type: "write", path: "src/index.ts", content: "export const version = 2;\n" },
+    { type: "delete", path: "src/old.ts" },
+    { type: "move", from: "README.md", to: "docs/README.md" },
+    { type: "write", path: "src/new.ts", content: "export const added = true;\n" },
+  ]);
   assert.equal(generator.calls.length, 0);
+});
+
+test("stages agent workspace tools and atomically commits an immutable child version", async () => {
+  const { viby, generator } = setup();
+  const chat = await viby
+    .forUser({ tenantId: "tenant-a", userId: "user-a" })
+    .chats.import({
+      title: "Agent workspace",
+      source: {
+        type: "files",
+        files: [
+          { path: "README.md", content: "# Dashboard\n" },
+          { path: "src/index.ts", content: "export const version = 1;\n" },
+          { path: "src/old.ts", content: "export const old = true;\n" },
+        ],
+      },
+    });
+  const base = await chat.latestVersion();
+  assert.ok(base);
+  const workspace = await base.workspace();
+
+  assert.equal(Object.isFrozen(workspace.tools), true);
+  assert.deepEqual(
+    (await workspace.tools.listFiles({ prefix: "src/" })).map((file) => file.path),
+    ["src/index.ts", "src/old.ts"],
+  );
+  assert.equal((await workspace.tools.readFile({ path: "./src/index.ts" })).content,
+    "export const version = 1;\n");
+  assert.deepEqual(await workspace.tools.search({ query: "DASHBOARD" }), [{
+    path: "README.md",
+    line: 1,
+    column: 3,
+    preview: "# Dashboard",
+  }]);
+
+  await workspace.tools.writeFile({
+    path: "./src/index.ts",
+    content: "export const version = 2;\n",
+    mediaType: " text/javascript ",
+  });
+  await workspace.tools.deleteFile({ path: "src/old.ts" });
+  await workspace.tools.moveFile({ from: "README.md", to: "docs/README.md" });
+  await workspace.tools.writeFile({
+    path: "src/new.ts",
+    content: "export const added = true;\n",
+  });
+
+  assert.equal(workspace.committed, false);
+  assert.deepEqual(workspace.files().map((file) => file.path), [
+    "docs/README.md",
+    "src/index.ts",
+    "src/new.ts",
+  ]);
+  assert.deepEqual((await base.files()).map((file) => file.path), [
+    "README.md",
+    "src/index.ts",
+    "src/old.ts",
+  ]);
+
+  const committed = await workspace.commit({
+    title: "Agent-refined dashboard",
+    summary: "Committed four reviewed workspace operations.",
+  });
+  assert.equal(workspace.committed, true);
+  assert.equal(committed.parentVersionId, base.id);
+  assert.equal(committed.origin, "edited");
+  assert.deepEqual(await committed.changes(), [
+    {
+      type: "write",
+      path: "src/index.ts",
+      content: "export const version = 2;\n",
+      mediaType: "text/javascript",
+    },
+    { type: "delete", path: "src/old.ts" },
+    { type: "move", from: "README.md", to: "docs/README.md" },
+    { type: "write", path: "src/new.ts", content: "export const added = true;\n" },
+  ]);
+  await assert.rejects(() => workspace.commit(), /already committed/);
+  await assert.rejects(
+    () => workspace.tools.writeFile({ path: "src/late.ts", content: "late" }),
+    /cannot change/,
+  );
+  assert.equal(generator.calls.length, 0);
+});
+
+test("rejects invalid agent workspace operations before creating a version", async () => {
+  const { viby } = setup();
+  const chat = await viby
+    .forUser({ tenantId: "tenant-a", userId: "user-a" })
+    .chats.import({
+      source: {
+        type: "files",
+        files: [
+          { path: "src/index.ts", content: "export {};\n" },
+          { path: "src/other.ts", content: "export {};\n" },
+        ],
+      },
+    });
+  const version = await chat.latestVersion();
+  assert.ok(version);
+  const workspace = await version.workspace();
+
+  await assert.rejects(() => workspace.commit(), /no source changes/);
+  await assert.rejects(() => workspace.tools.readFile({ path: "missing.ts" }), /not found/);
+  await assert.rejects(
+    () => workspace.tools.search({ query: "", limit: 0 }),
+    /search query/,
+  );
+  await assert.rejects(
+    () => workspace.tools.deleteFile({ path: "missing.ts" }),
+    /delete missing/,
+  );
+  await assert.rejects(
+    () => workspace.tools.moveFile({ from: "src/index.ts", to: "src/other.ts" }),
+    /Cannot overwrite/,
+  );
+  assert.equal((await chat.listVersions()).items.length, 1);
+});
+
+test("deduplicates concurrent workspace commits and permits retry after persistence failure", async () => {
+  let calls = 0;
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const workspace = new AgentWorkspace([{
+    path: "src/index.ts",
+    content: "export const version = 1;\n",
+    mediaType: "text/javascript",
+    size: 26,
+    checksum: "before",
+  }], async (changes) => {
+    calls += 1;
+    if (calls === 1) throw new Error("temporary persistence failure");
+    await gate;
+    return changes.length;
+  });
+  await workspace.tools.writeFile({
+    path: "src/index.ts",
+    content: "export const version = 2;\n",
+  });
+
+  await assert.rejects(() => workspace.commit(), /temporary persistence failure/);
+  assert.equal(workspace.committed, false);
+  const first = workspace.commit();
+  const second = workspace.commit();
+  release();
+  assert.equal(await first, 1);
+  assert.equal(await second, 1);
+  assert.equal(calls, 2);
+  assert.equal(workspace.committed, true);
 });
 
 test("rejects invalid source change sets before persistence", async () => {
