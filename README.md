@@ -90,6 +90,20 @@ const importedVersion = await imported.latestVersion();
 
 Use `{ type: "zip", bytes }` for a ZIP archive. Imports reject unsafe paths, duplicate files, encrypted or oversized archives, symbolic links, binary content, and ZIP bombs before persistence.
 
+Apply deterministic source changes without invoking the model:
+
+```ts
+const editedVersion = await importedVersion!.apply({
+  changes: [
+    { type: "write", path: "src/index.ts", content: updatedSource },
+    { type: "move", from: "README.md", to: "docs/README.md" },
+    { type: "delete", path: "src/legacy.ts" },
+  ],
+});
+```
+
+`apply` creates a complete immutable child snapshot. It never changes the selected version in place.
+
 Every generation attempt is stored, including failures and token usage. Successful attempts create immutable versions with a parent relationship and complete source snapshot.
 
 ## Run and stream asynchronously

@@ -186,6 +186,85 @@ test("imports UTF-8 ZIP source and rejects unsafe or binary archives", async () 
   );
 });
 
+test("applies writes, deletes, and moves as an immutable child snapshot", async () => {
+  const { viby, generator } = setup();
+  const user = viby.forUser({ tenantId: "tenant-a", userId: "user-a" });
+  const chat = await user.chats.import({
+    title: "Editable project",
+    source: {
+      type: "files",
+      files: [
+        { path: "src/index.ts", content: "export const version = 1;\n" },
+        { path: "src/old.ts", content: "export const old = true;\n" },
+        { path: "README.md", content: "# Before\n" },
+      ],
+    },
+  });
+  const first = await chat.latestVersion();
+  assert.ok(first);
+
+  const second = await first.apply({
+    title: "Edited project",
+    summary: "Applied a deterministic source patch.",
+    changes: [
+      { type: "write", path: "src/index.ts", content: "export const version = 2;\n" },
+      { type: "delete", path: "src/old.ts" },
+      { type: "move", from: "README.md", to: "docs/README.md" },
+      { type: "write", path: "src/new.ts", content: "export const added = true;\n" },
+    ],
+  });
+
+  assert.equal(second.number, 2);
+  assert.equal(second.origin, "edited");
+  assert.equal(second.parentVersionId, first.id);
+  assert.equal(second.generationId, null);
+  assert.deepEqual((await second.files()).map((file) => file.path), [
+    "docs/README.md",
+    "src/index.ts",
+    "src/new.ts",
+  ]);
+  assert.equal((await first.files()).find((file) => file.path === "src/index.ts")?.content,
+    "export const version = 1;\n");
+  assert.ok((await first.files()).some((file) => file.path === "src/old.ts"));
+  assert.equal(generator.calls.length, 0);
+});
+
+test("rejects invalid source change sets before persistence", async () => {
+  const { viby } = setup();
+  const chat = await viby
+    .forUser({ tenantId: "tenant-a", userId: "user-a" })
+    .chats.import({
+      source: {
+        type: "files",
+        files: [
+          { path: "src/index.ts", content: "export {};\n" },
+          { path: "src/other.ts", content: "export {};\n" },
+        ],
+      },
+    });
+  const version = await chat.latestVersion();
+  assert.ok(version);
+
+  await assert.rejects(() => version.apply({ changes: [] }), /at least one change/);
+  await assert.rejects(
+    () => version.apply({ changes: [{ type: "delete", path: "missing.ts" }] }),
+    /delete missing/,
+  );
+  await assert.rejects(
+    () => version.apply({
+      changes: [{ type: "move", from: "src/index.ts", to: "src/other.ts" }],
+    }),
+    /Cannot overwrite/,
+  );
+  await assert.rejects(
+    () => version.apply({
+      changes: [{ type: "write", path: "../../secret", content: "nope" }],
+    }),
+    /unsafe/,
+  );
+  assert.equal((await chat.listVersions()).length, 1);
+});
+
 test("does not return a version that belongs to a different chat", async () => {
   const { viby } = setup();
   const user = viby.forUser({ tenantId: "tenant-a", userId: "user-a" });

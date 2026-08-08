@@ -24,6 +24,7 @@ import type {
   CreateAttemptRecord,
   CreatedGeneration,
   CreateGenerationRecord,
+  CreateSourceVersionRecord,
   ImportedChat,
   ImportChatRecord,
   PauseGenerationRecord,
@@ -232,6 +233,67 @@ export class PostgresRepository implements Repository {
       chat: mapChat<Framework>(result.chat),
       version: mapVersion<Framework>(result.version),
     };
+  }
+
+  async createSourceVersion<Framework extends FrameworkId>(
+    scope: UserScope,
+    input: CreateSourceVersionRecord<Framework>,
+  ): Promise<VersionData<Framework>> {
+    await this.assertReady();
+    const row = await this.#sql.begin(async (sql) => {
+      const [chat] = await sql<{ id: string }[]>`
+        SELECT id FROM viby.chats
+        WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+          AND id = ${input.chatId}
+        FOR UPDATE
+      `;
+      if (!chat) throw new NotFoundError("Chat");
+
+      const [parent] = await sql<{ id: string }[]>`
+        SELECT id FROM viby.versions
+        WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+          AND id = ${input.parentVersionId} AND chat_id = ${input.chatId}
+        LIMIT 1
+      `;
+      if (!parent) throw new NotFoundError("Parent version");
+
+      const [numberRow] = await sql<{ number: number }[]>`
+        SELECT COALESCE(MAX(number), 0)::integer + 1 AS number
+        FROM viby.versions
+        WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+          AND chat_id = ${input.chatId}
+      `;
+      const [version] = await sql<VersionRow[]>`
+        INSERT INTO viby.versions (
+          id, tenant_id, user_id, chat_id, generation_id, parent_version_id,
+          number, origin, framework, title, summary
+        ) VALUES (
+          ${input.id}, ${scope.tenantId}, ${scope.userId}, ${input.chatId}, NULL,
+          ${input.parentVersionId}, ${numberRow?.number ?? 1}, ${input.origin},
+          ${input.framework}, ${input.title}, ${input.summary}
+        )
+        RETURNING *
+      `;
+      if (!version) throw new Error("Postgres did not return the source version.");
+
+      for (const file of input.files) {
+        await sql`
+          INSERT INTO viby.version_files (
+            id, tenant_id, user_id, version_id, path, content, media_type, size, checksum
+          ) VALUES (
+            ${createId()}, ${scope.tenantId}, ${scope.userId}, ${input.id}, ${file.path},
+            ${file.content}, ${file.mediaType}, ${file.size}, ${file.checksum}
+          )
+        `;
+      }
+      await sql`
+        UPDATE viby.chats SET updated_at = now()
+        WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+          AND id = ${input.chatId}
+      `;
+      return version;
+    });
+    return mapVersion<Framework>(row);
   }
 
   async getChat<Framework extends FrameworkId>(

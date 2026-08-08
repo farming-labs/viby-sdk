@@ -19,6 +19,7 @@ import type {
   CreateAttemptRecord,
   CreatedGeneration,
   CreateGenerationRecord,
+  CreateSourceVersionRecord,
   ImportedChat,
   ImportChatRecord,
   PauseGenerationRecord,
@@ -92,6 +93,36 @@ export class MemoryRepository implements Repository {
     this.versions.set(version.id, version);
     this.files.set(version.id, [...input.files]);
     return { chat, version };
+  }
+
+  async createSourceVersion<Framework extends FrameworkId>(
+    scope: UserScope,
+    input: CreateSourceVersionRecord<Framework>,
+  ): Promise<VersionData<Framework>> {
+    const chat = await this.getChat(scope, input.chatId);
+    if (!chat) throw new NotFoundError("Chat");
+    const parent = await this.getVersion(scope, input.parentVersionId);
+    if (!parent || parent.chatId !== input.chatId) throw new NotFoundError("Parent version");
+    const number = [...this.versions.values()]
+      .filter((version) => version.chatId === input.chatId && inScope(version, scope))
+      .reduce((highest, version) => Math.max(highest, version.number), 0) + 1;
+    const version: VersionData<Framework> & ScopedRecord = {
+      id: input.id,
+      chatId: input.chatId,
+      generationId: null,
+      parentVersionId: input.parentVersionId,
+      number,
+      origin: input.origin,
+      framework: input.framework,
+      title: input.title,
+      summary: input.summary,
+      createdAt: new Date(),
+      ...scope,
+    };
+    this.versions.set(version.id, version);
+    this.files.set(version.id, [...input.files]);
+    this.chats.set(chat.id, { ...chat, updatedAt: new Date() });
+    return version;
   }
 
   async getChat<Framework extends FrameworkId>(
