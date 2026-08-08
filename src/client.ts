@@ -165,7 +165,7 @@ class VibyClient<Framework extends FrameworkId> implements Viby<Framework> {
     this.framework = config.framework;
     this.#sandbox = config.sandbox;
     this.#repository = dependencies.repository;
-    this.#sandboxes = new SandboxRegistry(this.#repository);
+    this.#sandboxes = new SandboxRegistry(this.#repository, config.sandboxPolicy);
     this.#skillResolver = dependencies.skillResolver;
     if (typeof config.model === "string") {
       this.#modelProvider = config.model.split("/", 1)[0] || "gateway";

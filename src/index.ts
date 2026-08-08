@@ -15,6 +15,7 @@ export {
   SandboxProcess,
   SandboxSession,
   sandboxCapabilities,
+  sandboxCommandPolicy,
 } from "./sandbox.js";
 export {
   ConfigurationError,
@@ -25,6 +26,7 @@ export {
   GenerationTaskRequiredError,
   NotFoundError,
   SkillResolutionError,
+  SandboxCommandDeniedError,
   SandboxError,
   SandboxUnavailableError,
   VibyError,
@@ -34,6 +36,11 @@ export type {
   SandboxCapabilities,
   SandboxCapability,
   SandboxCommand,
+  SandboxCommandAuthorization,
+  SandboxCommandPolicy,
+  SandboxCommandPolicyDecision,
+  SandboxCommandPolicyOptions,
+  SandboxCommandPolicyRequest,
   SandboxCommandResult,
   SandboxCreateContext,
   SandboxCreateInput,

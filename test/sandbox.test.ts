@@ -2,11 +2,17 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { LanguageModel } from "ai";
 import { createVibyWithDependencies } from "../src/client.js";
-import { SandboxError, SandboxUnavailableError } from "../src/errors.js";
+import {
+  SandboxCommandDeniedError,
+  SandboxError,
+  SandboxUnavailableError,
+} from "../src/errors.js";
 import type { GeneratorInput, GeneratorOutput, ProjectGenerator } from "../src/generator.js";
 import type {
   SandboxAdapter,
   SandboxCommand,
+  SandboxCommandPolicy,
+  SandboxCommandPolicyRequest,
   SandboxCreateInput,
   SandboxFile,
   SandboxInstance,
@@ -15,7 +21,7 @@ import type {
   SandboxProcessInstance,
   SandboxReconnectInput,
 } from "../src/sandbox.js";
-import { sandboxCapabilities } from "../src/sandbox.js";
+import { sandboxCapabilities, sandboxCommandPolicy } from "../src/sandbox.js";
 import { SkillResolver } from "../src/skills.js";
 import type { FrameworkId } from "../src/types.js";
 import { MemoryRepository } from "./helpers/memory-repository.js";
@@ -120,7 +126,7 @@ class FakeSandboxAdapter implements SandboxAdapter {
   }
 }
 
-function setup(sandbox?: SandboxAdapter) {
+function setup(sandbox?: SandboxAdapter, sandboxPolicy?: SandboxCommandPolicy) {
   const repository = new MemoryRepository();
   const viby = createVibyWithDependencies(
     {
@@ -128,6 +134,7 @@ function setup(sandbox?: SandboxAdapter) {
       model: "test/mock" as LanguageModel,
       skills: {},
       ...(sandbox ? { sandbox } : {}),
+      ...(sandboxPolicy ? { sandboxPolicy } : {}),
     },
     {
       repository,
@@ -138,8 +145,8 @@ function setup(sandbox?: SandboxAdapter) {
   return { repository, viby };
 }
 
-async function importedVersion(sandbox?: SandboxAdapter) {
-  const setupResult = setup(sandbox);
+async function importedVersion(sandbox?: SandboxAdapter, sandboxPolicy?: SandboxCommandPolicy) {
+  const setupResult = setup(sandbox, sandboxPolicy);
   const chat = await setupResult.viby
     .forUser({ tenantId: "tenant-a", userId: "user-a" })
     .chats.import({
@@ -360,6 +367,102 @@ test("expires stale leases before an adapter can reconnect", async () => {
   assert.equal((await user.sandboxes.get(session.leaseId!)).status, "expired");
   assert.equal(adapter.reconnects.length, 0);
   await viby.close();
+});
+
+test("enforces custom command policy before every adapter execution", async () => {
+  const adapter = new FakeSandboxAdapter();
+  const requests: SandboxCommandPolicyRequest[] = [];
+  const { version, viby } = await importedVersion(adapter, async (request) => {
+    requests.push(request);
+    if (request.action === "start") return { allow: false, reason: "Background services require approval." };
+    if (request.command.command === "rm") return { allow: false, reason: "Destructive commands are disabled." };
+    return { allow: true };
+  });
+  const session = await version.sandbox();
+
+  await session.run({
+    command: "node",
+    args: ["script.js"],
+    cwd: "src",
+    env: { TOKEN: "secret-value", CI: "true" },
+    timeoutMs: 5_000,
+  });
+  assert.deepEqual(requests[0], {
+    action: "run",
+    provider: "fake",
+    context: {
+      tenantId: "tenant-a",
+      userId: "user-a",
+      chatId: version.chatId,
+      versionId: version.id,
+      framework: "farm",
+    },
+    command: {
+      command: "node",
+      args: ["script.js"],
+      cwd: "src",
+      environment: ["CI", "TOKEN"],
+      timeoutMs: 5_000,
+    },
+  });
+  assert.equal(JSON.stringify(requests).includes("secret-value"), false);
+
+  await assert.rejects(
+    () => session.run({ command: "rm", args: ["-rf", "dist"] }),
+    (error: unknown) => error instanceof SandboxCommandDeniedError
+      && error.code === "sandbox_command_denied"
+      && error.action === "run",
+  );
+  await assert.rejects(
+    () => session.start({ command: "pnpm", args: ["dev"] }),
+    /Background services require approval/,
+  );
+  assert.equal(adapter.instances[0]!.commands.length, 1);
+  assert.equal(adapter.instances[0]!.backgroundCommands.length, 0);
+  await viby.close();
+});
+
+test("builds a declarative fail-closed sandbox command policy", async () => {
+  const adapter = new FakeSandboxAdapter();
+  const policy = sandboxCommandPolicy({
+    allowCommands: ["pnpm"],
+    denyCommands: ["sudo"],
+    actions: ["run"],
+    environment: ["CI"],
+    maxTimeoutMs: 1_000,
+    maxArgs: 2,
+  });
+  const { version, viby } = await importedVersion(adapter, policy);
+  const session = await version.sandbox();
+  await session.run({ command: "pnpm", args: ["test"], env: { CI: "true" }, timeoutMs: 1_000 });
+  await assert.rejects(() => session.run({ command: "node" }), /command allowlist/);
+  await assert.rejects(
+    () => session.run({ command: "pnpm", env: { TOKEN: "hidden" }, timeoutMs: 1_000 }),
+    /Environment variable TOKEN/,
+  );
+  await assert.rejects(
+    () => session.run({ command: "pnpm", timeoutMs: 1_001 }),
+    /timeout exceeds/,
+  );
+  await assert.rejects(() => session.start({ command: "pnpm" }), /start commands are not allowed/);
+  assert.equal(adapter.instances[0]!.commands.length, 1);
+  assert.throws(
+    () => sandboxCommandPolicy({ allowCommands: ["node"], denyCommands: ["node"] }),
+    /both allow and deny/,
+  );
+  await viby.close();
+
+  const failing = new FakeSandboxAdapter();
+  const failed = await importedVersion(failing, async () => {
+    throw new Error("policy backend unavailable");
+  });
+  const failedSession = await failed.version.sandbox();
+  await assert.rejects(
+    () => failedSession.run({ command: "node" }),
+    /command policy failed: policy backend unavailable/,
+  );
+  assert.equal(failing.instances[0]!.commands.length, 0);
+  await failed.viby.close();
 });
 
 test("normalizes immutable provider-agnostic capability records", () => {
