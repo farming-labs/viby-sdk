@@ -18,6 +18,7 @@ import type {
   GenerationWaitOptions,
   IterateInput,
   MessageData,
+  MessagePartInput,
   PageOptions,
   ResolveGenerationTaskInput,
   RestoreVersionInput,
@@ -1133,15 +1134,23 @@ class GenerationRunner<Framework extends FrameworkId> {
       signal.throwIfAborted();
 
       if (output.kind === "task") {
+        const inputTokens = output.usage.inputTokens ?? null;
+        const outputTokens = output.usage.outputTokens ?? null;
+        const totalTokens = output.usage.totalTokens ?? null;
         await this.#dependencies.repository.pauseGeneration(scope, {
           generationId,
           attemptId,
           leaseToken,
           taskId: createId(),
           task: output.task,
-          inputTokens: output.usage.inputTokens ?? null,
-          outputTokens: output.usage.outputTokens ?? null,
-          totalTokens: output.usage.totalTokens ?? null,
+          assistantParts: [
+            { type: "status", data: { message: output.task.message, state: "waiting" } },
+            { type: "text", data: { text: output.task.message } },
+            usageMessagePart(inputTokens, outputTokens, totalTokens),
+          ],
+          inputTokens,
+          outputTokens,
+          totalTokens,
           finishReason: output.finishReason,
         });
         return;
@@ -1151,6 +1160,9 @@ class GenerationRunner<Framework extends FrameworkId> {
         ? applySourceChanges(previousFiles, output.changes)
         : output.files;
       const changes = output.kind === "changes" ? output.changes : null;
+      const inputTokens = output.usage.inputTokens ?? null;
+      const outputTokens = output.usage.outputTokens ?? null;
+      const totalTokens = output.usage.totalTokens ?? null;
       await this.#dependencies.repository.completeGeneration(scope, {
         generationId,
         attemptId,
@@ -1162,9 +1174,14 @@ class GenerationRunner<Framework extends FrameworkId> {
         files,
         changes,
         assistantMessage: output.summary,
-        inputTokens: output.usage.inputTokens ?? null,
-        outputTokens: output.usage.outputTokens ?? null,
-        totalTokens: output.usage.totalTokens ?? null,
+        assistantParts: [
+          ...fileEditMessageParts(files, changes),
+          { type: "text", data: { text: output.summary } },
+          usageMessagePart(inputTokens, outputTokens, totalTokens),
+        ],
+        inputTokens,
+        outputTokens,
+        totalTokens,
         finishReason: output.finishReason,
       });
     } catch (error) {
@@ -1187,6 +1204,42 @@ class GenerationRunner<Framework extends FrameworkId> {
       ).catch(() => undefined);
     }
   }
+}
+
+function fileEditMessageParts(
+  files: readonly VersionFile[],
+  changes: readonly SourceChange[] | null,
+): MessagePartInput<"file-edit">[] {
+  if (!changes) {
+    return files.map((file) => ({
+      type: "file-edit",
+      data: { operation: "write", path: file.path },
+    }));
+  }
+  return changes.map((change) => {
+    switch (change.type) {
+      case "write":
+        return { type: "file-edit", data: { operation: "write", path: change.path } };
+      case "delete":
+        return { type: "file-edit", data: { operation: "delete", path: change.path } };
+      case "move":
+        return {
+          type: "file-edit",
+          data: { operation: "move", from: change.from, to: change.to },
+        };
+    }
+  });
+}
+
+function usageMessagePart(
+  inputTokens: number | null,
+  outputTokens: number | null,
+  totalTokens: number | null,
+): MessagePartInput<"usage"> {
+  return {
+    type: "usage",
+    data: { inputTokens, outputTokens, totalTokens },
+  };
 }
 
 interface ActiveRun {

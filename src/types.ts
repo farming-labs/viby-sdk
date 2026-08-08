@@ -183,8 +183,93 @@ export interface MessageData {
   readonly generationId: string | null;
   readonly role: "user" | "assistant";
   readonly content: string;
+  readonly parts: readonly MessagePart[];
   readonly createdAt: Date;
 }
+
+export const MESSAGE_PART_TYPES = [
+  "text",
+  "status",
+  "reasoning-summary",
+  "file-read",
+  "file-edit",
+  "search",
+  "command",
+  "tool-call",
+  "error",
+  "usage",
+] as const;
+
+export type MessagePartType = (typeof MESSAGE_PART_TYPES)[number];
+
+export type FileEditMessagePartData =
+  | {
+      readonly operation: "write" | "delete";
+      readonly path: string;
+    }
+  | {
+      readonly operation: "move";
+      readonly from: string;
+      readonly to: string;
+    };
+
+export interface MessagePartDataMap {
+  readonly text: { readonly text: string };
+  readonly status: {
+    readonly message: string;
+    readonly state: "pending" | "running" | "waiting" | "completed";
+  };
+  readonly "reasoning-summary": { readonly text: string };
+  readonly "file-read": { readonly path: string };
+  readonly "file-edit": FileEditMessagePartData;
+  readonly search: {
+    readonly query: string;
+    readonly path: string | null;
+    readonly matches: number | null;
+  };
+  readonly command: {
+    readonly command: string;
+    readonly args: readonly string[];
+    readonly exitCode: number | null;
+  };
+  readonly "tool-call": {
+    readonly toolCallId: string;
+    readonly name: string;
+    readonly state: "pending" | "completed" | "failed";
+  };
+  readonly error: {
+    readonly message: string;
+    readonly code: string | null;
+    readonly retryable: boolean;
+  };
+  readonly usage: {
+    readonly inputTokens: number | null;
+    readonly outputTokens: number | null;
+    readonly totalTokens: number | null;
+  };
+}
+
+export type MessagePart<Type extends MessagePartType = MessagePartType> =
+  Type extends MessagePartType
+    ? {
+        readonly id: string;
+        readonly messageId: string;
+        readonly generationId: string | null;
+        readonly attemptId: string | null;
+        readonly position: number;
+        readonly type: Type;
+        readonly data: MessagePartDataMap[Type];
+        readonly createdAt: Date;
+      }
+    : never;
+
+export type MessagePartInput<Type extends MessagePartType = MessagePartType> =
+  Type extends MessagePartType
+    ? {
+        readonly type: Type;
+        readonly data: MessagePartDataMap[Type];
+      }
+    : never;
 
 export interface GenerationData {
   readonly id: string;

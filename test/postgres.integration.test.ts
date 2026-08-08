@@ -101,6 +101,14 @@ test("persists a durable generation, iteration, events, and download in Postgres
     assert.equal(persistedVersion.number, 2);
     assert.equal(persistedVersion.parentVersionId, outcome.version.id);
     assert.equal((await persistedChat.listMessages()).items.length, 4);
+    const persistedMessages = (await persistedChat.listMessages()).items;
+    assert.deepEqual(persistedMessages[0]?.parts.map((part) => part.type), ["text"]);
+    assert.deepEqual(persistedMessages[1]?.parts.map((part) => part.type), [
+      "file-edit",
+      "text",
+      "usage",
+    ]);
+    assert.ok(persistedMessages[1]?.parts.every((part) => part.attemptId));
     assert.equal((await persistedChat.listVersions()).items.length, 2);
     assert.equal(calls[1]?.previousFiles[0]?.content, "export const version = 1;\n");
 

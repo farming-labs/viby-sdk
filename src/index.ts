@@ -11,6 +11,7 @@ export {
 export { skillRead } from "./skills.js";
 export { DownloadArtifact } from "./download.js";
 export { AgentWorkspace } from "./agent-workspace.js";
+export { MESSAGE_PART_TYPES } from "./types.js";
 export type {
   AgentWorkspaceCommitInput,
   AgentWorkspaceFile,
@@ -100,6 +101,11 @@ export type {
   JsonValue,
   LocalSkillReference,
   MessageData,
+  MessagePart,
+  MessagePartDataMap,
+  MessagePartInput,
+  MessagePartType,
+  FileEditMessagePartData,
   PageOptions,
   PermissionTaskRequest,
   PermissionTaskResolution,

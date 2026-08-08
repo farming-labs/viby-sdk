@@ -12,6 +12,7 @@ import type {
   GenerationTaskRequest,
   GenerationTaskResolution,
   MessageData,
+  MessagePartInput,
   ResolvedSkill,
   UserScope,
   VersionData,
@@ -127,6 +128,7 @@ export interface CompleteGenerationRecord<Framework extends FrameworkId = Framew
   readonly files: readonly VersionFile[];
   readonly changes: readonly SourceChange[] | null;
   readonly assistantMessage: string;
+  readonly assistantParts: readonly MessagePartInput[];
   readonly inputTokens: number | null;
   readonly outputTokens: number | null;
   readonly totalTokens: number | null;
@@ -139,6 +141,7 @@ export interface PauseGenerationRecord {
   readonly leaseToken: string;
   readonly taskId: string;
   readonly task: GenerationTaskRequest;
+  readonly assistantParts: readonly MessagePartInput[];
   readonly inputTokens: number | null;
   readonly outputTokens: number | null;
   readonly totalTokens: number | null;
