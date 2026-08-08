@@ -217,6 +217,31 @@ const viby = createViby({
 
 Without explicit credentials, the Daytona SDK reads `DAYTONA_API_KEY`, `DAYTONA_API_URL`, and `DAYTONA_TARGET`. The adapter creates ephemeral sandboxes with a TTL matching the Viby session, supports images or snapshots, streams command output through Daytona sessions, and returns signed preview URLs that can be opened directly. Network allowlists, secrets, labels, resources, and custom names remain provider options rather than leaking into Viby’s shared contract.
 
+### Modal
+
+Install the provider peer in a server-side Node.js 22 or newer application:
+
+```bash
+npm install modal
+```
+
+```ts
+import { modalSandbox } from "@viby/sdk/sandbox/modal";
+
+const viby = createViby({
+  framework: "farm",
+  model,
+  sandbox: modalSandbox({
+    appName: "viby",
+    image: "node:24-bookworm-slim",
+    cpu: 2,
+    memoryMiB: 2048,
+  }),
+});
+```
+
+Modal reads `MODAL_TOKEN_ID` and `MODAL_TOKEN_SECRET` by default or accepts the pair explicitly. The adapter passes command arguments directly as an argv array, streams stdout and stderr concurrently, uses Modal's binary filesystem API, declares encrypted preview tunnels at creation, and terminates the sandbox when the Viby session stops. Provider options include registry or named Modal images, GPU and resource controls, named secrets, regions, cloud placement, network allowlists, tags, OIDC identity tokens, and idle timeouts.
+
 ### Local Docker
 
 Docker requires no JavaScript provider dependency:
