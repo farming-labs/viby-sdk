@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { LanguageModel, LanguageModelUsage } from "ai";
 import { createVibyWithDependencies } from "../src/client.js";
-import { GenerationStateError } from "../src/errors.js";
+import { ConfigurationError, GenerationStateError, NotFoundError } from "../src/errors.js";
 import type {
   GeneratorInput,
   GeneratorOptions,
@@ -539,6 +539,164 @@ test("fences stale workers and reclaims only expired generation leases", async (
   assert.equal(
     repository.events.filter((event) => event.type === "output.delta").length,
     1,
+  );
+});
+
+test("persists redacted typed tool calls with ownership and external-effect idempotency", async () => {
+  const repository = new MemoryRepository();
+  const scope = { tenantId: "tenant-a", userId: "user-a" };
+  const chat = await repository.createChat(scope, {
+    id: "58dc7d6f-5b8b-44df-bb43-f1a8414f71cc",
+    title: "Tool persistence",
+    metadata: {},
+    framework: "farm",
+  });
+  const generationId = "f407c0ce-14f8-4f4b-9db8-1c475d67ed35";
+  const attemptId = "86792db2-6617-4569-8ab8-384628e0f05d";
+  await repository.createGeneration(scope, {
+    id: generationId,
+    attemptId,
+    chatId: chat.id,
+    baseVersionId: null,
+    prompt: "Use durable tools",
+    modelProvider: "test",
+    modelId: "test/mock",
+  });
+  const lease = await repository.claimGenerationAttempt({
+    workerId: "tool-worker",
+    leaseToken: "7a629c98-b84b-4471-b613-632fa0948f7d",
+    leaseMs: 10_000,
+    framework: "farm",
+    modelProvider: "test",
+    modelId: "test/mock",
+  });
+  assert.ok(lease);
+
+  const created = await repository.createToolCall(scope, {
+    id: "a99e93c0-86a2-4487-a2d6-b6795162c43f",
+    generationId,
+    attemptId,
+    leaseToken: lease.leaseToken,
+    providerCallId: "provider-call-1",
+    name: "deployment.create",
+    effect: "external",
+    idempotencyKey: "deploy-customer-dashboard",
+    arguments: {
+      project: "customer-dashboard",
+      apiKey: "must-not-be-stored",
+      headers: { authorization: "Bearer must-not-be-stored", accept: "application/json" },
+    },
+  });
+  assert.equal(created.created, true);
+  assert.deepEqual(created.toolCall.arguments, {
+    project: "customer-dashboard",
+    apiKey: "[REDACTED]",
+    headers: { authorization: "[REDACTED]", accept: "application/json" },
+  });
+
+  const duplicate = await repository.createToolCall(scope, {
+    id: "55599bb8-e7ee-4b83-a242-aa9c93a66eb4",
+    generationId,
+    attemptId,
+    leaseToken: lease.leaseToken,
+    providerCallId: "provider-call-replayed",
+    name: "deployment.create",
+    effect: "external",
+    idempotencyKey: "deploy-customer-dashboard",
+    arguments: { project: "ignored-duplicate" },
+  });
+  assert.equal(duplicate.created, false);
+  assert.equal(duplicate.toolCall.id, created.toolCall.id);
+  await assert.rejects(
+    () => repository.createToolCall(scope, {
+      id: "09e8e4c1-c419-4562-a4aa-c87dfe2f95ea",
+      generationId,
+      attemptId,
+      leaseToken: lease.leaseToken,
+      providerCallId: "provider-call-without-key",
+      name: "deployment.create",
+      effect: "external",
+      arguments: {},
+    }),
+    ConfigurationError,
+  );
+
+  const completed = await repository.completeToolCall(scope, {
+    id: created.toolCall.id,
+    generationId,
+    attemptId,
+    leaseToken: lease.leaseToken,
+    result: { deploymentId: "deployment-1", accessToken: "must-not-be-stored" },
+  });
+  assert.equal(completed.status, "succeeded");
+  assert.deepEqual(completed.result, {
+    deploymentId: "deployment-1",
+    accessToken: "[REDACTED]",
+  });
+  const replayedCompletion = await repository.completeToolCall(scope, {
+    id: created.toolCall.id,
+    generationId,
+    attemptId,
+    leaseToken: lease.leaseToken,
+    result: { deploymentId: "must-not-overwrite" },
+  });
+  assert.deepEqual(replayedCompletion.result, completed.result);
+
+  const failedCreated = await repository.createToolCall(scope, {
+    id: "65e27c27-5111-41e5-bb70-b05157778582",
+    generationId,
+    attemptId,
+    leaseToken: lease.leaseToken,
+    providerCallId: "provider-call-2",
+    name: "workspace.search",
+    effect: "read",
+    arguments: { query: "TODO" },
+  });
+  const failed = await repository.failToolCall(scope, {
+    id: failedCreated.toolCall.id,
+    generationId,
+    attemptId,
+    leaseToken: lease.leaseToken,
+    error: "Search index unavailable",
+  });
+  assert.equal(failed.status, "failed");
+
+  const project = projectOutput(1);
+  if (project.kind !== "project") throw new Error("Expected project output");
+  await repository.completeGeneration(scope, {
+    generationId,
+    attemptId,
+    leaseToken: lease.leaseToken,
+    parentVersionId: null,
+    framework: "farm",
+    title: "Tool persistence",
+    summary: "Stored tool calls",
+    files: project.files,
+    changes: null,
+    assistantMessage: "Stored tool calls",
+    assistantParts: [
+      {
+        type: "tool-call",
+        data: { toolCallId: created.toolCall.id, name: created.toolCall.name, state: "completed" },
+      },
+      {
+        type: "tool-call",
+        data: { toolCallId: failed.id, name: failed.name, state: "failed" },
+      },
+    ],
+    inputTokens: 1,
+    outputTokens: 1,
+    totalTokens: 2,
+    finishReason: "stop",
+  });
+
+  const toolCalls = await repository.listToolCalls(scope, generationId);
+  assert.equal(toolCalls.length, 2);
+  assert.ok(toolCalls.every((toolCall) => toolCall.attemptId === attemptId));
+  assert.ok(toolCalls.every((toolCall) => toolCall.messageId));
+  await assert.rejects(
+    () => repository.listToolCalls({ tenantId: "tenant-b", userId: "user-a" }, generationId),
+    NotFoundError,
   );
 });
 

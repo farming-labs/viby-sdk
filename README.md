@@ -399,6 +399,18 @@ for await (const event of generation.stream({ after: lastCursor })) {
 
 Agent trace parts use four lifecycle events: `part.started`, `part.delta`, `part.completed`, and `part.failed`. Started events establish a stable part id, type, and trace position; deltas append live display data; completion carries the typed durable part; and failures carry a redaction-safe error. Completed trace parts retain the same id in the final assistant message. Saving the normal generation cursor is sufficient to resume both lifecycle and trace events.
 
+Tool executions are provider-neutral records owned by their immutable attempt and, after completion, their assistant message:
+
+```ts
+const toolCalls = await generation.toolCalls();
+
+for (const call of toolCalls) {
+  console.log(call.name, call.status, call.arguments, call.result);
+}
+```
+
+Arguments and results are validated as bounded JSON and redact common credential fields before persistence. Read, write, and external effects share one contract. External effects require an idempotency key, and replaying the same tenant/tool/key returns the original record instead of authorizing the effect again.
+
 Stopping an event iterator only disconnects that subscriber. Explicitly cancel the underlying model call with:
 
 ```ts
@@ -558,6 +570,7 @@ Included now:
 - asynchronous generation handles
 - resumable event cursors and streamed output deltas
 - resumable started, delta, completed, and failed agent trace events
+- provider-neutral typed tool calls, results, secret redaction, and external-effect idempotency
 - cancellation, retry, and process recovery
 - embedded or durable generation-worker execution with fenced leases and heartbeats
 - immutable attempt history and usage

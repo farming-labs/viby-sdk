@@ -23,10 +23,12 @@ import type {
   MessagePartDataMap,
   MessagePartInput,
   MessagePartType,
+  JsonValue,
   PageOptions,
   ResolveGenerationTaskInput,
   RestoreVersionInput,
   SourceChange,
+  ToolCallData,
   UserScope,
   UpdateChatInput,
   VersionData,
@@ -43,6 +45,9 @@ import type {
   AgentTraceError,
   AgentTracePart,
   AgentTraceWriter,
+  AgentToolCall,
+  AgentToolCallInput,
+  AgentToolCallWriter,
   ProjectGenerator,
 } from "./generator.js";
 import type { GenerationWorkerLease, Repository } from "./repository.js";
@@ -631,6 +636,13 @@ export class Generation<Framework extends FrameworkId = FrameworkId> {
     );
   }
 
+  toolCalls(): Promise<ToolCallData[]> {
+    return this.#dependencies.repository.listToolCalls(
+      this.#dependencies.scope,
+      this.id,
+    );
+  }
+
   async events(options: GenerationEventOptions = {}): Promise<GenerationEventPage> {
     const after = normalizeCursor(options.after);
     const limit = options.limit ?? DEFAULT_EVENT_LIMIT;
@@ -1098,6 +1110,14 @@ class GenerationRunner<Framework extends FrameworkId> {
         data,
       });
     });
+    const toolCalls = new DurableAgentToolCalls(
+      this.#dependencies.repository,
+      scope,
+      generationId,
+      attemptId,
+      leaseToken,
+      trace,
+    );
     try {
       signal.throwIfAborted();
 
@@ -1139,6 +1159,7 @@ class GenerationRunner<Framework extends FrameworkId> {
         {
           signal,
           trace,
+          toolCalls,
           onDelta: async (delta) => {
             signal.throwIfAborted();
             await this.#dependencies.repository.appendGenerationEvent(scope, {
@@ -1330,6 +1351,93 @@ class DurableAgentTrace implements AgentTraceWriter {
       },
     });
     entry.state = "failed";
+  }
+}
+
+class DurableAgentToolCalls implements AgentToolCallWriter {
+  readonly #repository: Repository;
+  readonly #scope: UserScope;
+  readonly #generationId: string;
+  readonly #attemptId: string;
+  readonly #leaseToken: string;
+  readonly #trace: AgentTraceWriter;
+
+  constructor(
+    repository: Repository,
+    scope: UserScope,
+    generationId: string,
+    attemptId: string,
+    leaseToken: string,
+    trace: AgentTraceWriter,
+  ) {
+    this.#repository = repository;
+    this.#scope = scope;
+    this.#generationId = generationId;
+    this.#attemptId = attemptId;
+    this.#leaseToken = leaseToken;
+    this.#trace = trace;
+  }
+
+  async start<Arguments extends JsonValue, Result extends JsonValue>(
+    input: AgentToolCallInput<Arguments>,
+  ): Promise<AgentToolCall<Arguments, Result>> {
+    const created = await this.#repository.createToolCall(this.#scope, {
+      id: createId(),
+      generationId: this.#generationId,
+      attemptId: this.#attemptId,
+      leaseToken: this.#leaseToken,
+      providerCallId: input.providerCallId,
+      name: input.name,
+      effect: input.effect,
+      arguments: input.arguments,
+      ...(input.idempotencyKey === undefined ? {} : { idempotencyKey: input.idempotencyKey }),
+    });
+    const tracePart = await this.#trace.start("tool-call");
+    const initial = created.toolCall as ToolCallData<Arguments, Result>;
+    let traceSettled = initial.status !== "pending";
+    if (!created.created && initial.status !== "pending") {
+      await tracePart.complete({
+        toolCallId: initial.id,
+        name: initial.name,
+        state: initial.status === "succeeded" ? "completed" : "failed",
+      });
+    }
+
+    const settleTrace = async (toolCall: ToolCallData): Promise<void> => {
+      if (traceSettled) return;
+      await tracePart.complete({
+        toolCallId: toolCall.id,
+        name: toolCall.name,
+        state: toolCall.status === "succeeded" ? "completed" : "failed",
+      });
+      traceSettled = true;
+    };
+    return {
+      toolCall: initial,
+      created: created.created,
+      succeed: async (result) => {
+        const toolCall = await this.#repository.completeToolCall(this.#scope, {
+          id: initial.id,
+          generationId: this.#generationId,
+          attemptId: initial.attemptId,
+          leaseToken: this.#leaseToken,
+          result,
+        }) as ToolCallData<Arguments, Result>;
+        await settleTrace(toolCall);
+        return toolCall;
+      },
+      fail: async (error) => {
+        const toolCall = await this.#repository.failToolCall(this.#scope, {
+          id: initial.id,
+          generationId: this.#generationId,
+          attemptId: initial.attemptId,
+          leaseToken: this.#leaseToken,
+          error,
+        }) as ToolCallData<Arguments, Result>;
+        await settleTrace(toolCall);
+        return toolCall;
+      },
+    };
   }
 }
 
