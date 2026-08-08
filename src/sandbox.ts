@@ -1,4 +1,9 @@
-import { ConfigurationError, SandboxError, SandboxUnavailableError } from "./errors.js";
+import {
+  ConfigurationError,
+  SandboxCommandDeniedError,
+  SandboxError,
+  SandboxUnavailableError,
+} from "./errors.js";
 import type { FrameworkId, UserScope, VersionFile } from "./types.js";
 import { createId, errorMessage, normalizeProjectPath } from "./utils.js";
 
@@ -126,6 +131,92 @@ export interface SandboxReconnectOptions {
   readonly signal?: AbortSignal;
 }
 
+export interface SandboxCommandPolicyRequest<Framework extends FrameworkId = FrameworkId> {
+  readonly action: "run" | "start";
+  readonly provider: string;
+  readonly context: SandboxCreateContext<Framework>;
+  readonly command: {
+    readonly command: string;
+    readonly args: readonly string[];
+    readonly cwd: string;
+    readonly environment: readonly string[];
+    readonly timeoutMs: number;
+  };
+}
+
+export type SandboxCommandPolicyDecision =
+  | { readonly allow: true }
+  | { readonly allow: false; readonly reason: string };
+
+export type SandboxCommandPolicy = (
+  request: SandboxCommandPolicyRequest,
+) => SandboxCommandPolicyDecision | Promise<SandboxCommandPolicyDecision>;
+
+export interface SandboxCommandPolicyOptions {
+  readonly allowCommands?: readonly string[];
+  readonly denyCommands?: readonly string[];
+  readonly actions?: readonly ("run" | "start")[];
+  readonly environment?: readonly string[];
+  readonly maxTimeoutMs?: number;
+  readonly maxArgs?: number;
+}
+
+export interface SandboxCommandAuthorization<Framework extends FrameworkId = FrameworkId> {
+  readonly policy: SandboxCommandPolicy;
+  readonly context: SandboxCreateContext<Framework>;
+}
+
+export function sandboxCommandPolicy(options: SandboxCommandPolicyOptions): SandboxCommandPolicy {
+  if (!options || typeof options !== "object") {
+    throw new ConfigurationError("Sandbox command policy options must be an object.");
+  }
+  const allowCommands = normalizePolicyStrings(options.allowCommands, "allowCommands");
+  const denyCommands = normalizePolicyStrings(options.denyCommands, "denyCommands");
+  const overlap = [...allowCommands].find((command) => denyCommands.has(command));
+  if (overlap) {
+    throw new ConfigurationError(`Sandbox command policy cannot both allow and deny ${overlap}.`);
+  }
+  if (options.actions !== undefined && !Array.isArray(options.actions)) {
+    throw new ConfigurationError("Sandbox command policy actions must be an array.");
+  }
+  const actions = new Set(options.actions ?? ["run", "start"]);
+  if ([...actions].some((action) => action !== "run" && action !== "start")) {
+    throw new ConfigurationError("Sandbox command policy actions must be run or start.");
+  }
+  const environment = normalizePolicyEnvironment(options.environment);
+  const maxTimeoutMs = normalizePolicyLimit(options.maxTimeoutMs, 1, MAX_SANDBOX_TIMEOUT_MS, "maxTimeoutMs");
+  const maxArgs = normalizePolicyLimit(options.maxArgs, 0, 10_000, "maxArgs");
+
+  return (request) => {
+    const command = request.command.command;
+    if (!actions.has(request.action)) {
+      return { allow: false, reason: `${request.action} commands are not allowed.` };
+    }
+    if (denyCommands.has(command)) {
+      return { allow: false, reason: `${command} is explicitly denied.` };
+    }
+    if (allowCommands.size > 0 && !allowCommands.has(command)) {
+      return { allow: false, reason: `${command} is not in the command allowlist.` };
+    }
+    if (maxTimeoutMs !== null && request.command.timeoutMs > maxTimeoutMs) {
+      return { allow: false, reason: `Command timeout exceeds ${maxTimeoutMs}ms.` };
+    }
+    if (maxArgs !== null && request.command.args.length > maxArgs) {
+      return { allow: false, reason: `Command has more than ${maxArgs} arguments.` };
+    }
+    const disallowedEnvironment = request.command.environment.find((name) => (
+      environment !== null && !environment.has(name)
+    ));
+    if (disallowedEnvironment) {
+      return {
+        allow: false,
+        reason: `Environment variable ${disallowedEnvironment} is not allowed.`,
+      };
+    }
+    return { allow: true };
+  };
+}
+
 export interface SandboxFile {
   readonly path: string;
   readonly content: string | Uint8Array;
@@ -222,6 +313,7 @@ export class SandboxSession {
   readonly leaseId: string | null;
   readonly #instance: SandboxInstance;
   readonly #onStopped: () => void | Promise<void>;
+  readonly #authorization: SandboxCommandAuthorization | null;
   #stopPromise: Promise<void> | null = null;
 
   constructor(
@@ -230,6 +322,7 @@ export class SandboxSession {
     instance: SandboxInstance,
     onStopped: () => void | Promise<void> = () => {},
     leaseId: string | null = null,
+    authorization: SandboxCommandAuthorization | null = null,
   ) {
     this.provider = normalizeProvider(provider);
     this.capabilities = sandboxCapabilities(capabilities);
@@ -237,6 +330,7 @@ export class SandboxSession {
     this.leaseId = leaseId;
     this.#instance = instance;
     this.#onStopped = onStopped;
+    this.#authorization = authorization;
   }
 
   get stopped(): boolean {
@@ -270,6 +364,7 @@ export class SandboxSession {
   async run(command: SandboxCommand): Promise<SandboxCommandResult> {
     this.#assertRunning();
     const normalized = normalizeCommand(command);
+    await this.#authorize("run", normalized);
     const result = await sandboxOperation(this.provider, "run command", () => (
       this.#instance.run(normalized)
     ));
@@ -283,8 +378,10 @@ export class SandboxSession {
         `Sandbox provider ${this.provider} does not support background processes.`,
       );
     }
+    const normalized = normalizeCommand(command);
+    await this.#authorize("start", normalized);
     const process = await sandboxOperation(this.provider, "start process", () => (
-      this.#instance.start!(normalizeCommand(command))
+      this.#instance.start!(normalized)
     ));
     return new SandboxProcess(this.provider, process);
   }
@@ -398,12 +495,65 @@ export class SandboxSession {
       throw new SandboxError(this.provider, "use sandbox", "The sandbox has been stopped.");
     }
   }
+
+  async #authorize(action: "run" | "start", command: SandboxCommand): Promise<void> {
+    if (!this.#authorization) return;
+    const request: SandboxCommandPolicyRequest = {
+      action,
+      provider: this.provider,
+      context: { ...this.#authorization.context },
+      command: {
+        command: command.command,
+        args: [...(command.args ?? [])],
+        cwd: command.cwd ?? ".",
+        environment: Object.keys(command.env ?? {}).sort(),
+        timeoutMs: command.timeoutMs ?? DEFAULT_SANDBOX_TIMEOUT_MS,
+      },
+    };
+    let decision: SandboxCommandPolicyDecision;
+    try {
+      decision = await this.#authorization.policy(request);
+    } catch (error) {
+      if (error instanceof SandboxCommandDeniedError) throw error;
+      throw new SandboxError(
+        this.provider,
+        "authorize command",
+        `The command policy failed: ${errorMessage(error)}`,
+        { cause: error },
+      );
+    }
+    if (!decision || typeof decision !== "object" || typeof decision.allow !== "boolean") {
+      throw new SandboxError(
+        this.provider,
+        "authorize command",
+        "The command policy returned an invalid decision.",
+      );
+    }
+    if (!decision.allow) {
+      const reason = decision.reason?.trim();
+      if (!reason || reason.length > 1_000) {
+        throw new SandboxError(
+          this.provider,
+          "authorize command",
+          "The command policy returned an invalid denial reason.",
+        );
+      }
+      throw new SandboxCommandDeniedError(this.provider, action, reason);
+    }
+  }
 }
 
 export class SandboxRegistry {
   readonly #sessions = new Set<SandboxSession>();
 
-  constructor(readonly store: SandboxLeaseStore) {}
+  constructor(
+    readonly store: SandboxLeaseStore,
+    readonly policy?: SandboxCommandPolicy,
+  ) {
+    if (policy !== undefined && typeof policy !== "function") {
+      throw new ConfigurationError("sandboxPolicy must be a function.");
+    }
+  }
 
   async get<Framework extends FrameworkId>(
     scope: UserScope,
@@ -451,7 +601,14 @@ export class SandboxRegistry {
       adapter.create(createInput)
     ));
     const lease = await this.#createLease(scope, createInput, adapter.provider, instance);
-    const session = this.#trackSession(adapter.provider, capabilities, instance, scope, lease.id);
+    const session = this.#trackSession(
+      adapter.provider,
+      capabilities,
+      instance,
+      scope,
+      lease.id,
+      createInput.context,
+    );
     try {
       await session.writeFiles(files.map((file) => ({
         path: file.path,
@@ -519,7 +676,14 @@ export class SandboxRegistry {
         "The adapter returned a different sandbox id than the persisted lease.",
       );
     }
-    return this.#trackSession(provider, capabilities, instance, scope, lease.id);
+    return this.#trackSession(
+      provider,
+      capabilities,
+      instance,
+      scope,
+      lease.id,
+      lease.context,
+    );
   }
 
   async stopAll(): Promise<void> {
@@ -557,11 +721,12 @@ export class SandboxRegistry {
     instance: SandboxInstance,
     scope: UserScope,
     leaseId: string,
+    context: SandboxCreateContext,
   ): SandboxSession {
     const session = new SandboxSession(provider, capabilities, instance, async () => {
       this.#sessions.delete(session);
       await this.store.closeSandboxLease(scope, leaseId, "stopped");
-    }, leaseId);
+    }, leaseId, this.policy ? { policy: this.policy, context } : null);
     this.#sessions.add(session);
     return session;
   }
@@ -573,6 +738,57 @@ function normalizeLeaseId(value: string): string {
     throw new ConfigurationError("Sandbox lease id must be a UUID.");
   }
   return normalized;
+}
+
+function normalizePolicyStrings(
+  values: readonly string[] | undefined,
+  label: string,
+): ReadonlySet<string> {
+  if (values === undefined) return new Set();
+  if (!Array.isArray(values)) {
+    throw new ConfigurationError(`Sandbox command policy ${label} must be an array.`);
+  }
+  const normalized = values.map((value) => {
+    const item = typeof value === "string" ? value.trim() : "";
+    if (!item || item.length > 255 || /[\0\r\n]/.test(item)) {
+      throw new ConfigurationError(`Sandbox command policy ${label} contains an invalid value.`);
+    }
+    return item;
+  });
+  if (new Set(normalized).size !== normalized.length) {
+    throw new ConfigurationError(`Sandbox command policy ${label} cannot contain duplicates.`);
+  }
+  return new Set(normalized);
+}
+
+function normalizePolicyEnvironment(
+  values: readonly string[] | undefined,
+): ReadonlySet<string> | null {
+  if (values === undefined) return null;
+  const normalized = normalizePolicyStrings(values, "environment");
+  for (const name of normalized) {
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
+      throw new ConfigurationError(
+        "Sandbox command policy environment contains an invalid variable name.",
+      );
+    }
+  }
+  return normalized;
+}
+
+function normalizePolicyLimit(
+  value: number | undefined,
+  minimum: number,
+  maximum: number,
+  label: string,
+): number | null {
+  if (value === undefined) return null;
+  if (!Number.isInteger(value) || value < minimum || value > maximum) {
+    throw new ConfigurationError(
+      `Sandbox command policy ${label} must be an integer between ${minimum} and ${maximum}.`,
+    );
+  }
+  return value;
 }
 
 function normalizeOpenOptions(options: SandboxOpenOptions): {

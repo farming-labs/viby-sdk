@@ -127,9 +127,9 @@ Viby separates a portable tool call from the credentialed connection used to ful
 
 ## Prioritized parity backlog
 
-Capability discovery, the adapter conformance suite, background processes, readiness checks, durable sandbox leases, reconnect-by-ID, and generation worker leases with heartbeats are shipped.
+Capability discovery, the adapter conformance suite, background processes, readiness checks, durable sandbox leases, reconnect-by-ID, generation worker leases with heartbeats, and sandbox command policy enforcement are shipped.
 
-1. Enforced command policy and permission decisions around real sandbox actions.
+1. Permission decisions around agent-initiated sandbox actions.
 2. Agent workspace tools that emit immutable source changes instead of replacing a full tree.
 3. Typed message parts for file operations, commands, tools, status, errors, and usage.
 4. Optional sandbox-backed preview sessions and a host-proxy contract.

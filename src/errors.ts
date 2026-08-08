@@ -91,6 +91,20 @@ export class SandboxUnavailableError extends VibyError {
   }
 }
 
+export class SandboxCommandDeniedError extends VibyError {
+  readonly provider: string;
+  readonly action: "run" | "start";
+  readonly reason: string;
+
+  constructor(provider: string, action: "run" | "start", reason: string) {
+    super("sandbox_command_denied", `Sandbox command was denied for ${provider}: ${reason}`);
+    this.name = "SandboxCommandDeniedError";
+    this.provider = provider;
+    this.action = action;
+    this.reason = reason;
+  }
+}
+
 export class SandboxError extends VibyError {
   readonly provider: string;
   readonly operation: string;

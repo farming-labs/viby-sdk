@@ -176,6 +176,28 @@ const reconnected = await userViby.sandboxes.reconnect(leaseId);
 
 `userViby.sandboxes.get(leaseId)` returns the portable lease metadata. Viby stores the provider name, opaque provider sandbox id, source version, framework, declared ports, state, and expiration. It never stores provider credentials, environment values, or vendor response payloads. E2B, Vercel Sandbox, and Cloudflare implement native reconnect today; other adapters fail through the capability gate.
 
+Enforce one command policy across every adapter in the session core:
+
+```ts
+import { sandboxCommandPolicy } from "@viby/sdk";
+
+const viby = createViby({
+  framework: "farm",
+  model,
+  sandbox,
+  sandboxPolicy: sandboxCommandPolicy({
+    allowCommands: ["node", "pnpm"],
+    denyCommands: ["sudo"],
+    actions: ["run", "start"],
+    environment: ["CI", "NODE_ENV"],
+    maxTimeoutMs: 5 * 60_000,
+    maxArgs: 100,
+  }),
+});
+```
+
+`sandboxPolicy` may also be an async function returning `{ allow: true }` or `{ allow: false, reason }`, which lets a product apply tenant roles or its own approval store. Viby authorizes normalized command metadata before calling `run` or `start`; a denial, thrown policy error, or malformed decision is fail-closed. Policy requests include environment variable names but never their values. Keep credentials out of command arguments as well, since arguments are necessarily visible to command authorization.
+
 Adapter authors can import `verifySandboxAdapter` from `@viby/sdk/sandbox/conformance` in their own test suite. The caller supplies a harmless runtime-specific command and fixture credentials; Viby verifies capability declarations, text and binary file roundtrips, commands, streaming, port URLs, and idempotent cleanup without assuming a framework, image, or provider.
 
 ### E2B
@@ -490,6 +512,7 @@ Included now:
 - immutable versions and iteration
 - raw source ZIP downloads
 - sandboxed execution, durable leases, and preview URLs when an adapter supports them
+- enforced provider-neutral sandbox command authorization
 
 Planned as separate capabilities later:
 
