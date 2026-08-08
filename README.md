@@ -193,6 +193,30 @@ const viby = createViby({
 
 Vercel OIDC authentication is automatic in a linked Vercel project. Outside Vercel, pass `token`, `teamId`, and `projectId` together. Viby creates non-persistent execution sandboxes, declares requested preview ports at creation, and maps command output streams into the common callback.
 
+### Daytona
+
+Install the provider peer:
+
+```bash
+npm install @daytona/sdk
+```
+
+```ts
+import { daytonaSandbox } from "@viby/sdk/sandbox/daytona";
+
+const viby = createViby({
+  framework: "farm",
+  model,
+  sandbox: daytonaSandbox({
+    apiKey: process.env.DAYTONA_API_KEY,
+    image: "node:24",
+    resources: { cpu: 2, memory: 4 },
+  }),
+});
+```
+
+Without explicit credentials, the Daytona SDK reads `DAYTONA_API_KEY`, `DAYTONA_API_URL`, and `DAYTONA_TARGET`. The adapter creates ephemeral sandboxes with a TTL matching the Viby session, supports images or snapshots, streams command output through Daytona sessions, and returns signed preview URLs that can be opened directly. Network allowlists, secrets, labels, resources, and custom names remain provider options rather than leaking into Viby’s shared contract.
+
 ### Local Docker
 
 Docker requires no JavaScript provider dependency:

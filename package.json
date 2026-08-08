@@ -50,6 +50,10 @@
       "types": "./dist/sandbox-docker.d.ts",
       "import": "./dist/sandbox-docker.js"
     },
+    "./sandbox/daytona": {
+      "types": "./dist/sandbox-daytona.d.ts",
+      "import": "./dist/sandbox-daytona.js"
+    },
     "./package.json": "./package.json"
   },
   "bin": {
@@ -91,10 +95,14 @@
     "zod": "^4.4.3"
   },
   "peerDependencies": {
+    "@daytona/sdk": "^0.203.0",
     "@vercel/sandbox": "^3.0.0",
     "e2b": "^2.38.2"
   },
   "peerDependenciesMeta": {
+    "@daytona/sdk": {
+      "optional": true
+    },
     "@vercel/sandbox": {
       "optional": true
     },
@@ -103,8 +111,8 @@
     }
   },
   "devDependencies": {
+    "@daytona/sdk": "^0.203.0",
     "@types/node": "^26.1.2",
-    "@vercel/sandbox": "^3.0.0",
     "@vercel/sandbox": "^3.0.0",
     "bumpp": "^10.4.1",
     "e2b": "^2.38.2",
