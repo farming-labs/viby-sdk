@@ -11,6 +11,8 @@ import type {
   GenerationTaskData,
   GenerationTaskRequest,
   MessageData,
+  MessagePartDataMap,
+  MessagePartType,
   ResolvedSkill,
   SourceChange,
   VersionFile,
@@ -108,9 +110,28 @@ export interface GeneratorChangesOutput {
 
 export type GeneratorOutput = GeneratorProjectOutput | GeneratorChangesOutput | GeneratorTaskOutput;
 
+export interface AgentTraceError {
+  readonly message: string;
+  readonly code?: string;
+  readonly retryable?: boolean;
+}
+
+export interface AgentTracePart<Type extends MessagePartType> {
+  readonly id: string;
+  readonly type: Type;
+  delta(delta: string): Promise<void>;
+  complete(data: MessagePartDataMap[Type]): Promise<void>;
+  fail(error: AgentTraceError): Promise<void>;
+}
+
+export interface AgentTraceWriter {
+  start<Type extends MessagePartType>(type: Type): Promise<AgentTracePart<Type>>;
+}
+
 export interface GeneratorOptions {
   readonly signal?: AbortSignal;
   readonly onDelta?: (delta: string) => void | Promise<void>;
+  readonly trace?: AgentTraceWriter;
 }
 
 export interface ProjectGenerator<Framework extends FrameworkId = FrameworkId> {

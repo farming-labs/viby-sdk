@@ -129,6 +129,68 @@ test("starts asynchronously, persists streamed deltas, and resumes from an event
   await viby.close();
 });
 
+test("streams resumable typed agent trace part lifecycles into the durable message", async () => {
+  const generator: ProjectGenerator<"farm"> = {
+    async generate(_input, options) {
+      assert.ok(options?.trace);
+      const search = await options.trace.start("search");
+      await search.delta("src/");
+      await search.complete({ query: "dashboard", path: "src", matches: 2 });
+
+      const command = await options.trace.start("command");
+      await command.delta("checking package scripts");
+      await command.fail({
+        message: "The optional check was unavailable.",
+        code: "check_unavailable",
+        retryable: true,
+      });
+      return projectOutput(1);
+    },
+  };
+  const { viby } = setup(generator);
+  const chat = await viby
+    .forUser({ tenantId: "tenant-a", userId: "user-a" })
+    .chats.create();
+  const generation = await chat.start({ prompt: "Build a dashboard" });
+  assert.equal((await generation.wait({ pollIntervalMs: 10 })).status, "succeeded");
+
+  const events = (await generation.events({ limit: 100 })).events;
+  const traceEvents = events.filter((event) => event.type.startsWith("part."));
+  assert.deepEqual(traceEvents.map((event) => event.type), [
+    "part.started",
+    "part.delta",
+    "part.completed",
+    "part.started",
+    "part.delta",
+    "part.failed",
+  ]);
+  const started = traceEvents[0]!;
+  assert.equal(started.type, "part.started");
+  if (started.type !== "part.started") throw new Error("Expected a started trace event");
+  assert.deepEqual(started.data, {
+    partId: started.data.partId,
+    position: 0,
+    type: "search",
+  });
+  const completed = traceEvents[2]!;
+  assert.equal(completed.type, "part.completed");
+  if (completed.type !== "part.completed") throw new Error("Expected a completed trace event");
+  assert.equal(completed.data.part.id, started.data.partId);
+  assert.equal(completed.data.part.type, "search");
+
+  const resumed = await generation.events({ after: started.cursor, limit: 100 });
+  assert.equal(resumed.events.some((event) => event.cursor === started.cursor), false);
+  assert.equal(resumed.events.some((event) => event.type === "part.delta"), true);
+
+  const assistant = (await chat.listMessages()).items.find((message) => message.role === "assistant")!;
+  const searchPart = assistant.parts.find((part) => part.type === "search");
+  assert.ok(searchPart);
+  assert.equal(searchPart.id, started.data.partId);
+  assert.deepEqual(searchPart.data, { query: "dashboard", path: "src", matches: 2 });
+  assert.equal(assistant.parts.some((part) => part.type === "command"), false);
+  await viby.close();
+});
+
 test("cancels a running model call and durably records cancellation", async () => {
   let observedAbort = false;
   let markStarted!: () => void;

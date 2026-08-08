@@ -10,6 +10,8 @@ import type {
   GenerationAttemptData,
   GenerationData,
   GenerationEvent,
+  GenerationEventDataMap,
+  GenerationEventType,
   GenerationEventOptions,
   GenerationEventPage,
   GenerationStreamOptions,
@@ -18,7 +20,9 @@ import type {
   GenerationWaitOptions,
   IterateInput,
   MessageData,
+  MessagePartDataMap,
   MessagePartInput,
+  MessagePartType,
   PageOptions,
   ResolveGenerationTaskInput,
   RestoreVersionInput,
@@ -35,7 +39,12 @@ import type {
   SandboxOpenOptions,
   SandboxReconnectOptions,
 } from "./sandbox.js";
-import type { ProjectGenerator } from "./generator.js";
+import type {
+  AgentTraceError,
+  AgentTracePart,
+  AgentTraceWriter,
+  ProjectGenerator,
+} from "./generator.js";
 import type { GenerationWorkerLease, Repository } from "./repository.js";
 import { AiProjectGenerator } from "./generator.js";
 import { PostgresRepository } from "./postgres-repository.js";
@@ -1079,6 +1088,16 @@ class GenerationRunner<Framework extends FrameworkId> {
     cancelOnAbort: boolean,
   ): Promise<void> {
     const { scope, generationId, attemptId, leaseToken } = lease;
+    const trace = new DurableAgentTrace(async (type, data) => {
+      signal.throwIfAborted();
+      await this.#dependencies.repository.appendGenerationEvent(scope, {
+        generationId,
+        attemptId,
+        leaseToken,
+        type,
+        data,
+      });
+    });
     try {
       signal.throwIfAborted();
 
@@ -1119,6 +1138,7 @@ class GenerationRunner<Framework extends FrameworkId> {
         },
         {
           signal,
+          trace,
           onDelta: async (delta) => {
             signal.throwIfAborted();
             await this.#dependencies.repository.appendGenerationEvent(scope, {
@@ -1132,6 +1152,7 @@ class GenerationRunner<Framework extends FrameworkId> {
         },
       );
       signal.throwIfAborted();
+      await trace.finish();
 
       if (output.kind === "task") {
         const inputTokens = output.usage.inputTokens ?? null;
@@ -1144,6 +1165,7 @@ class GenerationRunner<Framework extends FrameworkId> {
           taskId: createId(),
           task: output.task,
           assistantParts: [
+            ...trace.completedParts(),
             { type: "status", data: { message: output.task.message, state: "waiting" } },
             { type: "text", data: { text: output.task.message } },
             usageMessagePart(inputTokens, outputTokens, totalTokens),
@@ -1175,6 +1197,7 @@ class GenerationRunner<Framework extends FrameworkId> {
         changes,
         assistantMessage: output.summary,
         assistantParts: [
+          ...trace.completedParts(),
           ...fileEditMessageParts(files, changes),
           { type: "text", data: { text: output.summary } },
           usageMessagePart(inputTokens, outputTokens, totalTokens),
@@ -1185,6 +1208,11 @@ class GenerationRunner<Framework extends FrameworkId> {
         finishReason: output.finishReason,
       });
     } catch (error) {
+      await trace.failOpen({
+        message: errorMessage(error),
+        code: "generation_failed",
+        retryable: true,
+      }).catch(() => undefined);
       if (signal.aborted || isAbortError(error)) {
         if (!cancelOnAbort || signal.reason instanceof GenerationWorkerLeaseLostError) return;
         await this.#dependencies.repository.cancelGeneration(
@@ -1203,6 +1231,105 @@ class GenerationRunner<Framework extends FrameworkId> {
         errorMessage(error),
       ).catch(() => undefined);
     }
+  }
+}
+
+type AgentPartEventType = Extract<GenerationEventType, `part.${string}`>;
+type AgentPartEventAppend = <Type extends AgentPartEventType>(
+  type: Type,
+  data: GenerationEventDataMap[Type],
+) => Promise<void>;
+
+interface TraceEntry<Type extends MessagePartType = MessagePartType> {
+  readonly id: string;
+  readonly position: number;
+  readonly type: Type;
+  state: "active" | "completed" | "failed";
+  data?: MessagePartDataMap[Type];
+}
+
+class DurableAgentTrace implements AgentTraceWriter {
+  readonly #append: AgentPartEventAppend;
+  readonly #entries: TraceEntry[] = [];
+  #closed = false;
+
+  constructor(append: AgentPartEventAppend) {
+    this.#append = append;
+  }
+
+  async start<Type extends MessagePartType>(type: Type): Promise<AgentTracePart<Type>> {
+    if (this.#closed) throw new GenerationStateError("trace", "The agent trace is closed.");
+    const entry: TraceEntry<Type> = {
+      id: createId(),
+      position: this.#entries.length,
+      type,
+      state: "active",
+    };
+    await this.#append("part.started", {
+      partId: entry.id,
+      position: entry.position,
+      type,
+    });
+    this.#entries.push(entry as TraceEntry);
+    return {
+      id: entry.id,
+      type,
+      delta: async (delta) => {
+        this.#assertActive(entry);
+        await this.#append("part.delta", { partId: entry.id, delta });
+      },
+      complete: async (data) => {
+        this.#assertActive(entry);
+        await this.#append("part.completed", {
+          part: { id: entry.id, type, data } as MessagePartInput & { readonly id: string },
+        });
+        entry.data = data;
+        entry.state = "completed";
+      },
+      fail: async (error) => {
+        await this.#fail(entry, error);
+      },
+    };
+  }
+
+  completedParts(): MessagePartInput[] {
+    return this.#entries.flatMap((entry) => entry.state === "completed"
+      ? [{ id: entry.id, type: entry.type, data: entry.data! } as MessagePartInput]
+      : []);
+  }
+
+  async finish(): Promise<void> {
+    await this.failOpen({
+      message: "The agent stopped before completing this trace part.",
+      code: "incomplete_part",
+      retryable: false,
+    });
+    this.#closed = true;
+  }
+
+  async failOpen(error: AgentTraceError): Promise<void> {
+    for (const entry of this.#entries) {
+      if (entry.state === "active") await this.#fail(entry, error);
+    }
+  }
+
+  #assertActive(entry: TraceEntry): void {
+    if (this.#closed || entry.state !== "active") {
+      throw new GenerationStateError("trace", `Trace part ${entry.id} is no longer active.`);
+    }
+  }
+
+  async #fail(entry: TraceEntry, error: AgentTraceError): Promise<void> {
+    this.#assertActive(entry);
+    await this.#append("part.failed", {
+      partId: entry.id,
+      error: {
+        message: error.message,
+        code: error.code ?? null,
+        retryable: error.retryable ?? false,
+      },
+    });
+    entry.state = "failed";
   }
 }
 

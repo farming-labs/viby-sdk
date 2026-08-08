@@ -1030,7 +1030,7 @@ function createMemoryMessage(
 ): MessageData & ScopedRecord {
   const id = createId();
   const parts = input.parts.map((part, position) => ({
-    id: createId(),
+    id: part.id ?? createId(),
     messageId: id,
     generationId: input.generationId,
     attemptId: input.attemptId,

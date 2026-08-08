@@ -1817,7 +1817,7 @@ async function insertMessage(
         id, tenant_id, user_id, message_id, generation_id, attempt_id,
         position, type, data
       ) VALUES (
-        ${createId()}, ${scope.tenantId}, ${scope.userId}, ${messageId},
+        ${part.id ?? createId()}, ${scope.tenantId}, ${scope.userId}, ${messageId},
         ${input.generationId}, ${input.attemptId}, ${position}, ${part.type},
         ${sql.json(JSON.parse(JSON.stringify(part.data)))}
       )

@@ -46,6 +46,11 @@ test("persists a durable generation, iteration, events, and download in Postgres
         checksum: sha256(content),
       }];
       await options?.onDelta?.(`version-${number}`);
+      if (number === 1) {
+        const search = await options?.trace?.start("search");
+        await search?.delta("src/");
+        await search?.complete({ query: "version", path: "src", matches: 1 });
+      }
       return {
         kind: "project",
         title: "Postgres integration",
@@ -87,6 +92,9 @@ test("persists a durable generation, iteration, events, and download in Postgres
       "attempt.queued",
       "attempt.started",
       "output.delta",
+      "part.started",
+      "part.delta",
+      "part.completed",
       "attempt.succeeded",
       "generation.succeeded",
     ]);
@@ -104,6 +112,7 @@ test("persists a durable generation, iteration, events, and download in Postgres
     const persistedMessages = (await persistedChat.listMessages()).items;
     assert.deepEqual(persistedMessages[0]?.parts.map((part) => part.type), ["text"]);
     assert.deepEqual(persistedMessages[1]?.parts.map((part) => part.type), [
+      "search",
       "file-edit",
       "text",
       "usage",

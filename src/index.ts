@@ -77,6 +77,7 @@ export type {
   ChatMetadata,
   CreateChatInput,
   CursorPage,
+  DurableMessagePartInput,
   FrameworkId,
   ForkVersionInput,
   GenerateInput,

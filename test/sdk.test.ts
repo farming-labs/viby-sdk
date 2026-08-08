@@ -123,13 +123,14 @@ test("persists typed ordered message parts with message, generation, and attempt
   const messages = (await chat.listMessages()).items;
 
   assert.equal(messages.length, 2);
-  assert.deepEqual(messages[0]?.parts.map((part) => part.type), ["text"]);
-  assert.deepEqual(messages[1]?.parts.map((part) => part.type), [
+  const user = messages.find((message) => message.role === "user")!;
+  const assistant = messages.find((message) => message.role === "assistant")!;
+  assert.deepEqual(user.parts.map((part) => part.type), ["text"]);
+  assert.deepEqual(assistant.parts.map((part) => part.type), [
     "file-edit",
     "text",
     "usage",
   ]);
-  const assistant = messages[1]!;
   assert.equal(assistant.generationId, version.generationId);
   assert.ok(assistant.parts.every((part, position) => (
     part.messageId === assistant.id
