@@ -117,6 +117,7 @@ export interface CreateAttemptRecord {
 export interface CompleteGenerationRecord<Framework extends FrameworkId = FrameworkId> {
   readonly generationId: string;
   readonly attemptId: string;
+  readonly leaseToken: string;
   readonly parentVersionId: string | null;
   readonly framework: Framework;
   readonly title: string;
@@ -132,6 +133,7 @@ export interface CompleteGenerationRecord<Framework extends FrameworkId = Framew
 export interface PauseGenerationRecord {
   readonly generationId: string;
   readonly attemptId: string;
+  readonly leaseToken: string;
   readonly taskId: string;
   readonly task: GenerationTaskRequest;
   readonly inputTokens: number | null;
@@ -151,8 +153,28 @@ export interface ResolveGenerationTaskRecord {
 export interface AppendGenerationEventRecord<Type extends GenerationEventType> {
   readonly generationId: string;
   readonly attemptId: string | null;
+  readonly leaseToken: string;
   readonly type: Type;
   readonly data: GenerationEventDataMap[Type];
+}
+
+export interface ClaimGenerationAttemptRecord<Framework extends FrameworkId = FrameworkId> {
+  readonly workerId: string;
+  readonly leaseToken: string;
+  readonly leaseMs: number;
+  readonly framework: Framework;
+  readonly modelProvider: string;
+  readonly modelId: string;
+  readonly attemptId?: string;
+}
+
+export interface GenerationWorkerLease {
+  readonly workerId: string;
+  readonly leaseToken: string;
+  readonly scope: UserScope;
+  readonly generationId: string;
+  readonly attemptId: string;
+  readonly expiresAt: Date;
 }
 
 export interface Repository {
@@ -202,6 +224,13 @@ export interface Repository {
     generationId: string,
     attemptId: string,
   ): Promise<GenerationAttemptData>;
+  claimGenerationAttempt<Framework extends FrameworkId>(
+    input: ClaimGenerationAttemptRecord<Framework>,
+  ): Promise<GenerationWorkerLease | null>;
+  heartbeatGenerationAttempt(
+    lease: GenerationWorkerLease,
+    leaseMs: number,
+  ): Promise<Date | null>;
   createGenerationAttempt(
     scope: UserScope,
     input: CreateAttemptRecord,
@@ -209,6 +238,8 @@ export interface Repository {
   attachGenerationSkills(
     scope: UserScope,
     generationId: string,
+    attemptId: string,
+    leaseToken: string,
     skills: readonly ResolvedSkill[],
   ): Promise<void>;
   getGenerationSkills(scope: UserScope, generationId: string): Promise<ResolvedSkill[] | null>;
@@ -232,6 +263,7 @@ export interface Repository {
     scope: UserScope,
     generationId: string,
     attemptId: string,
+    leaseToken: string,
     error: string,
   ): Promise<void>;
   cancelGeneration(scope: UserScope, generationId: string, reason: string): Promise<boolean>;

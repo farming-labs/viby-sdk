@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { LanguageModel, LanguageModelUsage } from "ai";
 import { createVibyWithDependencies } from "../src/client.js";
+import { GenerationStateError } from "../src/errors.js";
 import type {
   GeneratorInput,
   GeneratorOptions,
@@ -292,6 +293,141 @@ test("persists and resolves plan, question, and permission tasks before completi
     ["initial", "task_resolution", "task_resolution", "task_resolution"],
   );
   await viby.close();
+});
+
+test("runs queued generations through a provider-neutral durable worker", async () => {
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  let started!: () => void;
+  const running = new Promise<void>((resolve) => { started = resolve; });
+  const repository = new MemoryRepository();
+  const viby = createVibyWithDependencies(
+    {
+      framework: "farm",
+      model: "test/mock" as LanguageModel,
+      skills: {},
+      generation: { execution: "worker" },
+    },
+    {
+      repository,
+      generator: {
+        async generate() {
+          started();
+          await gate;
+          return projectOutput(1);
+        },
+      },
+      skillResolver: new SkillResolver({}),
+    },
+  );
+  const scope = { tenantId: "tenant-a", userId: "user-a" };
+  const generation = await (await viby.forUser(scope).chats.create())
+    .start({ prompt: "Build in a worker" });
+  assert.equal((await generation.data()).status, "queued");
+
+  const worker = viby.worker({
+    id: "worker-a",
+    leaseMs: 120,
+    heartbeatMs: 30,
+    pollIntervalMs: 10,
+  });
+  const work = worker.runOnce();
+  await running;
+  const firstHeartbeat = (await generation.attempts())[0]!.heartbeatAt;
+  assert.ok(firstHeartbeat);
+  await new Promise((resolve) => setTimeout(resolve, 70));
+  const renewed = (await generation.attempts())[0]!;
+  assert.equal(renewed.workerId, "worker-a");
+  assert.ok(renewed.heartbeatAt!.getTime() > firstHeartbeat.getTime());
+  assert.ok(renewed.leaseExpiresAt!.getTime() > Date.now());
+
+  release();
+  assert.equal(await work, true);
+  assert.equal((await generation.wait({ pollIntervalMs: 10 })).status, "succeeded");
+  assert.equal(await worker.runOnce(), false);
+  await viby.close();
+});
+
+test("fences stale workers and reclaims only expired generation leases", async () => {
+  const repository = new MemoryRepository();
+  const scope = { tenantId: "tenant-a", userId: "user-a" };
+  const chat = await repository.createChat(scope, {
+    id: "50d16c6e-d4e0-4e57-8101-0471568526f4",
+    title: "Worker fencing",
+    metadata: {},
+    framework: "farm",
+  });
+  const generationId = "b6c2b008-d89e-4874-a63a-b40d7f81b15d";
+  const attemptId = "bc51f554-c238-4a62-a7cb-a0054640ba3c";
+  await repository.createGeneration(scope, {
+    id: generationId,
+    attemptId,
+    chatId: chat.id,
+    baseVersionId: null,
+    prompt: "Build safely",
+    modelProvider: "test",
+    modelId: "test/mock",
+  });
+  const first = await repository.claimGenerationAttempt({
+    workerId: "worker-a",
+    leaseToken: "11111111-1111-4111-8111-111111111111",
+    leaseMs: 100,
+    framework: "farm",
+    modelProvider: "test",
+    modelId: "test/mock",
+  });
+  assert.ok(first);
+  assert.equal(await repository.claimGenerationAttempt({
+    workerId: "worker-b",
+    leaseToken: "22222222-2222-4222-8222-222222222222",
+    leaseMs: 100,
+    framework: "farm",
+    modelProvider: "test",
+    modelId: "test/mock",
+  }), null);
+  await assert.rejects(
+    () => repository.appendGenerationEvent(scope, {
+      generationId,
+      attemptId,
+      leaseToken: "33333333-3333-4333-8333-333333333333",
+      type: "output.delta",
+      data: { delta: "stale" },
+    }),
+    GenerationStateError,
+  );
+
+  await new Promise((resolve) => setTimeout(resolve, 110));
+  const second = await repository.claimGenerationAttempt({
+    workerId: "worker-b",
+    leaseToken: "22222222-2222-4222-8222-222222222222",
+    leaseMs: 100,
+    framework: "farm",
+    modelProvider: "test",
+    modelId: "test/mock",
+  });
+  assert.ok(second);
+  assert.equal(await repository.heartbeatGenerationAttempt(first, 100), null);
+  await assert.rejects(
+    () => repository.appendGenerationEvent(scope, {
+      generationId,
+      attemptId,
+      leaseToken: first.leaseToken,
+      type: "output.delta",
+      data: { delta: "old owner" },
+    }),
+    GenerationStateError,
+  );
+  await repository.appendGenerationEvent(scope, {
+    generationId,
+    attemptId,
+    leaseToken: second.leaseToken,
+    type: "output.delta",
+    data: { delta: "current owner" },
+  });
+  assert.equal(
+    repository.events.filter((event) => event.type === "output.delta").length,
+    1,
+  );
 });
 
 async function waitUntil(predicate: () => Promise<boolean>): Promise<void> {

@@ -369,6 +369,26 @@ await generation.resume(); // interrupted, failed, or cancelled generation
 
 `chat.generate` and `version.iterate` remain synchronous convenience methods built on this durable lifecycle.
 
+For request-scoped or horizontally scaled hosts, queue generation in Postgres and run the portable worker loop separately:
+
+```ts
+const viby = createViby({
+  framework: "farm",
+  model,
+  skills,
+  generation: { execution: "worker" },
+});
+
+const worker = viby.worker({
+  id: process.env.WORKER_ID!,
+  concurrency: 4,
+});
+
+await worker.run({ signal: shutdownSignal });
+```
+
+`worker.runOnce()` processes at most one available attempt, which is useful for cron jobs and host-owned workflow systems. Viby claims work with Postgres row locks, expiring leases, and periodic heartbeats; no queue, runtime, or deployment vendor is required. Claims are filtered by the configured framework and model. Lease tokens fence streamed events, skill attachment, task pauses, failures, and final version commits, so a stale worker cannot write after another worker reclaims an expired attempt. Delivery is at least once: generated tools and model calls should remain safe to retry around a process crash.
+
 ## Resolve typed tasks
 
 A generation can pause when it genuinely requires plan approval, critical information, or permission for a sensitive action. `wait` returns the typed pending task instead of losing the model state:
@@ -464,6 +484,7 @@ Included now:
 - asynchronous generation handles
 - resumable event cursors and streamed output deltas
 - cancellation, retry, and process recovery
+- embedded or durable generation-worker execution with fenced leases and heartbeats
 - immutable attempt history and usage
 - typed plan, question, and permission tasks
 - immutable versions and iteration

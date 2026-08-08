@@ -197,6 +197,57 @@ test("persists a durable generation, iteration, events, and download in Postgres
     const chatPage = await user.chats.list({ limit: 1 });
     assert.equal(chatPage.items[0]?.id, updatedChat.id);
     assert.ok(chatPage.nextCursor);
+
+    const workerRepository = new PostgresRepository(databaseUrl);
+    const workerViby = createVibyWithDependencies(
+      {
+        framework: "farm",
+        model: "test/worker" as LanguageModel,
+        skills: {},
+        generation: { execution: "worker" },
+      },
+      {
+        repository: workerRepository,
+        generator: {
+          async generate() {
+            const content = "export const worker = true;\n";
+            return {
+              kind: "project",
+              title: "Worker integration",
+              summary: "Generated through a durable worker",
+              files: [{
+                path: "src/worker.ts",
+                content,
+                mediaType: "text/javascript",
+                size: Buffer.byteLength(content),
+                checksum: sha256(content),
+              }],
+              usage,
+              finishReason: "stop",
+            };
+          },
+        },
+        skillResolver: new SkillResolver({}),
+      },
+    );
+    try {
+      const workerScope = {
+        tenantId: `worker-${randomUUID()}`,
+        userId: `worker-${randomUUID()}`,
+      };
+      const queued = await (await workerViby.forUser(workerScope).chats.create())
+        .start({ prompt: "Run through a durable worker" });
+      assert.equal((await queued.data()).status, "queued");
+      const worker = workerViby.worker({ id: "postgres-integration-worker" });
+      assert.equal(await worker.runOnce(), true);
+      assert.equal((await queued.wait({ pollIntervalMs: 10 })).status, "succeeded");
+      const [attempt] = await queued.attempts();
+      assert.equal(attempt?.workerId, "postgres-integration-worker");
+      assert.ok(attempt?.heartbeatAt);
+      assert.ok(attempt?.leaseExpiresAt);
+    } finally {
+      await workerViby.close();
+    }
   } finally {
     await viby.close();
   }

@@ -34,7 +34,7 @@ import type {
   SandboxReconnectOptions,
 } from "./sandbox.js";
 import type { ProjectGenerator } from "./generator.js";
-import type { Repository } from "./repository.js";
+import type { GenerationWorkerLease, Repository } from "./repository.js";
 import { AiProjectGenerator } from "./generator.js";
 import { PostgresRepository } from "./postgres-repository.js";
 import { SkillResolver } from "./skills.js";
@@ -68,10 +68,26 @@ import { SandboxRegistry, type SandboxSession } from "./sandbox.js";
 
 const DEFAULT_POLL_INTERVAL_MS = 100;
 const DEFAULT_EVENT_LIMIT = 100;
+const DEFAULT_WORKER_LEASE_MS = 30_000;
+const DEFAULT_WORKER_HEARTBEAT_MS = 10_000;
+const DEFAULT_WORKER_POLL_INTERVAL_MS = 500;
+
+export interface GenerationWorkerOptions {
+  readonly id: string;
+  readonly concurrency?: number;
+  readonly leaseMs?: number;
+  readonly heartbeatMs?: number;
+  readonly pollIntervalMs?: number;
+}
+
+export interface GenerationWorkerRunOptions {
+  readonly signal?: AbortSignal;
+}
 
 export interface Viby<Framework extends FrameworkId = FrameworkId> {
   readonly framework: Framework;
   forUser(scope: UserScope): ScopedViby<Framework>;
+  worker(options: GenerationWorkerOptions): GenerationWorker<Framework>;
   close(): Promise<void>;
 }
 
@@ -140,6 +156,7 @@ class VibyClient<Framework extends FrameworkId> implements Viby<Framework> {
   readonly #registry = new GenerationRunRegistry();
   readonly #sandboxes: SandboxRegistry;
   readonly #runner: GenerationRunner<Framework>;
+  readonly #workers = new Set<GenerationWorker<Framework>>();
 
   constructor(
     config: VibyConfig<Framework>,
@@ -163,6 +180,9 @@ class VibyClient<Framework extends FrameworkId> implements Viby<Framework> {
       generator: dependencies.generator,
       skillResolver: this.#skillResolver,
       registry: this.#registry,
+      automatic: normalizeGenerationExecution(config.generation) === "embedded",
+      modelProvider: this.#modelProvider,
+      modelId: this.#modelId,
     });
   }
 
@@ -184,7 +204,14 @@ class VibyClient<Framework extends FrameworkId> implements Viby<Framework> {
     });
   }
 
+  worker(options: GenerationWorkerOptions): GenerationWorker<Framework> {
+    const worker = new GenerationWorker(this.#runner, options);
+    this.#workers.add(worker);
+    return worker;
+  }
+
   async close(): Promise<void> {
+    await Promise.allSettled([...this.#workers].map((worker) => worker.stop()));
     await this.#registry.abortAll("Viby client closed.");
     const [sandboxes, repository] = await Promise.allSettled([
       this.#sandboxes.stopAll(),
@@ -192,6 +219,76 @@ class VibyClient<Framework extends FrameworkId> implements Viby<Framework> {
     ]);
     if (sandboxes.status === "rejected") throw sandboxes.reason;
     if (repository.status === "rejected") throw repository.reason;
+  }
+}
+
+interface NormalizedGenerationWorkerOptions {
+  readonly id: string;
+  readonly concurrency: number;
+  readonly leaseMs: number;
+  readonly heartbeatMs: number;
+  readonly pollIntervalMs: number;
+}
+
+export class GenerationWorker<Framework extends FrameworkId = FrameworkId> {
+  readonly id: string;
+  readonly #runner: GenerationRunner<Framework>;
+  readonly #options: NormalizedGenerationWorkerOptions;
+  readonly #controller = new AbortController();
+  #runPromise: Promise<void> | null = null;
+  #isRunning = false;
+
+  constructor(runner: GenerationRunner<Framework>, options: GenerationWorkerOptions) {
+    this.#runner = runner;
+    this.#options = normalizeGenerationWorkerOptions(options);
+    this.id = this.#options.id;
+  }
+
+  get running(): boolean {
+    return this.#isRunning;
+  }
+
+  async runOnce(options: GenerationWorkerRunOptions = {}): Promise<boolean> {
+    validateGenerationWorkerRunOptions(options);
+    if (this.#runPromise) {
+      throw new ConfigurationError("runOnce cannot be called while the generation worker is running.");
+    }
+    const signal = combineAbortSignals(this.#controller.signal, options.signal);
+    signal.throwIfAborted();
+    return this.#runner.runNext(this.#options, signal);
+  }
+
+  run(options: GenerationWorkerRunOptions = {}): Promise<void> {
+    validateGenerationWorkerRunOptions(options);
+    if (this.#runPromise) return this.#runPromise;
+    const signal = combineAbortSignals(this.#controller.signal, options.signal);
+    this.#isRunning = true;
+    this.#runPromise = Promise.all(
+      Array.from({ length: this.#options.concurrency }, () => this.#runLane(signal)),
+    ).then(() => undefined).finally(() => {
+      this.#isRunning = false;
+    });
+    return this.#runPromise;
+  }
+
+  async stop(): Promise<void> {
+    if (!this.#controller.signal.aborted) {
+      this.#controller.abort(new DOMException("Generation worker stopped.", "AbortError"));
+    }
+    await this.#runPromise?.catch((error) => {
+      if (!isAbortError(error)) throw error;
+    });
+  }
+
+  async #runLane(signal: AbortSignal): Promise<void> {
+    try {
+      while (!signal.aborted) {
+        const worked = await this.#runner.runNext(this.#options, signal);
+        if (!worked) await waitForPoll(this.#options.pollIntervalMs, signal);
+      }
+    } catch (error) {
+      if (!signal.aborted && !isAbortError(error)) throw error;
+    }
   }
 }
 
@@ -844,30 +941,126 @@ interface RunnerDependencies<Framework extends FrameworkId> {
   readonly generator: ProjectGenerator<Framework>;
   readonly skillResolver: SkillResolver;
   readonly registry: GenerationRunRegistry;
+  readonly automatic: boolean;
+  readonly modelProvider: string;
+  readonly modelId: string;
 }
 
 class GenerationRunner<Framework extends FrameworkId> {
   readonly #dependencies: RunnerDependencies<Framework>;
+  readonly #embeddedWorkerId = `embedded-${createId()}`;
 
   constructor(dependencies: RunnerDependencies<Framework>) {
     this.#dependencies = dependencies;
   }
 
   schedule(scope: UserScope, generationId: string, attemptId: string): void {
-    this.#dependencies.registry.start(
+    if (!this.#dependencies.automatic) return;
+    void this.#dependencies.registry.start(
       generationId,
-      (signal) => this.#execute(scope, generationId, attemptId, signal),
+      async (signal) => {
+        const lease = await this.#claim({
+          id: this.#embeddedWorkerId,
+          concurrency: 1,
+          leaseMs: DEFAULT_WORKER_LEASE_MS,
+          heartbeatMs: DEFAULT_WORKER_HEARTBEAT_MS,
+          pollIntervalMs: DEFAULT_WORKER_POLL_INTERVAL_MS,
+        }, attemptId);
+        if (!lease || lease.scope.tenantId !== scope.tenantId || lease.scope.userId !== scope.userId) {
+          return;
+        }
+        await this.#executeWithHeartbeat(lease, DEFAULT_WORKER_LEASE_MS, DEFAULT_WORKER_HEARTBEAT_MS, signal, true);
+      },
+    ).catch(() => undefined);
+  }
+
+  async runNext(options: NormalizedGenerationWorkerOptions, signal: AbortSignal): Promise<boolean> {
+    const lease = await this.#claim(options);
+    if (!lease) return false;
+    await this.#dependencies.registry.start(
+      lease.generationId,
+      (runSignal) => this.#executeWithHeartbeat(
+        lease,
+        options.leaseMs,
+        options.heartbeatMs,
+        combineAbortSignals(runSignal, signal),
+        false,
+      ),
     );
+    return true;
+  }
+
+  #claim(
+    options: NormalizedGenerationWorkerOptions,
+    attemptId?: string,
+  ): Promise<GenerationWorkerLease | null> {
+    return this.#dependencies.repository.claimGenerationAttempt({
+      workerId: options.id,
+      leaseToken: createId(),
+      leaseMs: options.leaseMs,
+      framework: this.#dependencies.framework,
+      modelProvider: this.#dependencies.modelProvider,
+      modelId: this.#dependencies.modelId,
+      ...(attemptId ? { attemptId } : {}),
+    });
+  }
+
+  async #executeWithHeartbeat(
+    lease: GenerationWorkerLease,
+    leaseMs: number,
+    heartbeatMs: number,
+    signal: AbortSignal,
+    cancelOnAbort: boolean,
+  ): Promise<void> {
+    const controller = new AbortController();
+    const forwardAbort = () => controller.abort(signal.reason);
+    if (signal.aborted) forwardAbort();
+    else signal.addEventListener("abort", forwardAbort, { once: true });
+    const heartbeat = this.#heartbeat(lease, leaseMs, heartbeatMs, controller);
+    try {
+      await this.#execute(lease, controller.signal, cancelOnAbort);
+    } finally {
+      if (!controller.signal.aborted) {
+        controller.abort(new DOMException("Generation attempt completed.", "AbortError"));
+      }
+      signal.removeEventListener("abort", forwardAbort);
+      await heartbeat;
+    }
+  }
+
+  async #heartbeat(
+    lease: GenerationWorkerLease,
+    leaseMs: number,
+    heartbeatMs: number,
+    controller: AbortController,
+  ): Promise<void> {
+    try {
+      while (!controller.signal.aborted) {
+        await waitForPoll(heartbeatMs, controller.signal);
+        const renewed = await this.#dependencies.repository.heartbeatGenerationAttempt(
+          lease,
+          leaseMs,
+        );
+        if (!renewed) {
+          throw new GenerationWorkerLeaseLostError(lease.generationId, lease.attemptId);
+        }
+      }
+    } catch (error) {
+      if (!controller.signal.aborted) {
+        controller.abort(error instanceof GenerationWorkerLeaseLostError
+          ? error
+          : new GenerationWorkerLeaseLostError(lease.generationId, lease.attemptId));
+      }
+    }
   }
 
   async #execute(
-    scope: UserScope,
-    generationId: string,
-    attemptId: string,
+    lease: GenerationWorkerLease,
     signal: AbortSignal,
+    cancelOnAbort: boolean,
   ): Promise<void> {
+    const { scope, generationId, attemptId, leaseToken } = lease;
     try {
-      await this.#dependencies.repository.startGenerationAttempt(scope, generationId, attemptId);
       signal.throwIfAborted();
 
       const generation = await this.#dependencies.repository.getGeneration(scope, generationId);
@@ -878,7 +1071,13 @@ class GenerationRunner<Framework extends FrameworkId> {
       let skills = await this.#dependencies.repository.getGenerationSkills(scope, generationId);
       if (skills === null) {
         skills = await this.#dependencies.skillResolver.resolveForPrompt(generation.prompt);
-        await this.#dependencies.repository.attachGenerationSkills(scope, generationId, skills);
+        await this.#dependencies.repository.attachGenerationSkills(
+          scope,
+          generationId,
+          attemptId,
+          leaseToken,
+          skills,
+        );
       }
 
       const [messages, previousFiles, tasks] = await Promise.all([
@@ -906,6 +1105,7 @@ class GenerationRunner<Framework extends FrameworkId> {
             await this.#dependencies.repository.appendGenerationEvent(scope, {
               generationId,
               attemptId,
+              leaseToken,
               type: "output.delta",
               data: { delta },
             });
@@ -918,6 +1118,7 @@ class GenerationRunner<Framework extends FrameworkId> {
         await this.#dependencies.repository.pauseGeneration(scope, {
           generationId,
           attemptId,
+          leaseToken,
           taskId: createId(),
           task: output.task,
           inputTokens: output.usage.inputTokens ?? null,
@@ -931,6 +1132,7 @@ class GenerationRunner<Framework extends FrameworkId> {
       await this.#dependencies.repository.completeGeneration(scope, {
         generationId,
         attemptId,
+        leaseToken,
         parentVersionId: generation.baseVersionId,
         framework: chat.framework,
         title: output.title,
@@ -944,6 +1146,7 @@ class GenerationRunner<Framework extends FrameworkId> {
       });
     } catch (error) {
       if (signal.aborted || isAbortError(error)) {
+        if (!cancelOnAbort || signal.reason instanceof GenerationWorkerLeaseLostError) return;
         await this.#dependencies.repository.cancelGeneration(
           scope,
           generationId,
@@ -956,6 +1159,7 @@ class GenerationRunner<Framework extends FrameworkId> {
         scope,
         generationId,
         attemptId,
+        leaseToken,
         errorMessage(error),
       ).catch(() => undefined);
     }
@@ -977,7 +1181,7 @@ class GenerationRunRegistry {
   start(
     generationId: string,
     execute: (signal: AbortSignal) => Promise<void>,
-  ): void {
+  ): Promise<void> {
     if (this.#runs.has(generationId)) {
       throw new GenerationStateError(generationId, "Generation already has an active local attempt.");
     }
@@ -991,6 +1195,7 @@ class GenerationRunRegistry {
         }),
     };
     this.#runs.set(generationId, run);
+    return run.promise;
   }
 
   abort(generationId: string, reason: string): boolean {
@@ -1085,6 +1290,52 @@ function normalizePollInterval(value: number | undefined): number {
   return interval;
 }
 
+function normalizeGenerationExecution(
+  value: VibyConfig["generation"],
+): "embedded" | "worker" {
+  if (value === undefined) return "embedded";
+  if (!value || typeof value !== "object") {
+    throw new ConfigurationError("generation must be an object.");
+  }
+  const execution = value.execution ?? "embedded";
+  if (execution !== "embedded" && execution !== "worker") {
+    throw new ConfigurationError("generation.execution must be embedded or worker.");
+  }
+  return execution;
+}
+
+function normalizeGenerationWorkerOptions(
+  options: GenerationWorkerOptions,
+): NormalizedGenerationWorkerOptions {
+  if (!options || typeof options !== "object") {
+    throw new ConfigurationError("Generation worker options must be an object.");
+  }
+  const id = assertIdentifier(options.id, "Generation worker id");
+  const concurrency = options.concurrency ?? 1;
+  const leaseMs = options.leaseMs ?? DEFAULT_WORKER_LEASE_MS;
+  const heartbeatMs = options.heartbeatMs ?? Math.min(DEFAULT_WORKER_HEARTBEAT_MS, leaseMs / 3);
+  const pollIntervalMs = options.pollIntervalMs ?? DEFAULT_WORKER_POLL_INTERVAL_MS;
+  if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 32) {
+    throw new ConfigurationError("Generation worker concurrency must be an integer between 1 and 32.");
+  }
+  if (!Number.isInteger(leaseMs) || leaseMs < 100 || leaseMs > 900_000) {
+    throw new ConfigurationError("Generation worker leaseMs must be an integer between 100 and 900000.");
+  }
+  if (!Number.isInteger(heartbeatMs) || heartbeatMs < 25 || heartbeatMs >= leaseMs / 2) {
+    throw new ConfigurationError("Generation worker heartbeatMs must be at least 25 and less than half leaseMs.");
+  }
+  if (!Number.isInteger(pollIntervalMs) || pollIntervalMs < 10 || pollIntervalMs > 60_000) {
+    throw new ConfigurationError("Generation worker pollIntervalMs must be an integer between 10 and 60000.");
+  }
+  return { id, concurrency, leaseMs, heartbeatMs, pollIntervalMs };
+}
+
+function validateGenerationWorkerRunOptions(options: GenerationWorkerRunOptions): void {
+  if (!options || typeof options !== "object") {
+    throw new ConfigurationError("Generation worker run options must be an object.");
+  }
+}
+
 function assertReason(reason: string): string {
   const normalized = reason.trim();
   if (!normalized) throw new ConfigurationError("Cancellation reason cannot be empty.");
@@ -1104,6 +1355,32 @@ function isSettled(status: GenerationData["status"]): boolean {
 function isAbortError(error: unknown): boolean {
   return error instanceof DOMException && error.name === "AbortError"
     || error instanceof Error && error.name === "AbortError";
+}
+
+class GenerationWorkerLeaseLostError extends Error {
+  constructor(generationId: string, attemptId: string) {
+    super(`Generation ${generationId} attempt ${attemptId} lost its worker lease.`);
+    this.name = "GenerationWorkerLeaseLostError";
+  }
+}
+
+function combineAbortSignals(first: AbortSignal, second?: AbortSignal): AbortSignal {
+  if (!second) return first;
+  const controller = new AbortController();
+  const abortFirst = () => abort(first.reason);
+  const abortSecond = () => abort(second.reason);
+  const abort = (reason: unknown) => {
+    if (!controller.signal.aborted) controller.abort(reason);
+    first.removeEventListener("abort", abortFirst);
+    second.removeEventListener("abort", abortSecond);
+  };
+  if (first.aborted) abort(first.reason);
+  else if (second.aborted) abort(second.reason);
+  else {
+    first.addEventListener("abort", abortFirst, { once: true });
+    second.addEventListener("abort", abortSecond, { once: true });
+  }
+  return controller.signal;
 }
 
 function waitForPoll(milliseconds: number, signal?: AbortSignal): Promise<void> {
