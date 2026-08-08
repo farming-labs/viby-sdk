@@ -3,6 +3,7 @@ import { test } from "node:test";
 import {
   e2bSandbox,
   type E2BSandboxClient,
+  type E2BCommandHandle,
   type E2BSandboxFactoryInput,
 } from "../src/sandbox-e2b.js";
 import type { SandboxOutputEvent } from "../src/sandbox.js";
@@ -14,6 +15,7 @@ class FakeE2BClient implements E2BSandboxClient {
   readonly commandsRun: Array<{ command: string; options: Record<string, unknown> }> = [];
   killed = false;
   commandFailure: unknown = null;
+  backgroundKilled = 0;
 
   readonly files = {
     write: async (
@@ -35,11 +37,22 @@ class FakeE2BClient implements E2BSandboxClient {
       signal?: AbortSignal;
       onStdout?: (data: string) => void | Promise<void>;
       onStderr?: (data: string) => void | Promise<void>;
+      background?: boolean;
     }) => {
       this.commandsRun.push({ command, options });
       await options.onStdout?.("out\n");
       await options.onStderr?.("err\n");
       if (this.commandFailure) throw this.commandFailure;
+      if (options.background) {
+        return {
+          pid: 42,
+          wait: async () => ({ exitCode: 0, stdout: "out\n", stderr: "err\n" }),
+          kill: async () => {
+            this.backgroundKilled += 1;
+            return true;
+          },
+        } satisfies E2BCommandHandle;
+      }
       return { exitCode: 0, stdout: "out\n", stderr: "err\n" };
     },
   };
@@ -136,6 +149,17 @@ test("maps the common sandbox contract to E2B", async () => {
     { stream: "stdout", data: "out\n" },
     { stream: "stderr", data: "err\n" },
   ]);
+
+  const background = await instance.start!({
+    command: "pnpm",
+    args: ["dev"],
+    cwd: ".",
+  });
+  assert.equal(background.id, "42");
+  assert.equal((await background.wait()).exitCode, 0);
+  await background.kill();
+  assert.equal(client.backgroundKilled, 1);
+  assert.equal(client.commandsRun[1]?.options.background, true);
 
   assert.equal(Buffer.from(await instance.readFile("dist/app.js")).toString(), "artifact");
   assert.deepEqual(client.reads, ["/home/user/viby/dist/app.js"]);

@@ -10,6 +10,7 @@ import type {
   SandboxFile,
   SandboxInstance,
   SandboxOperationOptions,
+  SandboxProcessInstance,
 } from "./sandbox.js";
 
 const DEFAULT_ROOT = "/workspace";
@@ -78,6 +79,11 @@ export interface CloudflareSandboxClient {
     path: string,
     options: { encoding: "base64" },
   ): Promise<{ success: boolean; content: string }>;
+  startProcess(command: string, options?: {
+    readonly signal?: AbortSignal;
+    readonly stream?: boolean;
+    readonly onOutput?: (stream: "stdout" | "stderr", data: string) => void;
+  }): Promise<CloudflareProcessHandle>;
   exposePort(port: number, options: {
     hostname: string;
     name?: string;
@@ -87,6 +93,13 @@ export interface CloudflareSandboxClient {
     get(port: number): Promise<{ url: string }>;
   };
   destroy(): Promise<void>;
+}
+
+export interface CloudflareProcessHandle {
+  readonly id: string;
+  kill(signal?: string): Promise<void>;
+  getLogs(): Promise<{ stdout: string; stderr: string }>;
+  waitForExit(timeout?: number): Promise<{ exitCode: number }>;
 }
 
 export type CloudflareSandboxFactory<Binding extends object = object> = (
@@ -107,6 +120,7 @@ export function cloudflareSandbox<Binding extends object>(
       commands: true,
       commandStreaming: true,
       portUrls: normalized.preview !== undefined,
+      backgroundProcesses: true,
     }),
     async create(input) {
       const id = typeof normalized.id === "function"
@@ -224,6 +238,55 @@ class CloudflareSandboxInstance implements SandboxInstance {
       stdout: result.stdout,
       stderr: result.stderr,
       durationMs: result.duration,
+    };
+  }
+
+  async start(command: SandboxCommand): Promise<SandboxProcessInstance> {
+    const startedAt = performance.now();
+    const callbacks: Promise<void>[] = [];
+    const callbackErrors: unknown[] = [];
+    const cwd = command.cwd === undefined || command.cwd === "."
+      ? DEFAULT_ROOT
+      : projectPath(command.cwd);
+    const rendered = [
+      `cd -- ${quoteShellArgument(cwd)}`,
+      renderEnvironment(command.env ?? {}),
+      renderShellCommand(command.command, command.args ?? []),
+    ].filter(Boolean).join(" && ");
+    const process = await this.#client.startProcess(rendered, {
+      stream: command.onOutput !== undefined,
+      ...(command.signal ? { signal: command.signal } : {}),
+      ...(command.onOutput ? {
+        onOutput: (stream, data) => {
+          queueCallback(
+            callbacks,
+            callbackErrors,
+            () => command.onOutput!({ stream, data }),
+          );
+        },
+      } : {}),
+    });
+    return {
+      id: process.id,
+      async wait(options = {}) {
+        const completed = await abortable(
+          process.waitForExit(command.timeoutMs ?? 300_000),
+          options.signal,
+          () => process.kill("SIGTERM"),
+        );
+        await Promise.all(callbacks);
+        if (callbackErrors.length > 0) throw callbackErrors[0];
+        const logs = await process.getLogs();
+        return {
+          exitCode: completed.exitCode,
+          stdout: logs.stdout,
+          stderr: logs.stderr,
+          durationMs: Math.max(0, performance.now() - startedAt),
+        };
+      },
+      async kill() {
+        await process.kill("SIGTERM");
+      },
     };
   }
 
@@ -379,6 +442,14 @@ function projectPath(path: string): string {
 
 function renderShellCommand(command: string, args: readonly string[]): string {
   return [command, ...args].map(quoteShellArgument).join(" ");
+}
+
+function renderEnvironment(environment: Readonly<Record<string, string>>): string {
+  const entries = Object.entries(environment);
+  if (entries.length === 0) return "";
+  return `export ${entries.map(([key, value]) => (
+    `${key}=${quoteShellArgument(value)}`
+  )).join(" ")}`;
 }
 
 function quoteShellArgument(value: string): string {

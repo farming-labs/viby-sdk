@@ -6,6 +6,7 @@ import type { SandboxOutputEvent } from "../src/sandbox.js";
 import {
   vercelSandbox,
   type VercelSandboxClient,
+  type VercelCommandHandle,
   type VercelSandboxFactoryInput,
 } from "../src/sandbox-vercel.js";
 
@@ -17,6 +18,7 @@ class FakeVercelClient implements VercelSandboxClient {
   readonly commands: Array<Record<string, unknown>> = [];
   stopped = false;
   missingFile = false;
+  backgroundKilled = 0;
 
   async writeFiles(files: { path: string; content: string | Uint8Array }[]): Promise<void> {
     this.writes.push(...files);
@@ -33,6 +35,7 @@ class FakeVercelClient implements VercelSandboxClient {
     cwd: string;
     env: Record<string, string>;
     timeoutMs: number;
+    detached?: boolean;
     signal?: AbortSignal;
     stdout?: Writable;
     stderr?: Writable;
@@ -40,6 +43,25 @@ class FakeVercelClient implements VercelSandboxClient {
     this.commands.push(input);
     await writeStream(input.stdout, "out\n");
     await writeStream(input.stderr, "err\n");
+    if (input.detached) {
+      const client = this;
+      return {
+        cmdId: "cmd_background",
+        async wait() {
+          return {
+            exitCode: 0,
+            durationMs: 25,
+            async stdout() { return "server-ready\n"; },
+            async stderr() { return ""; },
+          };
+        },
+        async kill() {
+          client.backgroundKilled += 1;
+        },
+        async stdout() { return "server-ready\n"; },
+        async stderr() { return ""; },
+      } satisfies VercelCommandHandle;
+    }
     return {
       exitCode: 2,
       durationMs: 18,
@@ -143,6 +165,13 @@ test("maps the common sandbox contract to Vercel Sandbox", async () => {
     { stream: "stdout", data: "out\n" },
     { stream: "stderr", data: "err\n" },
   ]);
+
+  const background = await instance.start!({ command: "pnpm", args: ["dev"] });
+  assert.equal(background.id, "cmd_background");
+  assert.equal((await background.wait()).stdout, "server-ready\n");
+  await background.kill();
+  assert.equal(client.backgroundKilled, 1);
+  assert.equal(client.commands[1]?.detached, true);
   assert.deepEqual(result, {
     exitCode: 2,
     stdout: "out\n",

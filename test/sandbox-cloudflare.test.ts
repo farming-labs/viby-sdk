@@ -6,6 +6,7 @@ import {
   cloudflareSandbox,
   type CloudflareSandboxClient,
   type CloudflareSandboxFactoryInput,
+  type CloudflareProcessHandle,
 } from "../src/sandbox-cloudflare.js";
 
 class FakeCloudflareSandbox implements CloudflareSandboxClient {
@@ -19,6 +20,8 @@ class FakeCloudflareSandbox implements CloudflareSandboxClient {
   exposed: { port: number; options: Record<string, unknown> } | undefined;
   tunneledPort: number | undefined;
   destroyed = 0;
+  backgroundKilled = 0;
+  backgroundCommands: Array<{ command: string; options: Record<string, unknown> }> = [];
   failDirectory = false;
 
   readonly tunnels = {
@@ -47,6 +50,31 @@ class FakeCloudflareSandbox implements CloudflareSandboxClient {
       stdout: "out\n",
       stderr: "err\n",
       duration: 17,
+    };
+  }
+
+  async startProcess(
+    command: string,
+    options: {
+      signal?: AbortSignal;
+      stream?: boolean;
+      onOutput?: (stream: "stdout" | "stderr", data: string) => void;
+    } = {},
+  ): Promise<CloudflareProcessHandle> {
+    this.backgroundCommands.push({ command, options });
+    options.onOutput?.("stdout", "server-ready\n");
+    const client = this;
+    return {
+      id: "process-background",
+      async kill() {
+        client.backgroundKilled += 1;
+      },
+      async getLogs() {
+        return { stdout: "server-ready\n", stderr: "" };
+      },
+      async waitForExit() {
+        return { exitCode: 0 };
+      },
     };
   }
 
@@ -185,6 +213,21 @@ test("maps the common sandbox contract to a Cloudflare quick-tunnel sandbox", as
     { stream: "stdout", data: "out\n" },
     { stream: "stderr", data: "err\n" },
   ]);
+
+  const background = await instance.start!({
+    command: "pnpm",
+    args: ["dev"],
+    cwd: ".",
+    env: { HOST: "0.0.0.0" },
+  });
+  assert.equal(background.id, "process-background");
+  assert.equal((await background.wait()).stdout, "server-ready\n");
+  await background.kill();
+  assert.equal(client.backgroundKilled, 1);
+  assert.equal(
+    client.backgroundCommands[0]?.command,
+    `cd -- '/workspace' && export HOST='0.0.0.0' && 'pnpm' 'dev'`,
+  );
 
   assert.deepEqual([...await instance.readFile("dist/output.bin")], [0, 1, 255]);
   assert.deepEqual(client.reads, ["/workspace/dist/output.bin"]);

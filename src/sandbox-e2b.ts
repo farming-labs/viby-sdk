@@ -9,6 +9,7 @@ import type {
   SandboxFile,
   SandboxInstance,
   SandboxOperationOptions,
+  SandboxProcessInstance,
 } from "./sandbox.js";
 
 const DEFAULT_ROOT = "/home/user/viby";
@@ -56,15 +57,24 @@ export interface E2BSandboxClient {
       signal?: AbortSignal;
       onStdout?: (data: string) => void | Promise<void>;
       onStderr?: (data: string) => void | Promise<void>;
-    }): Promise<{
-      exitCode: number;
-      stdout: string;
-      stderr: string;
-      error?: string;
-    }>;
+      background?: boolean;
+    }): Promise<E2BCommandResult | E2BCommandHandle>;
   };
   getHost(port: number): string;
   kill(options?: { signal?: AbortSignal }): Promise<unknown>;
+}
+
+export interface E2BCommandResult {
+  readonly exitCode: number;
+  readonly stdout: string;
+  readonly stderr: string;
+  readonly error?: string;
+}
+
+export interface E2BCommandHandle {
+  readonly pid: number;
+  wait(): Promise<E2BCommandResult>;
+  kill(): Promise<boolean>;
 }
 
 export type E2BSandboxFactory = (
@@ -82,6 +92,7 @@ export function e2bSandbox(
       commands: true,
       commandStreaming: true,
       portUrls: true,
+      backgroundProcesses: true,
     }),
     async create(input) {
       const client = await factory({
@@ -146,11 +157,50 @@ class E2BSandboxInstance implements SandboxInstance {
         renderShellCommand(command.command, command.args ?? []),
         options,
       );
+      if (isCommandHandle(result)) {
+        throw new Error("E2B returned a background handle for a blocking command.");
+      }
       return normalizeResult(result, startedAt);
     } catch (error) {
       if (isCommandResult(error)) return normalizeResult(error, startedAt);
       throw error;
     }
+  }
+
+  async start(command: SandboxCommand): Promise<SandboxProcessInstance> {
+    const startedAt = performance.now();
+    const cwd = command.cwd ?? ".";
+    const handle = await this.#client.commands.run(
+      renderShellCommand(command.command, command.args ?? []),
+      {
+        cwd: cwd === "." ? DEFAULT_ROOT : projectPath(cwd),
+        envs: { ...(command.env ?? {}) },
+        timeoutMs: command.timeoutMs ?? 300_000,
+        background: true,
+        ...(command.signal ? { signal: command.signal } : {}),
+        ...(command.onOutput ? {
+          onStdout: (data: string) => command.onOutput!({ stream: "stdout", data }),
+          onStderr: (data: string) => command.onOutput!({ stream: "stderr", data }),
+        } : {}),
+      },
+    );
+    if (!isCommandHandle(handle)) {
+      throw new Error("E2B did not return a background command handle.");
+    }
+    return {
+      id: String(handle.pid),
+      async wait() {
+        try {
+          return normalizeResult(await handle.wait(), startedAt);
+        } catch (error) {
+          if (isCommandResult(error)) return normalizeResult(error, startedAt);
+          throw error;
+        }
+      },
+      async kill() {
+        await handle.kill();
+      },
+    };
   }
 
   readFile(
@@ -174,9 +224,9 @@ class E2BSandboxInstance implements SandboxInstance {
 }
 
 async function createE2BSandbox(input: E2BSandboxFactoryInput): Promise<E2BSandboxClient> {
-  return input.template
+  return (input.template
     ? E2BSandbox.create(input.template, input.options)
-    : E2BSandbox.create(input.options);
+    : E2BSandbox.create(input.options)) as unknown as E2BSandboxClient;
 }
 
 function projectPath(path: string): string {
@@ -219,6 +269,14 @@ function isCommandResult(value: unknown): value is {
   return Number.isInteger(result.exitCode)
     && typeof result.stdout === "string"
     && typeof result.stderr === "string";
+}
+
+function isCommandHandle(value: unknown): value is E2BCommandHandle {
+  if (!value || typeof value !== "object") return false;
+  const handle = value as Record<string, unknown>;
+  return Number.isInteger(handle.pid)
+    && typeof handle.wait === "function"
+    && typeof handle.kill === "function";
 }
 
 function signalOptions(signal: AbortSignal | undefined): { signal?: AbortSignal } {
