@@ -45,7 +45,7 @@ jobs:
       - run: npm run typecheck
       - run: npm run build
       - run: npm run test:package
-      - run: npm publish --dry-run --ignore-scripts
+      - run: npm pack --dry-run --ignore-scripts
       - run: npm ci --prefix examples/basic
       - run: npm run typecheck --prefix examples/basic
 
