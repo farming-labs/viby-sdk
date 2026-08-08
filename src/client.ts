@@ -3,6 +3,7 @@ import type {
   ApplySourceChangesInput,
   CreateChatInput,
   FrameworkId,
+  ForkVersionInput,
   GenerateInput,
   ImportProjectInput,
   GenerationAttemptData,
@@ -17,6 +18,7 @@ import type {
   IterateInput,
   MessageData,
   ResolveGenerationTaskInput,
+  RestoreVersionInput,
   UserScope,
   VersionData,
   VersionFile,
@@ -616,6 +618,46 @@ export class Version<Framework extends FrameworkId = FrameworkId> {
     return new Version(data, this.#dependencies);
   }
 
+  async fork(input: ForkVersionInput = {}): Promise<Chat<Framework>> {
+    const title = normalizeVersionTitle(input.title ?? `${this.title} fork`);
+    const summary = normalizeVersionSummary(
+      input.summary,
+      `Forked from version ${this.number}.`,
+    );
+    const forked = await this.#dependencies.repository.forkVersion(
+      this.#dependencies.scope,
+      {
+        chatId: createId(),
+        versionId: createId(),
+        sourceVersionId: this.id,
+        title,
+        summary,
+        framework: this.framework,
+      },
+    );
+    return new Chat(forked.chat, this.#dependencies);
+  }
+
+  async restore(input: RestoreVersionInput = {}): Promise<Version<Framework>> {
+    const title = normalizeVersionTitle(input.title ?? this.title);
+    const summary = normalizeVersionSummary(
+      input.summary,
+      `Restored source from version ${this.number}.`,
+    );
+    const data = await this.#dependencies.repository.restoreVersion(
+      this.#dependencies.scope,
+      {
+        id: createId(),
+        chatId: this.chatId,
+        sourceVersionId: this.id,
+        title,
+        summary,
+        framework: this.framework,
+      },
+    );
+    return new Version(data, this.#dependencies);
+  }
+
   files(): Promise<VersionFile[]> {
     return this.#dependencies.repository.getVersionFiles(this.#dependencies.scope, this.id);
   }
@@ -649,6 +691,14 @@ function normalizeVersionTitle(value: string): string {
     throw new ConfigurationError("A version title must contain between 1 and 120 characters.");
   }
   return title;
+}
+
+function normalizeVersionSummary(value: string | undefined, fallback: string): string {
+  const summary = value?.trim() || fallback;
+  if (summary.length > 2_000) {
+    throw new ConfigurationError("A version summary cannot exceed 2,000 characters.");
+  }
+  return summary;
 }
 
 interface RunnerDependencies<Framework extends FrameworkId> {

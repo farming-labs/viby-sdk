@@ -136,6 +136,20 @@ test("persists a durable generation, iteration, events, and download in Postgres
     assert.equal(editedVersion.number, 2);
     assert.equal((await importedVersion.files()).some((file) => file.path === "package.json"), true);
     assert.equal((await editedVersion.files()).some((file) => file.path === "fixtures/package.json"), true);
+
+    const forkedChat = await importedVersion.fork({ title: "Postgres fork" });
+    const forkedVersion = await forkedChat.latestVersion();
+    assert.ok(forkedVersion);
+    assert.equal(forkedVersion.origin, "forked");
+    assert.equal(forkedVersion.parentVersionId, importedVersion.id);
+    assert.equal((await forkedVersion.files()).some((file) => file.path === "package.json"), true);
+
+    const restoredVersion = await importedVersion.restore();
+    assert.equal(restoredVersion.origin, "restored");
+    assert.equal(restoredVersion.number, 3);
+    assert.equal(restoredVersion.parentVersionId, importedVersion.id);
+    assert.equal((await restoredVersion.files()).some((file) => file.path === "package.json"), true);
+    assert.equal((await editedVersion.files()).some((file) => file.path === "fixtures/package.json"), true);
   } finally {
     await viby.close();
   }

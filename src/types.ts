@@ -103,6 +103,16 @@ export interface ApplySourceChangesInput {
   readonly summary?: string;
 }
 
+export interface ForkVersionInput {
+  readonly title?: string;
+  readonly summary?: string;
+}
+
+export interface RestoreVersionInput {
+  readonly title?: string;
+  readonly summary?: string;
+}
+
 export type GenerationStatus =
   | "queued"
   | "running"
