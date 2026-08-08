@@ -37,6 +37,8 @@ try {
     "dist/sandbox-docker.d.ts",
     "dist/sandbox-daytona.js",
     "dist/sandbox-daytona.d.ts",
+    "dist/sandbox-modal.js",
+    "dist/sandbox-modal.d.ts",
     "migrations/0001_initial.sql",
     "migrations/0002_durable_generations.sql",
   ]) {

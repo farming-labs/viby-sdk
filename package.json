@@ -54,6 +54,10 @@
       "types": "./dist/sandbox-daytona.d.ts",
       "import": "./dist/sandbox-daytona.js"
     },
+    "./sandbox/modal": {
+      "types": "./dist/sandbox-modal.d.ts",
+      "import": "./dist/sandbox-modal.js"
+    },
     "./package.json": "./package.json"
   },
   "bin": {
@@ -97,7 +101,8 @@
   "peerDependencies": {
     "@daytona/sdk": "^0.203.0",
     "@vercel/sandbox": "^3.0.0",
-    "e2b": "^2.38.2"
+    "e2b": "^2.38.2",
+    "modal": "^0.9.0"
   },
   "peerDependenciesMeta": {
     "@daytona/sdk": {
@@ -108,6 +113,9 @@
     },
     "e2b": {
       "optional": true
+    },
+    "modal": {
+      "optional": true
     }
   },
   "devDependencies": {
@@ -116,6 +124,7 @@
     "@vercel/sandbox": "^3.0.0",
     "bumpp": "^10.4.1",
     "e2b": "^2.38.2",
+    "modal": "^0.9.0",
     "tsx": "^4.23.7",
     "typescript": "^7.0.2"
   }
