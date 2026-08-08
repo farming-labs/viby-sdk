@@ -21,12 +21,14 @@ import type {
 import type {
   AppendGenerationEventRecord,
   ChatPageCursor,
+  ClaimGenerationAttemptRecord,
   CompleteGenerationRecord,
   CreateAttemptRecord,
   CreatedGeneration,
   CreateGenerationRecord,
   CreateSourceVersionRecord,
   ForkVersionRecord,
+  GenerationWorkerLease,
   ImportedChat,
   ImportChatRecord,
   MessagePageCursor,
@@ -57,6 +59,7 @@ export class MemoryRepository implements Repository {
   readonly tasks = new Map<string, GenerationTaskData & ScopedRecord>();
   readonly skills = new Map<string, ResolvedSkill[]>();
   readonly sandboxLeases = new Map<string, SandboxLeaseData & ScopedRecord>();
+  readonly workerLeaseTokens = new Map<string, string>();
   closed = false;
   #cursor = 0;
 
@@ -284,6 +287,9 @@ export class MemoryRepository implements Repository {
       createdAt: now,
       startedAt: null,
       completedAt: null,
+      workerId: null,
+      heartbeatAt: null,
+      leaseExpiresAt: null,
       ...scope,
     };
     this.generations.set(generation.id, generation);
@@ -335,6 +341,88 @@ export class MemoryRepository implements Repository {
     return nextAttempt;
   }
 
+  async claimGenerationAttempt<Framework extends FrameworkId>(
+    input: ClaimGenerationAttemptRecord<Framework>,
+  ): Promise<GenerationWorkerLease | null> {
+    const now = new Date();
+    const candidate = [...this.attempts.values()]
+      .filter((attempt) => {
+        if (input.attemptId && attempt.id !== input.attemptId) return false;
+        if (attempt.status !== "queued" && attempt.status !== "running") return false;
+        if (attempt.leaseExpiresAt && attempt.leaseExpiresAt > now) return false;
+        const generation = this.generations.get(attempt.generationId);
+        if (!generation || generation.activeAttemptId !== attempt.id) return false;
+        if (generation.status !== "queued" && generation.status !== "running") return false;
+        if (generation.modelProvider !== input.modelProvider || generation.modelId !== input.modelId) {
+          return false;
+        }
+        const chat = this.chats.get(generation.chatId);
+        return chat?.framework === input.framework;
+      })
+      .sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime())[0];
+    if (!candidate) return null;
+    const generation = this.generations.get(candidate.generationId)!;
+    const wasQueued = candidate.status === "queued";
+    const expiresAt = new Date(now.getTime() + input.leaseMs);
+    this.attempts.set(candidate.id, {
+      ...candidate,
+      status: "running",
+      startedAt: candidate.startedAt ?? now,
+      workerId: input.workerId,
+      heartbeatAt: now,
+      leaseExpiresAt: expiresAt,
+    });
+    this.workerLeaseTokens.set(candidate.id, input.leaseToken);
+    this.generations.set(generation.id, {
+      ...generation,
+      status: "running",
+      startedAt: generation.startedAt ?? now,
+      completedAt: null,
+      error: null,
+    });
+    if (wasQueued) {
+      this.#append(
+        { tenantId: candidate.tenantId, userId: candidate.userId },
+        generation.id,
+        candidate.id,
+        "attempt.started",
+        { number: candidate.number, reason: candidate.reason },
+      );
+    }
+    return {
+      workerId: input.workerId,
+      leaseToken: input.leaseToken,
+      scope: { tenantId: candidate.tenantId, userId: candidate.userId },
+      generationId: generation.id,
+      attemptId: candidate.id,
+      expiresAt,
+    };
+  }
+
+  async heartbeatGenerationAttempt(
+    lease: GenerationWorkerLease,
+    leaseMs: number,
+  ): Promise<Date | null> {
+    const attempt = this.attempts.get(lease.attemptId);
+    const now = new Date();
+    if (
+      !attempt
+      || !inScope(attempt, lease.scope)
+      || attempt.status !== "running"
+      || attempt.workerId !== lease.workerId
+      || this.workerLeaseTokens.get(attempt.id) !== lease.leaseToken
+      || !attempt.leaseExpiresAt
+      || attempt.leaseExpiresAt <= now
+    ) return null;
+    const expiresAt = new Date(now.getTime() + leaseMs);
+    this.attempts.set(attempt.id, {
+      ...attempt,
+      heartbeatAt: now,
+      leaseExpiresAt: expiresAt,
+    });
+    return expiresAt;
+  }
+
   async createGenerationAttempt(
     scope: UserScope,
     input: CreateAttemptRecord,
@@ -354,6 +442,9 @@ export class MemoryRepository implements Repository {
     }
     if (generation.status === "queued" || generation.status === "running") {
       const current = this.#requireAttempt(scope, generation.activeAttemptId);
+      if (current.leaseExpiresAt && current.leaseExpiresAt.getTime() > Date.now()) {
+        throw new GenerationStateError(generation.id, `Generation ${generation.id} has an active worker lease.`);
+      }
       const interrupted = { ...current, status: "interrupted" as const, completedAt: new Date() };
       this.attempts.set(current.id, interrupted);
       this.#append(scope, generation.id, current.id, "attempt.interrupted", {
@@ -378,6 +469,9 @@ export class MemoryRepository implements Repository {
       createdAt: new Date(),
       startedAt: null,
       completedAt: null,
+      workerId: null,
+      heartbeatAt: null,
+      leaseExpiresAt: null,
       ...scope,
     };
     this.attempts.set(attempt.id, attempt);
@@ -402,9 +496,15 @@ export class MemoryRepository implements Repository {
   async attachGenerationSkills(
     scope: UserScope,
     generationId: string,
+    attemptId: string,
+    leaseToken: string,
     skills: readonly ResolvedSkill[],
   ): Promise<void> {
-    this.#requireGeneration(scope, generationId);
+    const generation = this.#requireGeneration(scope, generationId);
+    const attempt = this.#requireAttempt(scope, attemptId);
+    if (generation.activeAttemptId !== attemptId || !this.#hasWorkerLease(attempt, leaseToken)) {
+      throw new GenerationStateError(generationId, "The generation worker lease is no longer active.");
+    }
     if (!this.skills.has(generationId)) this.skills.set(generationId, [...skills]);
   }
 
@@ -422,8 +522,15 @@ export class MemoryRepository implements Repository {
     input: AppendGenerationEventRecord<Type>,
   ): Promise<void> {
     const generation = this.#requireGeneration(scope, input.generationId);
-    if (generation.status !== "running") return;
-    if (input.attemptId && generation.activeAttemptId !== input.attemptId) return;
+    const attempt = input.attemptId ? this.#requireAttempt(scope, input.attemptId) : null;
+    if (
+      generation.status !== "running"
+      || !attempt
+      || generation.activeAttemptId !== attempt.id
+      || !this.#hasWorkerLease(attempt, input.leaseToken)
+    ) {
+      throw new GenerationStateError(input.generationId, "The generation worker lease is no longer active.");
+    }
     this.#append(scope, input.generationId, input.attemptId, input.type, input.data);
   }
 
@@ -433,7 +540,11 @@ export class MemoryRepository implements Repository {
   ): Promise<VersionData<Framework>> {
     const generation = this.#requireGeneration(scope, input.generationId);
     const attempt = this.#requireAttempt(scope, input.attemptId);
-    if (generation.status !== "running" || generation.activeAttemptId !== input.attemptId || attempt.status !== "running") {
+    if (
+      generation.status !== "running"
+      || generation.activeAttemptId !== input.attemptId
+      || !this.#hasWorkerLease(attempt, input.leaseToken)
+    ) {
       throw new GenerationStateError(generation.id, `Generation ${generation.id} is not running.`);
     }
     const existing = [...this.versions.values()].filter(
@@ -498,7 +609,11 @@ export class MemoryRepository implements Repository {
   ): Promise<GenerationTaskData> {
     const generation = this.#requireGeneration(scope, input.generationId);
     const attempt = this.#requireAttempt(scope, input.attemptId);
-    if (generation.status !== "running" || generation.activeAttemptId !== input.attemptId || attempt.status !== "running") {
+    if (
+      generation.status !== "running"
+      || generation.activeAttemptId !== input.attemptId
+      || !this.#hasWorkerLease(attempt, input.leaseToken)
+    ) {
       throw new GenerationStateError(generation.id, `Generation ${generation.id} is not running.`);
     }
     const now = new Date();
@@ -593,6 +708,9 @@ export class MemoryRepository implements Repository {
       createdAt: now,
       startedAt: null,
       completedAt: null,
+      workerId: null,
+      heartbeatAt: null,
+      leaseExpiresAt: null,
       ...scope,
     };
     this.attempts.set(attempt.id, attempt);
@@ -622,11 +740,16 @@ export class MemoryRepository implements Repository {
     scope: UserScope,
     generationId: string,
     attemptId: string,
+    leaseToken: string,
     error: string,
   ): Promise<void> {
     const generation = this.#requireGeneration(scope, generationId);
     const attempt = this.#requireAttempt(scope, attemptId);
-    if (generation.status !== "running" || generation.activeAttemptId !== attemptId || attempt.status !== "running") return;
+    if (
+      generation.status !== "running"
+      || generation.activeAttemptId !== attemptId
+      || !this.#hasWorkerLease(attempt, leaseToken)
+    ) return;
     const completedAt = new Date();
     this.attempts.set(attempt.id, { ...attempt, status: "failed", error, completedAt });
     this.generations.set(generation.id, {
@@ -841,6 +964,13 @@ export class MemoryRepository implements Repository {
     const attempt = this.attempts.get(id);
     if (!attempt || !inScope(attempt, scope)) throw new NotFoundError("Generation attempt");
     return attempt;
+  }
+
+  #hasWorkerLease(attempt: GenerationAttemptData, leaseToken: string): boolean {
+    return attempt.status === "running"
+      && this.workerLeaseTokens.get(attempt.id) === leaseToken
+      && attempt.leaseExpiresAt !== null
+      && attempt.leaseExpiresAt.getTime() > Date.now();
   }
 
   #append<Type extends GenerationEventType>(

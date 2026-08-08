@@ -3,6 +3,7 @@ export {
   Chat,
   Generation,
   GenerationCollection,
+  GenerationWorker,
   SandboxCollection,
   ScopedViby,
   Version,
@@ -48,7 +49,12 @@ export type {
   SandboxProcessInstance,
   SandboxReadinessOptions,
 } from "./sandbox.js";
-export type { GenerationOutcome, Viby } from "./client.js";
+export type {
+  GenerationOutcome,
+  GenerationWorkerOptions,
+  GenerationWorkerRunOptions,
+  Viby,
+} from "./client.js";
 export type {
   BuiltInSkillCategory,
   ApplySourceChangesInput,

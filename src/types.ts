@@ -43,6 +43,9 @@ export interface VibyConfig<Framework extends FrameworkId = FrameworkId> {
   readonly model: LanguageModel;
   readonly skills?: SkillGroups;
   readonly sandbox?: SandboxAdapter;
+  readonly generation?: {
+    readonly execution?: "embedded" | "worker";
+  };
 }
 
 export interface UserScope {
@@ -217,6 +220,9 @@ export interface GenerationAttemptData {
   readonly createdAt: Date;
   readonly startedAt: Date | null;
   readonly completedAt: Date | null;
+  readonly workerId: string | null;
+  readonly heartbeatAt: Date | null;
+  readonly leaseExpiresAt: Date | null;
 }
 
 export interface PlanTaskRequest {

@@ -27,12 +27,14 @@ import type {
 import type {
   AppendGenerationEventRecord,
   ChatPageCursor,
+  ClaimGenerationAttemptRecord,
   CompleteGenerationRecord,
   CreateAttemptRecord,
   CreatedGeneration,
   CreateGenerationRecord,
   CreateSourceVersionRecord,
   ForkVersionRecord,
+  GenerationWorkerLease,
   ImportedChat,
   ImportChatRecord,
   MessagePageCursor,
@@ -97,6 +99,15 @@ interface GenerationAttemptRow {
   created_at: Date;
   started_at: Date | null;
   completed_at: Date | null;
+  worker_id: string | null;
+  lease_token: string | null;
+  lease_expires_at: Date | null;
+  heartbeat_at: Date | null;
+}
+
+interface GenerationAttemptClaimRow extends GenerationAttemptRow {
+  tenant_id: string;
+  user_id: string;
 }
 
 interface GenerationEventRow {
@@ -641,6 +652,103 @@ export class PostgresRepository implements Repository {
     return mapAttempt(row);
   }
 
+  async claimGenerationAttempt<Framework extends FrameworkId>(
+    input: ClaimGenerationAttemptRecord<Framework>,
+  ): Promise<GenerationWorkerLease | null> {
+    await this.assertReady();
+    return this.#sql.begin(async (sql) => {
+      const candidates = input.attemptId
+        ? await sql<GenerationAttemptClaimRow[]>`
+            SELECT attempt.*, attempt.tenant_id, attempt.user_id
+            FROM viby.generation_attempts AS attempt
+            JOIN viby.generations AS generation ON generation.id = attempt.generation_id
+            JOIN viby.chats AS chat ON chat.id = generation.chat_id
+            WHERE attempt.id = ${input.attemptId}
+              AND generation.active_attempt_id = attempt.id
+              AND generation.status IN ('queued', 'running')
+              AND attempt.status IN ('queued', 'running')
+              AND (attempt.lease_expires_at IS NULL OR attempt.lease_expires_at <= now())
+              AND chat.framework = ${input.framework}
+              AND generation.model_provider = ${input.modelProvider}
+              AND generation.model_id = ${input.modelId}
+            FOR UPDATE OF attempt, generation SKIP LOCKED
+            LIMIT 1
+          `
+        : await sql<GenerationAttemptClaimRow[]>`
+            SELECT attempt.*, attempt.tenant_id, attempt.user_id
+            FROM viby.generation_attempts AS attempt
+            JOIN viby.generations AS generation ON generation.id = attempt.generation_id
+            JOIN viby.chats AS chat ON chat.id = generation.chat_id
+            WHERE generation.active_attempt_id = attempt.id
+              AND generation.status IN ('queued', 'running')
+              AND attempt.status IN ('queued', 'running')
+              AND (attempt.lease_expires_at IS NULL OR attempt.lease_expires_at <= now())
+              AND chat.framework = ${input.framework}
+              AND generation.model_provider = ${input.modelProvider}
+              AND generation.model_id = ${input.modelId}
+            ORDER BY attempt.created_at, attempt.id
+            FOR UPDATE OF attempt, generation SKIP LOCKED
+            LIMIT 1
+          `;
+      const candidate = candidates[0];
+      if (!candidate) return null;
+      const wasQueued = candidate.status === "queued";
+      const [attempt] = await sql<GenerationAttemptClaimRow[]>`
+        UPDATE viby.generation_attempts SET
+          status = 'running', started_at = COALESCE(started_at, now()),
+          worker_id = ${input.workerId}, lease_token = ${input.leaseToken},
+          heartbeat_at = now(),
+          lease_expires_at = now() + (${input.leaseMs} * interval '1 millisecond')
+        WHERE id = ${candidate.id}
+        RETURNING *, tenant_id, user_id
+      `;
+      if (!attempt?.lease_expires_at) return null;
+      await sql`
+        UPDATE viby.generations SET
+          status = 'running', started_at = COALESCE(started_at, now()),
+          completed_at = NULL, error = NULL
+        WHERE tenant_id = ${attempt.tenant_id} AND user_id = ${attempt.user_id}
+          AND id = ${attempt.generation_id} AND active_attempt_id = ${attempt.id}
+      `;
+      if (wasQueued) {
+        await sql`
+          INSERT INTO viby.generation_events (
+            tenant_id, user_id, generation_id, attempt_id, type, data
+          ) VALUES (
+            ${attempt.tenant_id}, ${attempt.user_id}, ${attempt.generation_id}, ${attempt.id},
+            'attempt.started', ${sql.json({ number: attempt.number, reason: attempt.reason })}
+          )
+        `;
+      }
+      return {
+        workerId: input.workerId,
+        leaseToken: input.leaseToken,
+        scope: { tenantId: attempt.tenant_id, userId: attempt.user_id },
+        generationId: attempt.generation_id,
+        attemptId: attempt.id,
+        expiresAt: attempt.lease_expires_at,
+      };
+    });
+  }
+
+  async heartbeatGenerationAttempt(
+    lease: GenerationWorkerLease,
+    leaseMs: number,
+  ): Promise<Date | null> {
+    await this.assertReady();
+    const [row] = await this.#sql<{ lease_expires_at: Date }[]>`
+      UPDATE viby.generation_attempts SET
+        heartbeat_at = now(),
+        lease_expires_at = now() + (${leaseMs} * interval '1 millisecond')
+      WHERE tenant_id = ${lease.scope.tenantId} AND user_id = ${lease.scope.userId}
+        AND generation_id = ${lease.generationId} AND id = ${lease.attemptId}
+        AND worker_id = ${lease.workerId} AND lease_token = ${lease.leaseToken}
+        AND status = 'running' AND lease_expires_at > now()
+      RETURNING lease_expires_at
+    `;
+    return row?.lease_expires_at ?? null;
+  }
+
   async createGenerationAttempt(
     scope: UserScope,
     input: CreateAttemptRecord,
@@ -674,8 +782,15 @@ export class PostgresRepository implements Repository {
           WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
             AND generation_id = ${generation.id} AND id = ${generation.active_attempt_id}
             AND status IN ('queued', 'running')
+            AND (lease_expires_at IS NULL OR lease_expires_at <= now())
           RETURNING *
         `;
+        if (!interrupted) {
+          throw new GenerationStateError(
+            generation.id,
+            `Generation ${generation.id} has an active worker lease.`,
+          );
+        }
         if (interrupted) {
           await sql`
             INSERT INTO viby.generation_events (
@@ -723,16 +838,25 @@ export class PostgresRepository implements Repository {
   async attachGenerationSkills(
     scope: UserScope,
     generationId: string,
+    attemptId: string,
+    leaseToken: string,
     skills: readonly ResolvedSkill[],
   ): Promise<void> {
     await this.assertReady();
     await this.#sql.begin(async (sql) => {
       const [generation] = await sql<{ id: string }[]>`
-        SELECT id FROM viby.generations
-        WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId} AND id = ${generationId}
-        FOR UPDATE
+        SELECT generation.id FROM viby.generations AS generation
+        JOIN viby.generation_attempts AS attempt ON attempt.id = generation.active_attempt_id
+        WHERE generation.tenant_id = ${scope.tenantId}
+          AND generation.user_id = ${scope.userId} AND generation.id = ${generationId}
+          AND generation.status = 'running' AND attempt.id = ${attemptId}
+          AND attempt.status = 'running' AND attempt.lease_token = ${leaseToken}
+          AND attempt.lease_expires_at > now()
+        FOR UPDATE OF generation, attempt
       `;
-      if (!generation) throw new NotFoundError("Generation");
+      if (!generation) {
+        throw new GenerationStateError(generationId, "The generation worker lease is no longer active.");
+      }
 
       for (const [position, skill] of skills.entries()) {
         const [snapshot] = await sql<{ id: string }[]>`
@@ -804,17 +928,23 @@ export class PostgresRepository implements Repository {
     input: AppendGenerationEventRecord<Type>,
   ): Promise<void> {
     await this.assertReady();
-    await this.#sql`
+    const rows = await this.#sql<{ cursor: string }[]>`
       INSERT INTO viby.generation_events (
         tenant_id, user_id, generation_id, attempt_id, type, data
       )
-      SELECT ${scope.tenantId}, ${scope.userId}, id, ${input.attemptId}, ${input.type},
+      SELECT ${scope.tenantId}, ${scope.userId}, generation.id, ${input.attemptId}, ${input.type},
         ${this.#sql.json(JSON.parse(JSON.stringify(input.data)))}
-      FROM viby.generations
-      WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
-        AND id = ${input.generationId} AND status = 'running'
-        AND (${input.attemptId}::uuid IS NULL OR active_attempt_id = ${input.attemptId})
+      FROM viby.generations AS generation
+      JOIN viby.generation_attempts AS attempt ON attempt.id = generation.active_attempt_id
+      WHERE generation.tenant_id = ${scope.tenantId} AND generation.user_id = ${scope.userId}
+        AND generation.id = ${input.generationId} AND generation.status = 'running'
+        AND attempt.id = ${input.attemptId} AND attempt.status = 'running'
+        AND attempt.lease_token = ${input.leaseToken} AND attempt.lease_expires_at > now()
+      RETURNING cursor
     `;
+    if (rows.length === 0) {
+      throw new GenerationStateError(input.generationId, "The generation worker lease is no longer active.");
+    }
   }
 
   async completeGeneration<Framework extends FrameworkId>(
@@ -841,6 +971,7 @@ export class PostgresRepository implements Repository {
         SELECT * FROM viby.generation_attempts
         WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
           AND generation_id = ${input.generationId} AND id = ${input.attemptId}
+          AND lease_token = ${input.leaseToken} AND lease_expires_at > now()
         FOR UPDATE
       `;
       if (!attempt || attempt.status !== "running") {
@@ -955,6 +1086,7 @@ export class PostgresRepository implements Repository {
         SELECT * FROM viby.generation_attempts
         WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
           AND id = ${input.attemptId} AND generation_id = ${input.generationId}
+          AND lease_token = ${input.leaseToken} AND lease_expires_at > now()
         FOR UPDATE
       `;
       if (!attempt || attempt.status !== "running") {
@@ -1110,6 +1242,7 @@ export class PostgresRepository implements Repository {
     scope: UserScope,
     generationId: string,
     attemptId: string,
+    leaseToken: string,
     error: string,
   ): Promise<void> {
     await this.assertReady();
@@ -1128,6 +1261,7 @@ export class PostgresRepository implements Repository {
           status = 'failed', error = ${message}, completed_at = now()
         WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
           AND generation_id = ${generationId} AND id = ${attemptId} AND status = 'running'
+          AND lease_token = ${leaseToken} AND lease_expires_at > now()
         RETURNING *
       `;
       if (!attempt) return;
@@ -1517,6 +1651,9 @@ function mapAttempt(row: GenerationAttemptRow): GenerationAttemptData {
     createdAt: row.created_at,
     startedAt: row.started_at,
     completedAt: row.completed_at,
+    workerId: row.worker_id,
+    heartbeatAt: row.heartbeat_at,
+    leaseExpiresAt: row.lease_expires_at,
   };
 }
 
