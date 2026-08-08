@@ -41,10 +41,10 @@ Within chat requests, the audited inputs also include privacy, metadata, attachm
 | Initialize from local source files | `chats.init({ type: "files" })` | `chats.import({ source: { type: "files", files } })` | Shipped | chat plus immutable imported version and files |
 | Initialize from a ZIP | `chats.init({ type: "zip" })` | `chats.import({ source: { type: "zip", bytes } })` | Shipped | chat plus immutable imported version and files |
 | Initialize from a repository, registry, or hosted template | `chats.init` variants | provider adapter | Excluded | none in core |
-| List chats and filter them | `chats.find` | `chats.list({ limit })` | Partial | reads chats |
+| List chats and filter them | `chats.find` | `chats.list({ limit, after })` | Shipped | reads chats with an opaque stable cursor |
 | Get one chat | `chats.getById` | `chats.get(id)` | Shipped | reads chat |
-| Rename and attach arbitrary metadata | `chats.update` | proposed `chat.update` | Planned | chat name and JSON metadata |
-| Favorite a chat | deprecated `chats.favorite`; v0 recommends metadata | proposed `chat.update({ metadata: { favorite } })` | Planned | chat metadata |
+| Rename and attach arbitrary metadata | `chats.update` | `chat.update` | Shipped | chat name and validated JSON metadata |
+| Favorite a chat | deprecated `chats.favorite`; v0 recommends metadata | `chat.update({ metadata: { favorite } })` | Shipped | chat metadata |
 | Delete a chat | `chats.delete` | proposed `chat.delete` | Planned | soft-delete marker; later purge policy |
 | Fork a chat from a version | `chats.fork` | `version.fork` | Shipped | new chat and copied immutable version lineage |
 | Continue from the latest version | `chats.sendMessage` | `chat.generate` | Shipped | message, generation, child version, files |
@@ -68,7 +68,7 @@ Viby does not copy v0's hosted privacy values, `webUrl`, `apiUrl`, `demoUrl`, or
 | Capability | v0 surface | Viby-native surface | Status | Durable state |
 | --- | --- | --- | --- | --- |
 | List chat messages | `chats.findMessages` | `chat.listMessages` | Partial | reads messages |
-| Cursor pagination | `limit`, `cursor` | proposed `chat.listMessages({ limit, cursor })` | Planned | no new state |
+| Cursor pagination | `limit`, `cursor` | `chat.listMessages({ limit, after })` | Shipped | no new state |
 | Get one message | `chats.getMessage` | proposed `chat.getMessage` | Planned | reads message |
 | User and assistant roles | message resource | `MessageData.role` | Shipped | role and content |
 | Parent message/thread linkage | `parentId` | version parent lineage | Partial | version parent ID; message parent ID is planned |

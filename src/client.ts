@@ -1,5 +1,6 @@
 import type {
   ChatData,
+  CursorPage,
   ApplySourceChangesInput,
   CreateChatInput,
   FrameworkId,
@@ -17,9 +18,11 @@ import type {
   GenerationWaitOptions,
   IterateInput,
   MessageData,
+  PageOptions,
   ResolveGenerationTaskInput,
   RestoreVersionInput,
   UserScope,
+  UpdateChatInput,
   VersionData,
   VersionFile,
   VibyConfig,
@@ -46,6 +49,15 @@ import {
 import { createSourceDownload, type DownloadArtifact } from "./download.js";
 import { importProjectFiles } from "./project-import.js";
 import { applySourceChanges } from "./source-changes.js";
+import {
+  decodeChatCursor,
+  decodeMessageCursor,
+  decodeVersionCursor,
+  encodeChatCursor,
+  encodeMessageCursor,
+  encodeVersionCursor,
+} from "./cursors.js";
+import { normalizeChatMetadata } from "./metadata.js";
 
 const DEFAULT_POLL_INTERVAL_MS = 100;
 const DEFAULT_EVENT_LIMIT = 100;
@@ -196,9 +208,11 @@ export class ChatCollection<Framework extends FrameworkId = FrameworkId> {
 
   async create(input: CreateChatInput = {}): Promise<Chat<Framework>> {
     const title = normalizeChatTitle(input.title);
+    const metadata = normalizeChatMetadata(input.metadata);
     const data = await this.#dependencies.repository.createChat(this.#dependencies.scope, {
       id: createId(),
       title,
+      metadata,
       framework: this.#dependencies.framework,
     });
     return new Chat(data, this.#dependencies);
@@ -214,12 +228,14 @@ export class ChatCollection<Framework extends FrameworkId = FrameworkId> {
       throw new ConfigurationError("An import summary cannot exceed 2,000 characters.");
     }
     const files = importProjectFiles(input.source);
+    const metadata = normalizeChatMetadata(input.metadata);
     const imported = await this.#dependencies.repository.importChat(
       this.#dependencies.scope,
       {
         chatId: createId(),
         versionId: createId(),
         title,
+        metadata,
         summary,
         framework: this.#dependencies.framework,
         files,
@@ -237,16 +253,21 @@ export class ChatCollection<Framework extends FrameworkId = FrameworkId> {
     return new Chat(data, this.#dependencies);
   }
 
-  async list(options: { limit?: number } = {}): Promise<Array<Chat<Framework>>> {
-    const limit = options.limit ?? 20;
-    if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
-      throw new ConfigurationError("Chat list limit must be an integer between 1 and 100.");
-    }
-    const records = await this.#dependencies.repository.listChats<Framework>(
+  async list(options: PageOptions = {}): Promise<CursorPage<Chat<Framework>>> {
+    const limit = normalizePageLimit(options.limit);
+    const page = await this.#dependencies.repository.listChatPage<Framework>(
       this.#dependencies.scope,
       limit,
+      decodeChatCursor(options.after),
     );
-    return records.map((record) => new Chat(record, this.#dependencies));
+    const items = page.items.map((record) => new Chat(record, this.#dependencies));
+    const last = page.items.at(-1);
+    return {
+      items,
+      nextCursor: page.hasMore && last
+        ? encodeChatCursor({ updatedAt: last.updatedAt, id: last.id })
+        : null,
+    };
   }
 }
 
@@ -278,9 +299,27 @@ export class Chat<Framework extends FrameworkId = FrameworkId> {
 
   get id(): string { return this.#data.id; }
   get title(): string { return this.#data.title; }
+  get metadata(): ChatData["metadata"] { return this.#data.metadata; }
   get framework(): Framework { return this.#data.framework; }
   get createdAt(): Date { return this.#data.createdAt; }
   get updatedAt(): Date { return this.#data.updatedAt; }
+
+  async update(input: UpdateChatInput): Promise<Chat<Framework>> {
+    if (!input || (input.title === undefined && input.metadata === undefined)) {
+      throw new ConfigurationError("Chat update requires a title or metadata value.");
+    }
+    const data = await this.#dependencies.repository.updateChat<Framework>(
+      this.#dependencies.scope,
+      this.id,
+      {
+        title: input.title === undefined ? this.title : normalizeChatTitle(input.title),
+        metadata: input.metadata === undefined
+          ? this.metadata
+          : normalizeChatMetadata(input.metadata),
+      },
+    );
+    return new Chat(data, this.#dependencies);
+  }
 
   async start(input: GenerateInput): Promise<Generation<Framework>> {
     const latest = await this.#dependencies.repository.getLatestVersion<Framework>(
@@ -320,16 +359,37 @@ export class Chat<Framework extends FrameworkId = FrameworkId> {
     return new Version(data, this.#dependencies);
   }
 
-  async listVersions(): Promise<Array<Version<Framework>>> {
-    const records = await this.#dependencies.repository.listVersions<Framework>(
+  async listVersions(options: PageOptions = {}): Promise<CursorPage<Version<Framework>>> {
+    const limit = normalizePageLimit(options.limit);
+    const page = await this.#dependencies.repository.listVersionPage<Framework>(
       this.#dependencies.scope,
       this.id,
+      limit,
+      decodeVersionCursor(options.after),
     );
-    return records.map((record) => new Version(record, this.#dependencies));
+    const items = page.items.map((record) => new Version(record, this.#dependencies));
+    const last = page.items.at(-1);
+    return {
+      items,
+      nextCursor: page.hasMore && last ? encodeVersionCursor({ number: last.number }) : null,
+    };
   }
 
-  listMessages(): Promise<MessageData[]> {
-    return this.#dependencies.repository.listMessages(this.#dependencies.scope, this.id);
+  async listMessages(options: PageOptions = {}): Promise<CursorPage<MessageData>> {
+    const limit = normalizePageLimit(options.limit);
+    const page = await this.#dependencies.repository.listMessagePage(
+      this.#dependencies.scope,
+      this.id,
+      limit,
+      decodeMessageCursor(options.after),
+    );
+    const last = page.items.at(-1);
+    return {
+      items: page.items,
+      nextCursor: page.hasMore && last
+        ? encodeMessageCursor({ createdAt: last.createdAt, id: last.id })
+        : null,
+    };
   }
 
   startFromVersion(
@@ -624,6 +684,11 @@ export class Version<Framework extends FrameworkId = FrameworkId> {
       input.summary,
       `Forked from version ${this.number}.`,
     );
+    const sourceChat = await this.#dependencies.repository.getChat<Framework>(
+      this.#dependencies.scope,
+      this.chatId,
+    );
+    if (!sourceChat) throw new NotFoundError("Chat");
     const forked = await this.#dependencies.repository.forkVersion(
       this.#dependencies.scope,
       {
@@ -631,6 +696,9 @@ export class Version<Framework extends FrameworkId = FrameworkId> {
         versionId: createId(),
         sourceVersionId: this.id,
         title,
+        metadata: input.metadata === undefined
+          ? sourceChat.metadata
+          : normalizeChatMetadata(input.metadata),
         summary,
         framework: this.framework,
       },
@@ -683,6 +751,14 @@ function normalizeChatTitle(value: string | undefined): string {
     throw new ConfigurationError("A chat title cannot exceed 200 characters.");
   }
   return title;
+}
+
+function normalizePageLimit(value: number | undefined): number {
+  const limit = value ?? 20;
+  if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
+    throw new ConfigurationError("Page limit must be an integer between 1 and 100.");
+  }
+  return limit;
 }
 
 function normalizeVersionTitle(value: string): string {

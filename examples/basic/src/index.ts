@@ -59,7 +59,7 @@ try {
   // Re-open through the scoped client to prove the result came back from persistence.
   const persistedChat = await userViby.chats.get(chat.id);
   const persistedVersion = await persistedChat.getVersion(version.id);
-  const [messages, versions, files, generation, artifact] = await Promise.all([
+  const [messagePage, versionPage, files, generation, artifact] = await Promise.all([
     persistedChat.listMessages(),
     persistedChat.listVersions(),
     persistedVersion.files(),
@@ -79,8 +79,8 @@ try {
     chatId: persistedChat.id,
     versionId: persistedVersion.id,
     versionNumber: persistedVersion.number,
-    messages: messages.length,
-    versions: versions.length,
+    messages: messagePage.items.length,
+    versions: versionPage.items.length,
     files: files.length,
     generationStatus: generation.status,
     durableEvents: eventCount,

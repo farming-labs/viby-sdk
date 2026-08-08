@@ -262,7 +262,7 @@ test("rejects invalid source change sets before persistence", async () => {
     }),
     /unsafe/,
   );
-  assert.equal((await chat.listVersions()).length, 1);
+  assert.equal((await chat.listVersions()).items.length, 1);
 });
 
 test("forks and restores exact immutable version snapshots", async () => {
@@ -320,7 +320,64 @@ test("never exposes records across tenants or users", async () => {
   const chat = await owner.chats.create();
 
   await assert.rejects(() => stranger.chats.get(chat.id), NotFoundError);
-  assert.deepEqual(await stranger.chats.list(), []);
+  assert.deepEqual((await stranger.chats.list()).items, []);
+});
+
+test("updates JSON chat metadata and paginates chats, messages, and versions", async () => {
+  const { viby } = setup();
+  const user = viby.forUser({ tenantId: "tenant-a", userId: "user-a" });
+  const chat = await user.chats.create({
+    title: "Original",
+    metadata: { favorite: false, labels: ["dashboard"] },
+  });
+  const first = await chat.generate({ prompt: "First version" });
+  const second = await first.iterate({ prompt: "Second version" });
+  const third = await second.iterate({ prompt: "Third version" });
+
+  const updated = await chat.update({
+    title: "Updated dashboard",
+    metadata: { favorite: true, nested: { owner: "design" } },
+  });
+  assert.equal(updated.title, "Updated dashboard");
+  assert.deepEqual(updated.metadata, { favorite: true, nested: { owner: "design" } });
+  assert.deepEqual((await user.chats.get(chat.id)).metadata, updated.metadata);
+
+  const versionPageOne = await updated.listVersions({ limit: 2 });
+  assert.deepEqual(versionPageOne.items.map((version) => version.id), [third.id, second.id]);
+  assert.ok(versionPageOne.nextCursor);
+  const versionPageTwo = await updated.listVersions({ limit: 2, after: versionPageOne.nextCursor });
+  assert.deepEqual(versionPageTwo.items.map((version) => version.id), [first.id]);
+  assert.equal(versionPageTwo.nextCursor, null);
+
+  const messageIds: string[] = [];
+  let messageCursor: string | undefined;
+  do {
+    const page = await updated.listMessages(
+      messageCursor ? { limit: 2, after: messageCursor } : { limit: 2 },
+    );
+    messageIds.push(...page.items.map((message) => message.id));
+    messageCursor = page.nextCursor ?? undefined;
+  } while (messageCursor);
+  assert.equal(messageIds.length, 6);
+  assert.equal(new Set(messageIds).size, 6);
+
+  await new Promise((resolve) => setTimeout(resolve, 2));
+  const secondChat = await user.chats.create({ title: "Second chat" });
+  const refreshed = await updated.update({ metadata: updated.metadata });
+  const chatPageOne = await user.chats.list({ limit: 1 });
+  assert.equal(chatPageOne.items[0]?.id, refreshed.id);
+  assert.ok(chatPageOne.nextCursor);
+  const chatPageTwo = await user.chats.list({ limit: 1, after: chatPageOne.nextCursor });
+  assert.equal(chatPageTwo.items[0]?.id, secondChat.id);
+
+  await assert.rejects(
+    () => updated.listVersions({ after: chatPageOne.nextCursor! }),
+    /cursor is invalid/,
+  );
+  await assert.rejects(
+    () => updated.update({ metadata: { invalid: Number.POSITIVE_INFINITY } }),
+    /must be finite/,
+  );
 });
 
 test("persists failed generation attempts without creating partial versions", async () => {
@@ -335,5 +392,5 @@ test("persists failed generation attempts without creating partial versions", as
     (error: unknown) => error instanceof GenerationError && error.generationId.length > 0,
   );
   assert.equal([...repository.generations.values()][0]?.status, "failed");
-  assert.equal((await chat.listVersions()).length, 0);
+  assert.equal((await chat.listVersions()).items.length, 0);
 });

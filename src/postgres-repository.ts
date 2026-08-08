@@ -1,6 +1,7 @@
 import postgres from "postgres";
 import type {
   ChatData,
+  ChatMetadata,
   FrameworkId,
   GenerationAttemptData,
   GenerationAttemptReason,
@@ -20,6 +21,7 @@ import type {
 } from "./types.js";
 import type {
   AppendGenerationEventRecord,
+  ChatPageCursor,
   CompleteGenerationRecord,
   CreateAttemptRecord,
   CreatedGeneration,
@@ -28,10 +30,14 @@ import type {
   ForkVersionRecord,
   ImportedChat,
   ImportChatRecord,
+  MessagePageCursor,
   PauseGenerationRecord,
   Repository,
+  RepositoryPage,
   ResolveGenerationTaskRecord,
   RestoreVersionRecord,
+  UpdateChatRecord,
+  VersionPageCursor,
 } from "./repository.js";
 import { createId } from "./utils.js";
 import {
@@ -45,6 +51,7 @@ interface ChatRow {
   tenant_id: string;
   user_id: string;
   title: string;
+  metadata: ChatMetadata;
   framework: string;
   created_at: Date;
   updated_at: Date;
@@ -179,12 +186,15 @@ export class PostgresRepository implements Repository {
 
   async createChat<Framework extends FrameworkId>(
     scope: UserScope,
-    input: { id: string; title: string; framework: Framework },
+    input: { id: string; title: string; metadata: ChatMetadata; framework: Framework },
   ): Promise<ChatData<Framework>> {
     await this.assertReady();
     const [row] = await this.#sql<ChatRow[]>`
-      INSERT INTO viby.chats (id, tenant_id, user_id, title, framework)
-      VALUES (${input.id}, ${scope.tenantId}, ${scope.userId}, ${input.title}, ${input.framework})
+      INSERT INTO viby.chats (id, tenant_id, user_id, title, metadata, framework)
+      VALUES (
+        ${input.id}, ${scope.tenantId}, ${scope.userId}, ${input.title},
+        ${this.#sql.json(JSON.parse(JSON.stringify(input.metadata)))}, ${input.framework}
+      )
       RETURNING *
     `;
     if (!row) throw new Error("Postgres did not return the created chat.");
@@ -198,9 +208,10 @@ export class PostgresRepository implements Repository {
     await this.assertReady();
     const result = await this.#sql.begin(async (sql) => {
       const [chat] = await sql<ChatRow[]>`
-        INSERT INTO viby.chats (id, tenant_id, user_id, title, framework)
+        INSERT INTO viby.chats (id, tenant_id, user_id, title, metadata, framework)
         VALUES (
-          ${input.chatId}, ${scope.tenantId}, ${scope.userId}, ${input.title}, ${input.framework}
+          ${input.chatId}, ${scope.tenantId}, ${scope.userId}, ${input.title},
+          ${sql.json(JSON.parse(JSON.stringify(input.metadata)))}, ${input.framework}
         )
         RETURNING *
       `;
@@ -320,9 +331,10 @@ export class PostgresRepository implements Repository {
         ORDER BY path
       `;
       const [chat] = await sql<ChatRow[]>`
-        INSERT INTO viby.chats (id, tenant_id, user_id, title, framework)
+        INSERT INTO viby.chats (id, tenant_id, user_id, title, metadata, framework)
         VALUES (
-          ${input.chatId}, ${scope.tenantId}, ${scope.userId}, ${input.title}, ${input.framework}
+          ${input.chatId}, ${scope.tenantId}, ${scope.userId}, ${input.title},
+          ${sql.json(JSON.parse(JSON.stringify(input.metadata)))}, ${input.framework}
         )
         RETURNING *
       `;
@@ -434,6 +446,24 @@ export class PostgresRepository implements Repository {
     return row ? mapChat<Framework>(row) : null;
   }
 
+  async updateChat<Framework extends FrameworkId>(
+    scope: UserScope,
+    id: string,
+    input: UpdateChatRecord,
+  ): Promise<ChatData<Framework>> {
+    await this.assertReady();
+    const [row] = await this.#sql<ChatRow[]>`
+      UPDATE viby.chats SET
+        title = ${input.title},
+        metadata = ${this.#sql.json(JSON.parse(JSON.stringify(input.metadata)))},
+        updated_at = now()
+      WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId} AND id = ${id}
+      RETURNING *
+    `;
+    if (!row) throw new NotFoundError("Chat");
+    return mapChat<Framework>(row);
+  }
+
   async listChats<Framework extends FrameworkId>(
     scope: UserScope,
     limit: number,
@@ -446,6 +476,35 @@ export class PostgresRepository implements Repository {
       LIMIT ${limit}
     `;
     return rows.map(mapChat<Framework>);
+  }
+
+  async listChatPage<Framework extends FrameworkId>(
+    scope: UserScope,
+    limit: number,
+    after: ChatPageCursor | null,
+  ): Promise<RepositoryPage<ChatData<Framework>>> {
+    await this.assertReady();
+    const rows = after
+      ? await this.#sql<ChatRow[]>`
+          SELECT * FROM viby.chats
+          WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+            AND (
+              date_trunc('milliseconds', updated_at) < ${after.updatedAt}
+              OR (
+                date_trunc('milliseconds', updated_at) = ${after.updatedAt}
+                AND id < ${after.id}
+              )
+            )
+          ORDER BY date_trunc('milliseconds', updated_at) DESC, id DESC
+          LIMIT ${limit + 1}
+        `
+      : await this.#sql<ChatRow[]>`
+          SELECT * FROM viby.chats
+          WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+          ORDER BY date_trunc('milliseconds', updated_at) DESC, id DESC
+          LIMIT ${limit + 1}
+        `;
+    return createPage(rows.map(mapChat<Framework>), limit);
   }
 
   async createGeneration(
@@ -1239,6 +1298,31 @@ export class PostgresRepository implements Repository {
     return rows.map(mapVersion<Framework>);
   }
 
+  async listVersionPage<Framework extends FrameworkId>(
+    scope: UserScope,
+    chatId: string,
+    limit: number,
+    after: VersionPageCursor | null,
+  ): Promise<RepositoryPage<VersionData<Framework>>> {
+    await this.assertReady();
+    const rows = after
+      ? await this.#sql<VersionRow[]>`
+          SELECT * FROM viby.versions
+          WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+            AND chat_id = ${chatId} AND number < ${after.number}
+          ORDER BY number DESC
+          LIMIT ${limit + 1}
+        `
+      : await this.#sql<VersionRow[]>`
+          SELECT * FROM viby.versions
+          WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+            AND chat_id = ${chatId}
+          ORDER BY number DESC
+          LIMIT ${limit + 1}
+        `;
+    return createPage(rows.map(mapVersion<Framework>), limit);
+  }
+
   async listMessages(scope: UserScope, chatId: string): Promise<MessageData[]> {
     await this.assertReady();
     const rows = await this.#sql<MessageRow[]>`
@@ -1248,6 +1332,40 @@ export class PostgresRepository implements Repository {
       ORDER BY created_at, id
     `;
     return rows.map(mapMessage);
+  }
+
+  async listMessagePage(
+    scope: UserScope,
+    chatId: string,
+    limit: number,
+    after: MessagePageCursor | null,
+  ): Promise<RepositoryPage<MessageData>> {
+    await this.assertReady();
+    const rows = after
+      ? await this.#sql<MessageRow[]>`
+          SELECT id, chat_id, generation_id, role, content, created_at
+          FROM viby.messages
+          WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+            AND chat_id = ${chatId}
+            AND (
+              date_trunc('milliseconds', created_at) > ${after.createdAt}
+              OR (
+                date_trunc('milliseconds', created_at) = ${after.createdAt}
+                AND id > ${after.id}
+              )
+            )
+          ORDER BY date_trunc('milliseconds', created_at), id
+          LIMIT ${limit + 1}
+        `
+      : await this.#sql<MessageRow[]>`
+          SELECT id, chat_id, generation_id, role, content, created_at
+          FROM viby.messages
+          WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+            AND chat_id = ${chatId}
+          ORDER BY date_trunc('milliseconds', created_at), id
+          LIMIT ${limit + 1}
+        `;
+    return createPage(rows.map(mapMessage), limit);
   }
 
   async getVersionFiles(scope: UserScope, versionId: string): Promise<VersionFile[]> {
@@ -1274,10 +1392,15 @@ function mapChat<Framework extends FrameworkId>(row: ChatRow): ChatData<Framewor
     tenantId: row.tenant_id,
     userId: row.user_id,
     title: row.title,
+    metadata: row.metadata,
     framework: row.framework as Framework,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+}
+
+function createPage<Item>(items: Item[], limit: number): RepositoryPage<Item> {
+  return { items: items.slice(0, limit), hasMore: items.length > limit };
 }
 
 function mapGeneration(row: GenerationRow): GenerationData {

@@ -15,6 +15,7 @@ import type {
 } from "../../src/types.js";
 import type {
   AppendGenerationEventRecord,
+  ChatPageCursor,
   CompleteGenerationRecord,
   CreateAttemptRecord,
   CreatedGeneration,
@@ -23,10 +24,14 @@ import type {
   ForkVersionRecord,
   ImportedChat,
   ImportChatRecord,
+  MessagePageCursor,
   PauseGenerationRecord,
   Repository,
+  RepositoryPage,
   ResolveGenerationTaskRecord,
   RestoreVersionRecord,
+  UpdateChatRecord,
+  VersionPageCursor,
 } from "../../src/repository.js";
 import { createId } from "../../src/utils.js";
 import { GenerationStateError, NotFoundError } from "../../src/errors.js";
@@ -57,7 +62,7 @@ export class MemoryRepository implements Repository {
 
   async createChat<Framework extends FrameworkId>(
     scope: UserScope,
-    input: { id: string; title: string; framework: Framework },
+    input: { id: string; title: string; metadata: ChatData["metadata"]; framework: Framework },
   ): Promise<ChatData<Framework>> {
     const now = new Date();
     const chat: ChatData<Framework> & ScopedRecord = {
@@ -77,6 +82,7 @@ export class MemoryRepository implements Repository {
     const chat = await this.createChat(scope, {
       id: input.chatId,
       title: input.title,
+      metadata: input.metadata,
       framework: input.framework,
     });
     const version: VersionData<Framework> & ScopedRecord = {
@@ -136,6 +142,7 @@ export class MemoryRepository implements Repository {
     const chat = await this.createChat(scope, {
       id: input.chatId,
       title: input.title,
+      metadata: input.metadata,
       framework: input.framework,
     });
     const version: VersionData<Framework> & ScopedRecord = {
@@ -194,13 +201,39 @@ export class MemoryRepository implements Repository {
     return chat && inScope(chat, scope) ? chat as ChatData<Framework> : null;
   }
 
+  async updateChat<Framework extends FrameworkId>(
+    scope: UserScope,
+    id: string,
+    input: UpdateChatRecord,
+  ): Promise<ChatData<Framework>> {
+    const chat = await this.getChat<Framework>(scope, id);
+    if (!chat) throw new NotFoundError("Chat");
+    const updated = { ...chat, ...input, updatedAt: new Date() };
+    this.chats.set(id, updated);
+    return updated;
+  }
+
   async listChats<Framework extends FrameworkId>(
     scope: UserScope,
     limit: number,
   ): Promise<Array<ChatData<Framework>>> {
-    return [...this.chats.values()]
-      .filter((chat) => inScope(chat, scope))
+    return sortChats([...this.chats.values()].filter((chat) => inScope(chat, scope)))
       .slice(0, limit) as Array<ChatData<Framework>>;
+  }
+
+  async listChatPage<Framework extends FrameworkId>(
+    scope: UserScope,
+    limit: number,
+    after: ChatPageCursor | null,
+  ): Promise<RepositoryPage<ChatData<Framework>>> {
+    let records = sortChats([...this.chats.values()].filter((chat) => inScope(chat, scope)));
+    if (after) {
+      records = records.filter((chat) => (
+        chat.updatedAt < after.updatedAt
+        || (chat.updatedAt.getTime() === after.updatedAt.getTime() && chat.id < after.id)
+      ));
+    }
+    return createPage(records as Array<ChatData<Framework>>, limit);
   }
 
   async createGeneration(
@@ -698,10 +731,41 @@ export class MemoryRepository implements Repository {
       .sort((a, b) => b.number - a.number) as unknown as Array<VersionData<Framework>>;
   }
 
+  async listVersionPage<Framework extends FrameworkId>(
+    scope: UserScope,
+    chatId: string,
+    limit: number,
+    after: VersionPageCursor | null,
+  ): Promise<RepositoryPage<VersionData<Framework>>> {
+    let records = [...this.versions.values()]
+      .filter((version) => version.chatId === chatId && inScope(version, scope))
+      .sort((left, right) => right.number - left.number);
+    if (after) records = records.filter((version) => version.number < after.number);
+    return createPage(records as unknown as Array<VersionData<Framework>>, limit);
+  }
+
   async listMessages(scope: UserScope, chatId: string): Promise<MessageData[]> {
     return this.messages.filter(
       (message) => message.chatId === chatId && inScope(message, scope),
     );
+  }
+
+  async listMessagePage(
+    scope: UserScope,
+    chatId: string,
+    limit: number,
+    after: MessagePageCursor | null,
+  ): Promise<RepositoryPage<MessageData>> {
+    let records = this.messages
+      .filter((message) => message.chatId === chatId && inScope(message, scope))
+      .sort(compareMessages);
+    if (after) {
+      records = records.filter((message) => (
+        message.createdAt > after.createdAt
+        || (message.createdAt.getTime() === after.createdAt.getTime() && message.id > after.id)
+      ));
+    }
+    return createPage(records, limit);
   }
 
   async getVersionFiles(scope: UserScope, versionId: string): Promise<VersionFile[]> {
@@ -743,4 +807,18 @@ export class MemoryRepository implements Repository {
 
 function inScope(record: ScopedRecord, scope: UserScope): boolean {
   return record.tenantId === scope.tenantId && record.userId === scope.userId;
+}
+
+function sortChats<Item extends ChatData>(chats: Item[]): Item[] {
+  return chats.sort((left, right) => (
+    right.updatedAt.getTime() - left.updatedAt.getTime() || right.id.localeCompare(left.id)
+  ));
+}
+
+function compareMessages(left: MessageData, right: MessageData): number {
+  return left.createdAt.getTime() - right.createdAt.getTime() || left.id.localeCompare(right.id);
+}
+
+function createPage<Item>(items: Item[], limit: number): RepositoryPage<Item> {
+  return { items: items.slice(0, limit), hasMore: items.length > limit };
 }
