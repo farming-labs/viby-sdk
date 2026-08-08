@@ -82,6 +82,13 @@ export interface SandboxOperationOptions {
   readonly signal?: AbortSignal;
 }
 
+export interface SandboxReadinessOptions extends SandboxOperationOptions {
+  readonly path?: string;
+  readonly timeoutMs?: number;
+  readonly intervalMs?: number;
+  readonly check?: (url: string, options: { readonly signal: AbortSignal }) => Promise<boolean>;
+}
+
 export interface SandboxCommand {
   readonly command: string;
   readonly args?: readonly string[];
@@ -104,13 +111,55 @@ export interface SandboxCommandResult {
   readonly durationMs: number;
 }
 
+export interface SandboxProcessInstance {
+  readonly id: string;
+  wait(options?: SandboxOperationOptions): Promise<SandboxCommandResult>;
+  kill(options?: SandboxOperationOptions): Promise<void>;
+}
+
 export interface SandboxInstance {
   readonly id: string;
   writeFiles(files: readonly SandboxFile[], options?: SandboxOperationOptions): Promise<void>;
   run(command: SandboxCommand): Promise<SandboxCommandResult>;
+  start?(command: SandboxCommand): Promise<SandboxProcessInstance>;
   readFile(path: string, options?: SandboxOperationOptions): Promise<Uint8Array>;
   getUrl?(port: number): string | Promise<string>;
   stop(options?: SandboxOperationOptions): Promise<void>;
+}
+
+export class SandboxProcess {
+  readonly id: string;
+  readonly provider: string;
+  readonly #instance: SandboxProcessInstance;
+  #killPromise: Promise<void> | null = null;
+
+  constructor(provider: string, instance: SandboxProcessInstance) {
+    this.provider = normalizeProvider(provider);
+    this.id = normalizeSandboxId(instance.id);
+    if (typeof instance.wait !== "function" || typeof instance.kill !== "function") {
+      throw new ConfigurationError("A sandbox background process requires wait and kill methods.");
+    }
+    this.#instance = instance;
+  }
+
+  get killed(): boolean {
+    return this.#killPromise !== null;
+  }
+
+  async wait(options: SandboxOperationOptions = {}): Promise<SandboxCommandResult> {
+    const result = await sandboxOperation(this.provider, "wait for process", () => (
+      this.#instance.wait(signalOptions(options.signal))
+    ));
+    return validateCommandResult(this.provider, "wait for process", result);
+  }
+
+  kill(options: SandboxOperationOptions = {}): Promise<void> {
+    if (this.#killPromise) return this.#killPromise;
+    this.#killPromise = sandboxOperation(this.provider, "kill process", () => (
+      this.#instance.kill(signalOptions(options.signal))
+    ));
+    return this.#killPromise;
+  }
 }
 
 export class SandboxSession {
@@ -168,20 +217,20 @@ export class SandboxSession {
     const result = await sandboxOperation(this.provider, "run command", () => (
       this.#instance.run(normalized)
     ));
-    if (
-      !Number.isInteger(result.exitCode)
-      || typeof result.stdout !== "string"
-      || typeof result.stderr !== "string"
-      || !Number.isFinite(result.durationMs)
-      || result.durationMs < 0
-    ) {
-      throw new SandboxError(
-        this.provider,
-        "run command",
-        "The adapter returned an invalid command result.",
+    return validateCommandResult(this.provider, "run command", result);
+  }
+
+  async start(command: SandboxCommand): Promise<SandboxProcess> {
+    this.#assertRunning();
+    if (!this.capabilities.backgroundProcesses || !this.#instance.start) {
+      throw new SandboxUnavailableError(
+        `Sandbox provider ${this.provider} does not support background processes.`,
       );
     }
-    return result;
+    const process = await sandboxOperation(this.provider, "start process", () => (
+      this.#instance.start!(normalizeCommand(command))
+    ));
+    return new SandboxProcess(this.provider, process);
   }
 
   async readFile(
@@ -229,6 +278,54 @@ export class SandboxSession {
         "The adapter returned an invalid URL.",
         { cause: error },
       );
+    }
+  }
+
+  async waitForPort(port: number, options: SandboxReadinessOptions = {}): Promise<string> {
+    this.#assertRunning();
+    if (!options || typeof options !== "object") {
+      throw new ConfigurationError("Sandbox readiness options must be an object.");
+    }
+    if (!this.capabilities.portUrls) {
+      throw new SandboxUnavailableError(
+        `Sandbox provider ${this.provider} does not support public port URLs.`,
+      );
+    }
+    const timeoutMs = normalizeReadinessTimeout(options.timeoutMs);
+    const intervalMs = normalizeReadinessInterval(options.intervalMs);
+    const path = normalizeReadinessPath(options.path);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => {
+      controller.abort(new DOMException(
+        `Sandbox port ${port} did not become ready within ${timeoutMs}ms.`,
+        "TimeoutError",
+      ));
+    }, timeoutMs);
+    const abort = () => controller.abort(options.signal?.reason);
+    if (options.signal?.aborted) abort();
+    else options.signal?.addEventListener("abort", abort, { once: true });
+    try {
+      while (true) {
+        controller.signal.throwIfAborted();
+        const baseUrl = await this.url(port);
+        const target = new URL(path, baseUrl).toString();
+        try {
+          const ready = await (options.check ?? defaultReadinessCheck)(target, {
+            signal: controller.signal,
+          });
+          if (ready) return target;
+        } catch (error) {
+          if (controller.signal.aborted) throw controller.signal.reason;
+          // Connection and non-ready response failures are retried until the deadline.
+        }
+        await waitForReadiness(intervalMs, controller.signal);
+      }
+    } catch (error) {
+      if (controller.signal.aborted && controller.signal.reason) throw controller.signal.reason;
+      throw error;
+    } finally {
+      clearTimeout(timeout);
+      options.signal?.removeEventListener("abort", abort);
     }
   }
 
@@ -420,6 +517,40 @@ function normalizeTimeout(value: number | undefined, label: string): number {
   return timeout;
 }
 
+function normalizeReadinessTimeout(value: number | undefined): number {
+  const timeout = value ?? 30_000;
+  if (!Number.isInteger(timeout) || timeout < 1 || timeout > MAX_SANDBOX_TIMEOUT_MS) {
+    throw new ConfigurationError(
+      `Sandbox readiness timeout must be an integer between 1 and ${MAX_SANDBOX_TIMEOUT_MS} milliseconds.`,
+    );
+  }
+  return timeout;
+}
+
+function normalizeReadinessInterval(value: number | undefined): number {
+  const interval = value ?? 250;
+  if (!Number.isInteger(interval) || interval < 10 || interval > 60_000) {
+    throw new ConfigurationError(
+      "Sandbox readiness interval must be an integer between 10 and 60000 milliseconds.",
+    );
+  }
+  return interval;
+}
+
+function normalizeReadinessPath(value: string | undefined): string {
+  const path = value ?? "/";
+  if (
+    !path.startsWith("/")
+    || path.startsWith("//")
+    || path.includes("\\")
+    || path.length > 2_000
+    || path.includes("\0")
+  ) {
+    throw new ConfigurationError("Sandbox readiness path must be an absolute URL path.");
+  }
+  return path;
+}
+
 function normalizeFileContent(content: string | Uint8Array): string | Uint8Array {
   if (typeof content === "string") return content;
   if (content instanceof Uint8Array) return new Uint8Array(content);
@@ -440,6 +571,56 @@ function normalizeSandboxId(value: string): string {
     throw new ConfigurationError("Sandbox instance ID must contain between 1 and 255 characters.");
   }
   return id;
+}
+
+function validateCommandResult(
+  provider: string,
+  operation: string,
+  result: SandboxCommandResult,
+): SandboxCommandResult {
+  if (
+    !result
+    || !Number.isInteger(result.exitCode)
+    || typeof result.stdout !== "string"
+    || typeof result.stderr !== "string"
+    || !Number.isFinite(result.durationMs)
+    || result.durationMs < 0
+  ) {
+    throw new SandboxError(
+      provider,
+      operation,
+      "The adapter returned an invalid command result.",
+    );
+  }
+  return result;
+}
+
+async function defaultReadinessCheck(
+  url: string,
+  options: { readonly signal: AbortSignal },
+): Promise<boolean> {
+  const response = await fetch(url, {
+    method: "GET",
+    redirect: "manual",
+    signal: options.signal,
+  });
+  await response.body?.cancel().catch(() => undefined);
+  return response.status >= 200 && response.status < 500;
+}
+
+function waitForReadiness(milliseconds: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    signal.throwIfAborted();
+    const timeout = setTimeout(() => {
+      signal.removeEventListener("abort", abort);
+      resolve();
+    }, milliseconds);
+    const abort = () => {
+      clearTimeout(timeout);
+      reject(signal.reason);
+    };
+    signal.addEventListener("abort", abort, { once: true });
+  });
 }
 
 function signalOptions(signal: AbortSignal | undefined): SandboxOperationOptions {

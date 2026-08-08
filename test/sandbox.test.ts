@@ -12,6 +12,7 @@ import type {
   SandboxInstance,
   SandboxOperationOptions,
   SandboxOutputEvent,
+  SandboxProcessInstance,
 } from "../src/sandbox.js";
 import { sandboxCapabilities } from "../src/sandbox.js";
 import { SkillResolver } from "../src/skills.js";
@@ -28,6 +29,8 @@ class FakeSandboxInstance implements SandboxInstance {
   readonly id = "sandbox_test";
   readonly files = new Map<string, Uint8Array>();
   readonly commands: SandboxCommand[] = [];
+  readonly backgroundCommands: SandboxCommand[] = [];
+  backgroundKillCalls = 0;
   stopCalls = 0;
   failWrites = false;
 
@@ -53,6 +56,23 @@ class FakeSandboxInstance implements SandboxInstance {
     };
   }
 
+  async start(command: SandboxCommand): Promise<SandboxProcessInstance> {
+    this.backgroundCommands.push(command);
+    await command.onOutput?.({ stream: "stdout", data: "server-started\n" });
+    return {
+      id: "process_test",
+      wait: async () => ({
+        exitCode: 0,
+        stdout: "server-started\n",
+        stderr: "",
+        durationMs: 20,
+      }),
+      kill: async () => {
+        this.backgroundKillCalls += 1;
+      },
+    };
+  }
+
   async readFile(path: string): Promise<Uint8Array> {
     const content = this.files.get(path);
     if (!content) throw new Error("missing file");
@@ -75,6 +95,7 @@ class FakeSandboxAdapter implements SandboxAdapter {
     commands: true,
     commandStreaming: true,
     portUrls: true,
+    backgroundProcesses: true,
   });
   readonly creates: SandboxCreateInput[] = [];
   readonly instances: FakeSandboxInstance[] = [];
@@ -138,7 +159,7 @@ test("materializes an immutable version through a provider-agnostic sandbox adap
   assert.equal(session.id, "sandbox_test");
   assert.equal(session.provider, "fake");
   assert.equal(session.supports("commandStreaming"), true);
-  assert.equal(session.supports("backgroundProcesses"), false);
+  assert.equal(session.supports("backgroundProcesses"), true);
   assert.deepEqual(session.capabilities, adapter.capabilities);
   assert.deepEqual(adapter.creates[0], {
     context: {
@@ -177,6 +198,36 @@ test("materializes an immutable version through a provider-agnostic sandbox adap
   });
   assert.equal(Buffer.from(await session.readFile("test.js")).toString(), 'console.log("ready")\n');
   assert.equal(await session.url(3000), "https://sandbox.example/3000");
+
+  const backgroundOutput: SandboxOutputEvent[] = [];
+  const process = await session.start({
+    command: "npm",
+    args: ["run", "dev"],
+    onOutput: (event) => {
+      backgroundOutput.push(event);
+    },
+  });
+  assert.equal(process.id, "process_test");
+  assert.deepEqual(backgroundOutput, [{ stream: "stdout", data: "server-started\n" }]);
+  assert.equal((await process.wait()).exitCode, 0);
+  await process.kill();
+  await process.kill();
+  assert.equal(adapter.instances[0]!.backgroundKillCalls, 1);
+
+  let readinessChecks = 0;
+  assert.equal(await session.waitForPort(3000, {
+    path: "/health",
+    intervalMs: 10,
+    check: async (url) => {
+      readinessChecks += 1;
+      assert.equal(url, "https://sandbox.example/health");
+      return readinessChecks === 2;
+    },
+  }), "https://sandbox.example/health");
+  await assert.rejects(
+    () => session.waitForPort(3000, { path: "//untrusted.example/health" }),
+    /absolute URL path/,
+  );
 
   await session.stop();
   await session.stop();
@@ -219,6 +270,22 @@ test("validates sandbox input and requires an adapter", async () => {
     /must support files and commands/,
   );
   await incomplete.viby.close();
+
+  const foregroundOnly = await importedVersion({
+    provider: "foreground-only",
+    capabilities: sandboxCapabilities({ files: true, commands: true }),
+    create: (input) => adapter.create(input),
+  });
+  const foregroundSession = await foregroundOnly.version.sandbox();
+  await assert.rejects(
+    () => foregroundSession.start({ command: "server" }),
+    SandboxUnavailableError,
+  );
+  await assert.rejects(
+    () => foregroundSession.waitForPort(3000),
+    SandboxUnavailableError,
+  );
+  await foregroundOnly.viby.close();
 });
 
 test("normalizes immutable provider-agnostic capability records", () => {

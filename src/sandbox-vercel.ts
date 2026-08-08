@@ -14,6 +14,7 @@ import type {
   SandboxInstance,
   SandboxOperationOptions,
   SandboxOutputEvent,
+  SandboxProcessInstance,
 } from "./sandbox.js";
 
 const MAX_VERCEL_PORTS = 4;
@@ -71,23 +72,36 @@ export interface VercelSandboxClient {
     file: { path: string },
     options?: { signal?: AbortSignal },
   ): Promise<Buffer | null>;
-  runCommand(input: {
+  runCommand(input: VercelCommandInput): Promise<VercelCommandResult | VercelCommandHandle>;
+  domain(port: number): string;
+  stop(options?: { signal?: AbortSignal }): Promise<unknown>;
+}
+
+export interface VercelCommandInput {
     cmd: string;
     args: string[];
     cwd: string;
     env: Record<string, string>;
     timeoutMs: number;
+    detached?: boolean;
     signal?: AbortSignal;
     stdout?: Writable;
     stderr?: Writable;
-  }): Promise<{
-    exitCode: number;
-    durationMs?: number;
-    stdout(options?: { signal?: AbortSignal }): Promise<string>;
-    stderr(options?: { signal?: AbortSignal }): Promise<string>;
-  }>;
-  domain(port: number): string;
-  stop(options?: { signal?: AbortSignal }): Promise<unknown>;
+}
+
+export interface VercelCommandResult {
+  readonly exitCode: number;
+  readonly durationMs?: number;
+  stdout(options?: { signal?: AbortSignal }): Promise<string>;
+  stderr(options?: { signal?: AbortSignal }): Promise<string>;
+}
+
+export interface VercelCommandHandle {
+  readonly cmdId: string;
+  wait(options?: { signal?: AbortSignal }): Promise<VercelCommandResult>;
+  kill(signal?: string, options?: { abortSignal?: AbortSignal }): Promise<void>;
+  stdout(options?: { signal?: AbortSignal }): Promise<string>;
+  stderr(options?: { signal?: AbortSignal }): Promise<string>;
 }
 
 export type VercelSandboxFactory = (
@@ -106,6 +120,7 @@ export function vercelSandbox(
       commands: true,
       commandStreaming: true,
       portUrls: true,
+      backgroundProcesses: true,
     }),
     async create(input) {
       if (input.ports.length > MAX_VERCEL_PORTS) {
@@ -174,6 +189,9 @@ class VercelSandboxInstance implements SandboxInstance {
       ...(command.signal ? { signal: command.signal } : {}),
       ...streams,
     });
+    if (isVercelCommandHandle(result)) {
+      throw new Error("Vercel returned a detached command for a blocking run.");
+    }
     const outputOptions = signalOptions(command.signal);
     const [stdout, stderr] = await Promise.all([
       result.stdout(outputOptions),
@@ -184,6 +202,45 @@ class VercelSandboxInstance implements SandboxInstance {
       stdout,
       stderr,
       durationMs: result.durationMs ?? Math.max(0, performance.now() - startedAt),
+    };
+  }
+
+  async start(command: SandboxCommand): Promise<SandboxProcessInstance> {
+    const startedAt = performance.now();
+    const cwd = command.cwd ?? ".";
+    const streams = command.onOutput ? outputStreams(command.onOutput) : {};
+    const handle = await this.#client.runCommand({
+      cmd: command.command,
+      args: [...(command.args ?? [])],
+      cwd: cwd === "." ? this.#client.cwd : projectPath(this.#client.cwd, cwd),
+      env: { ...(command.env ?? {}) },
+      timeoutMs: command.timeoutMs ?? 300_000,
+      detached: true,
+      ...(command.signal ? { signal: command.signal } : {}),
+      ...streams,
+    });
+    if (!isVercelCommandHandle(handle)) {
+      throw new Error("Vercel did not return a detached command handle.");
+    }
+    return {
+      id: handle.cmdId,
+      async wait(options = {}) {
+        const result = await handle.wait(signalOptions(options.signal));
+        const outputOptions = signalOptions(options.signal);
+        const [stdout, stderr] = await Promise.all([
+          result.stdout(outputOptions),
+          result.stderr(outputOptions),
+        ]);
+        return {
+          exitCode: result.exitCode,
+          stdout,
+          stderr,
+          durationMs: result.durationMs ?? Math.max(0, performance.now() - startedAt),
+        };
+      },
+      async kill(options = {}) {
+        await handle.kill("SIGTERM", options.signal ? { abortSignal: options.signal } : {});
+      },
     };
   }
 
@@ -213,7 +270,13 @@ async function createVercelSandbox(
 ): Promise<VercelSandboxClient> {
   return VercelSandbox.create(
     input as Parameters<typeof VercelSandbox.create>[0],
-  );
+  ) as unknown as Promise<VercelSandboxClient>;
+}
+
+function isVercelCommandHandle(
+  value: VercelCommandResult | VercelCommandHandle,
+): value is VercelCommandHandle {
+  return "cmdId" in value && typeof value.wait === "function" && typeof value.kill === "function";
 }
 
 function outputStreams(

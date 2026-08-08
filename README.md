@@ -150,6 +150,23 @@ Commands use a separate executable and argument list instead of an interpolated 
 
 Inspect `sandbox.capabilities` or call `sandbox.supports("portUrls")` before using optional behavior. The typed capability record is provider-neutral and reports what the configured adapter implements; unsupported future primitives such as background processes, reconnect, and snapshots remain `false` until the adapter exposes them through Viby.
 
+Adapters with `backgroundProcesses` can start a long-running server without blocking the request. Readiness works across any adapter with `portUrls` and accepts a custom check for authenticated or nonstandard preview routes:
+
+```ts
+const server = await sandbox.start({
+  command: "pnpm",
+  args: ["dev", "--host", "0.0.0.0"],
+  onOutput: ({ stream, data }) => console.log(stream, data),
+});
+
+const previewUrl = await sandbox.waitForPort(3000, { path: "/health" });
+
+// Later:
+await server.kill();
+```
+
+E2B, Vercel Sandbox, and Cloudflare currently expose native background handles. Other adapters report the capability as `false`; Viby never detaches a process through an untracked shell workaround.
+
 Adapter authors can import `verifySandboxAdapter` from `@viby/sdk/sandbox/conformance` in their own test suite. The caller supplies a harmless runtime-specific command and fixture credentials; Viby verifies capability declarations, text and binary file roundtrips, commands, streaming, port URLs, and idempotent cleanup without assuming a framework, image, or provider.
 
 ### E2B

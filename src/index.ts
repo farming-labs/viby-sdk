@@ -10,6 +10,7 @@ export { skillRead } from "./skills.js";
 export { DownloadArtifact } from "./download.js";
 export {
   SANDBOX_CAPABILITY_NAMES,
+  SandboxProcess,
   SandboxSession,
   sandboxCapabilities,
 } from "./sandbox.js";
@@ -39,6 +40,8 @@ export type {
   SandboxOpenOptions,
   SandboxOperationOptions,
   SandboxOutputEvent,
+  SandboxProcessInstance,
+  SandboxReadinessOptions,
 } from "./sandbox.js";
 export type { GenerationOutcome, Viby } from "./client.js";
 export type {
