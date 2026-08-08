@@ -242,6 +242,35 @@ const viby = createViby({
 
 Modal reads `MODAL_TOKEN_ID` and `MODAL_TOKEN_SECRET` by default or accepts the pair explicitly. The adapter passes command arguments directly as an argv array, streams stdout and stderr concurrently, uses Modal's binary filesystem API, declares encrypted preview tunnels at creation, and terminates the sandbox when the Viby session stops. Provider options include registry or named Modal images, GPU and resource controls, named secrets, regions, cloud placement, network allowlists, tags, OIDC identity tokens, and idle timeouts.
 
+### Cloudflare Sandbox
+
+Install the provider peer in a Cloudflare Worker project:
+
+```bash
+npm install @cloudflare/sandbox
+```
+
+Export Cloudflare's Durable Object class and pass its configured binding to Viby inside the Worker:
+
+```ts
+export { Sandbox } from "@cloudflare/sandbox";
+
+import { cloudflareSandbox } from "@viby/sdk/sandbox/cloudflare";
+
+const viby = createViby({
+  framework: "farm",
+  model,
+  sandbox: cloudflareSandbox({
+    binding: env.Sandbox,
+    preview: "tunnel",
+  }),
+});
+
+const session = await version.sandbox({ ports: [5173] });
+```
+
+The Worker must configure the `Sandbox` container, Durable Object binding, and migration in `wrangler.jsonc`. The adapter defaults to sessionless RPC execution, writes binary files without host filesystem access, maps command streaming and abort signals, creates zero-config quick-tunnel previews, and destroys the container on cleanup. For stable previews, pass `{ hostname, token?, name? }` instead of `"tunnel"`. Preview URLs are public, port `3000` is reserved by Cloudflare's internal control server, and local container development requires Docker.
+
 ### Local Docker
 
 Docker requires no JavaScript provider dependency:

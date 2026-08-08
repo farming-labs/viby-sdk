@@ -58,6 +58,10 @@
       "types": "./dist/sandbox-modal.d.ts",
       "import": "./dist/sandbox-modal.js"
     },
+    "./sandbox/cloudflare": {
+      "types": "./dist/sandbox-cloudflare.d.ts",
+      "import": "./dist/sandbox-cloudflare.js"
+    },
     "./package.json": "./package.json"
   },
   "bin": {
@@ -99,12 +103,16 @@
     "zod": "^4.4.3"
   },
   "peerDependencies": {
+    "@cloudflare/sandbox": "^0.12.5",
     "@daytona/sdk": "^0.203.0",
     "@vercel/sandbox": "^3.0.0",
     "e2b": "^2.38.2",
     "modal": "^0.9.0"
   },
   "peerDependenciesMeta": {
+    "@cloudflare/sandbox": {
+      "optional": true
+    },
     "@daytona/sdk": {
       "optional": true
     },
@@ -119,6 +127,7 @@
     }
   },
   "devDependencies": {
+    "@cloudflare/sandbox": "^0.12.5",
     "@daytona/sdk": "^0.203.0",
     "@types/node": "^26.1.2",
     "@vercel/sandbox": "^3.0.0",

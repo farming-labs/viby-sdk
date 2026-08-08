@@ -39,6 +39,8 @@ try {
     "dist/sandbox-daytona.d.ts",
     "dist/sandbox-modal.js",
     "dist/sandbox-modal.d.ts",
+    "dist/sandbox-cloudflare.js",
+    "dist/sandbox-cloudflare.d.ts",
     "migrations/0001_initial.sql",
     "migrations/0002_durable_generations.sql",
   ]) {
