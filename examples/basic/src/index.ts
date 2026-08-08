@@ -67,6 +67,10 @@ try {
     persistedVersion.download(),
   ]);
 
+  if (!generation) {
+    throw new Error("Expected the generated version to have generation metadata.");
+  }
+
   await mkdir(outputDirectory, { recursive: true });
   const artifactPath = resolve(outputDirectory, artifact.filename);
   await writeFile(artifactPath, artifact.bytes);

@@ -38,8 +38,8 @@ Within chat requests, the audited inputs also include privacy, metadata, attachm
 | --- | --- | --- | --- | --- |
 | Create a chat and immediately generate | `chats.create` | `chats.create` then `chat.generate` | Shipped | chat, two messages, generation, version, files, skill snapshots |
 | Create an empty chat | `chats.init` with source | `chats.create` | Shipped | chat |
-| Initialize from local source files | `chats.init({ type: "files" })` | proposed `chats.import({ files })` | Planned | chat plus immutable imported version and files |
-| Initialize from a ZIP | `chats.init({ type: "zip" })` | proposed `chats.import({ archive })` | Planned | chat plus immutable imported version and files |
+| Initialize from local source files | `chats.init({ type: "files" })` | `chats.import({ source: { type: "files", files } })` | Shipped | chat plus immutable imported version and files |
+| Initialize from a ZIP | `chats.init({ type: "zip" })` | `chats.import({ source: { type: "zip", bytes } })` | Shipped | chat plus immutable imported version and files |
 | Initialize from a repository, registry, or hosted template | `chats.init` variants | provider adapter | Excluded | none in core |
 | List chats and filter them | `chats.find` | `chats.list({ limit })` | Partial | reads chats |
 | Get one chat | `chats.getById` | `chats.get(id)` | Shipped | reads chat |

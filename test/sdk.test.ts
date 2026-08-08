@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { LanguageModel, LanguageModelUsage } from "ai";
-import { unzipSync, strFromU8 } from "fflate";
+import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
 import { createVibyWithDependencies } from "../src/client.js";
 import type {
   GeneratorInput,
@@ -79,7 +79,7 @@ test("creates a tenant-scoped chat, generation, immutable version, and source ZI
   const first = await chat.generate({ prompt: "Build an analytics dashboard" });
   assert.equal(first.number, 1);
   assert.equal(first.framework, "farm");
-  assert.equal((await first.generation()).status, "succeeded");
+  assert.equal((await first.generation())?.status, "succeeded");
 
   const second = await first.iterate({ prompt: "Make the sidebar compact" });
   assert.equal(second.number, 2);
@@ -95,6 +95,95 @@ test("creates a tenant-scoped chat, generation, immutable version, and source ZI
 
   await viby.close();
   assert.equal(repository.closed, true);
+});
+
+test("imports normalized source files without invoking the model", async () => {
+  const { viby, repository, generator } = setup();
+  const user = viby.forUser({ tenantId: "tenant-a", userId: "user-a" });
+  const chat = await user.chats.import({
+    title: "Imported Farm app",
+    summary: "Existing source",
+    source: {
+      type: "files",
+      files: [
+        { path: "./src/index.ts", content: "export const app = true;\n" },
+        { path: "package.json", content: '{"name":"imported"}\n' },
+      ],
+    },
+  });
+
+  const version = await chat.latestVersion();
+  assert.ok(version);
+  assert.equal(version.origin, "imported");
+  assert.equal(version.generationId, null);
+  assert.equal(await version.generation(), null);
+  assert.deepEqual((await version.files()).map((file) => file.path), [
+    "package.json",
+    "src/index.ts",
+  ]);
+  assert.equal((await version.files())[1]?.mediaType, "text/javascript");
+  assert.equal(generator.calls.length, 0);
+  assert.equal(repository.messages.length, 0);
+
+  const artifact = await version.download();
+  assert.equal(
+    strFromU8(unzipSync(artifact.bytes)["src/index.ts"]!),
+    "export const app = true;\n",
+  );
+});
+
+test("imports UTF-8 ZIP source and rejects unsafe or binary archives", async () => {
+  const { viby } = setup();
+  const user = viby.forUser({ tenantId: "tenant-a", userId: "user-a" });
+  const chat = await user.chats.import({
+    source: {
+      type: "zip",
+      bytes: zipSync({
+        "package.json": strToU8('{"name":"zipped"}\n'),
+        "src/index.ts": strToU8("export const zipped = true;\n"),
+      }),
+    },
+  });
+  assert.deepEqual((await (await chat.latestVersion())!.files()).map((file) => file.path), [
+    "package.json",
+    "src/index.ts",
+  ]);
+
+  await assert.rejects(
+    () => user.chats.import({
+      source: { type: "files", files: [{ path: "../.env", content: "SECRET=value" }] },
+    }),
+    /unsafe/,
+  );
+  await assert.rejects(
+    () => user.chats.import({
+      source: {
+        type: "files",
+        files: [
+          { path: "./src/index.ts", content: "one" },
+          { path: "src/index.ts", content: "two" },
+        ],
+      },
+    }),
+    /duplicate path/,
+  );
+  await assert.rejects(
+    () => user.chats.import({
+      source: { type: "zip", bytes: zipSync({ "image.png": new Uint8Array([0xff, 0xfe]) }) },
+    }),
+    /not UTF-8 source text/,
+  );
+  await assert.rejects(
+    () => user.chats.import({
+      source: {
+        type: "zip",
+        bytes: zipSync({
+          link: [strToU8("src/index.ts"), { os: 3, attrs: 0o120777 << 16 }],
+        }),
+      },
+    }),
+    /Symbolic links/,
+  );
 });
 
 test("does not return a version that belongs to a different chat", async () => {

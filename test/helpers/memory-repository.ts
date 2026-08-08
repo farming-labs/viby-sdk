@@ -19,6 +19,8 @@ import type {
   CreateAttemptRecord,
   CreatedGeneration,
   CreateGenerationRecord,
+  ImportedChat,
+  ImportChatRecord,
   PauseGenerationRecord,
   Repository,
   ResolveGenerationTaskRecord,
@@ -63,6 +65,33 @@ export class MemoryRepository implements Repository {
     };
     this.chats.set(chat.id, chat);
     return chat;
+  }
+
+  async importChat<Framework extends FrameworkId>(
+    scope: UserScope,
+    input: ImportChatRecord<Framework>,
+  ): Promise<ImportedChat<Framework>> {
+    const chat = await this.createChat(scope, {
+      id: input.chatId,
+      title: input.title,
+      framework: input.framework,
+    });
+    const version: VersionData<Framework> & ScopedRecord = {
+      id: input.versionId,
+      chatId: input.chatId,
+      generationId: null,
+      parentVersionId: null,
+      number: 1,
+      origin: "imported",
+      framework: input.framework,
+      title: input.title,
+      summary: input.summary,
+      createdAt: new Date(),
+      ...scope,
+    };
+    this.versions.set(version.id, version);
+    this.files.set(version.id, [...input.files]);
+    return { chat, version };
   }
 
   async getChat<Framework extends FrameworkId>(
@@ -285,6 +314,7 @@ export class MemoryRepository implements Repository {
       generationId: input.generationId,
       parentVersionId: input.parentVersionId,
       number: existing.length + 1,
+      origin: "generated",
       framework: input.framework,
       title: input.title,
       summary: input.summary,
