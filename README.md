@@ -171,6 +171,28 @@ const viby = createViby({
 
 The adapter maps Viby timeouts, environment variables, file operations, abort signals, output callbacks, and port URLs to the E2B SDK. Arguments are POSIX-quoted before reaching E2B's shell command API.
 
+### Vercel Sandbox
+
+Install the provider peer:
+
+```bash
+npm install @vercel/sandbox
+```
+
+```ts
+import { vercelSandbox } from "@viby/sdk/sandbox/vercel";
+
+const viby = createViby({
+  framework: "farm",
+  model,
+  sandbox: vercelSandbox({
+    image: "vercel/sandbox/universal:latest",
+  }),
+});
+```
+
+Vercel OIDC authentication is automatic in a linked Vercel project. Outside Vercel, pass `token`, `teamId`, and `projectId` together. Viby creates non-persistent execution sandboxes, declares requested preview ports at creation, and maps command output streams into the common callback.
+
 ## Run and stream asynchronously
 
 `chat.start` persists a queued generation and its first attempt before model execution begins, then immediately returns an addressable generation handle:
