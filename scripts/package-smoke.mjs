@@ -33,6 +33,8 @@ try {
     "dist/sandbox-e2b.d.ts",
     "dist/sandbox-vercel.js",
     "dist/sandbox-vercel.d.ts",
+    "dist/sandbox-docker.js",
+    "dist/sandbox-docker.d.ts",
     "migrations/0001_initial.sql",
     "migrations/0002_durable_generations.sql",
   ]) {
