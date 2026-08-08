@@ -20,6 +20,11 @@ import type {
   VersionFile,
 } from "./types.js";
 import type {
+  CreateSandboxLeaseRecord,
+  SandboxLeaseData,
+  SandboxLeaseStatus,
+} from "./sandbox.js";
+import type {
   AppendGenerationEventRecord,
   ChatPageCursor,
   CompleteGenerationRecord,
@@ -154,6 +159,23 @@ interface VersionFileRow {
   checksum: string;
 }
 
+interface SandboxLeaseRow {
+  id: string;
+  tenant_id: string;
+  user_id: string;
+  chat_id: string;
+  version_id: string;
+  framework: string;
+  provider: string;
+  sandbox_id: string;
+  ports: number[];
+  status: SandboxLeaseStatus;
+  expires_at: Date;
+  stopped_at: Date | null;
+  created_at: Date;
+  updated_at: Date;
+}
+
 export class PostgresRepository implements Repository {
   readonly #sql: ReturnType<typeof postgres>;
   #ready = false;
@@ -174,7 +196,8 @@ export class PostgresRepository implements Repository {
         to_regclass('viby.chats') IS NOT NULL
         AND to_regclass('viby.generation_attempts') IS NOT NULL
         AND to_regclass('viby.generation_events') IS NOT NULL
-        AND to_regclass('viby.generation_tasks') IS NOT NULL AS ready
+        AND to_regclass('viby.generation_tasks') IS NOT NULL
+        AND to_regclass('viby.sandbox_leases') IS NOT NULL AS ready
     `;
     if (!row?.ready) throw new DatabaseNotReadyError();
     this.#ready = true;
@@ -1384,6 +1407,59 @@ export class PostgresRepository implements Repository {
       checksum: row.checksum,
     }));
   }
+
+  async createSandboxLease<Framework extends FrameworkId>(
+    scope: UserScope,
+    input: CreateSandboxLeaseRecord<Framework>,
+  ): Promise<SandboxLeaseData<Framework>> {
+    await this.assertReady();
+    const [row] = await this.#sql<SandboxLeaseRow[]>`
+      INSERT INTO viby.sandbox_leases (
+        id, tenant_id, user_id, chat_id, version_id, framework,
+        provider, sandbox_id, ports, expires_at
+      )
+      SELECT
+        ${input.id}, ${scope.tenantId}, ${scope.userId}, chat.id, version.id,
+        ${input.context.framework}, ${input.provider}, ${input.sandboxId},
+        ${this.#sql.array([...input.ports])}, ${input.expiresAt}
+      FROM viby.chats AS chat
+      JOIN viby.versions AS version ON version.chat_id = chat.id
+      WHERE chat.id = ${input.context.chatId}
+        AND version.id = ${input.context.versionId}
+        AND chat.tenant_id = ${scope.tenantId} AND chat.user_id = ${scope.userId}
+        AND version.tenant_id = ${scope.tenantId} AND version.user_id = ${scope.userId}
+      RETURNING *
+    `;
+    if (!row) throw new NotFoundError("Sandbox version");
+    return mapSandboxLease<Framework>(row);
+  }
+
+  async getSandboxLease<Framework extends FrameworkId>(
+    scope: UserScope,
+    id: string,
+  ): Promise<SandboxLeaseData<Framework> | null> {
+    await this.assertReady();
+    const [row] = await this.#sql<SandboxLeaseRow[]>`
+      SELECT * FROM viby.sandbox_leases
+      WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId} AND id = ${id}
+      LIMIT 1
+    `;
+    return row ? mapSandboxLease<Framework>(row) : null;
+  }
+
+  async closeSandboxLease(
+    scope: UserScope,
+    id: string,
+    status: Exclude<SandboxLeaseStatus, "active">,
+  ): Promise<void> {
+    await this.assertReady();
+    await this.#sql`
+      UPDATE viby.sandbox_leases SET
+        status = ${status}, stopped_at = now(), updated_at = now()
+      WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+        AND id = ${id} AND status = 'active'
+    `;
+  }
 }
 
 function mapChat<Framework extends FrameworkId>(row: ChatRow): ChatData<Framework> {
@@ -1491,5 +1567,28 @@ function mapMessage(row: MessageRow): MessageData {
     role: row.role,
     content: row.content,
     createdAt: row.created_at,
+  };
+}
+
+function mapSandboxLease<Framework extends FrameworkId>(
+  row: SandboxLeaseRow,
+): SandboxLeaseData<Framework> {
+  return {
+    id: row.id,
+    sandboxId: row.sandbox_id,
+    provider: row.provider,
+    context: {
+      tenantId: row.tenant_id,
+      userId: row.user_id,
+      chatId: row.chat_id,
+      versionId: row.version_id,
+      framework: row.framework as Framework,
+    },
+    ports: row.ports,
+    status: row.status,
+    expiresAt: row.expires_at,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    stoppedAt: row.stopped_at,
   };
 }

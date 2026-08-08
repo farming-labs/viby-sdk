@@ -14,6 +14,11 @@ import type {
   VersionFile,
 } from "../../src/types.js";
 import type {
+  CreateSandboxLeaseRecord,
+  SandboxLeaseData,
+  SandboxLeaseStatus,
+} from "../../src/sandbox.js";
+import type {
   AppendGenerationEventRecord,
   ChatPageCursor,
   CompleteGenerationRecord,
@@ -51,6 +56,7 @@ export class MemoryRepository implements Repository {
   readonly events: Array<GenerationEvent & ScopedRecord> = [];
   readonly tasks = new Map<string, GenerationTaskData & ScopedRecord>();
   readonly skills = new Map<string, ResolvedSkill[]>();
+  readonly sandboxLeases = new Map<string, SandboxLeaseData & ScopedRecord>();
   closed = false;
   #cursor = 0;
 
@@ -771,6 +777,58 @@ export class MemoryRepository implements Repository {
   async getVersionFiles(scope: UserScope, versionId: string): Promise<VersionFile[]> {
     const version = await this.getVersion(scope, versionId);
     return version ? [...(this.files.get(versionId) ?? [])] : [];
+  }
+
+  async createSandboxLease<Framework extends FrameworkId>(
+    scope: UserScope,
+    input: CreateSandboxLeaseRecord<Framework>,
+  ): Promise<SandboxLeaseData<Framework>> {
+    const version = await this.getVersion(scope, input.context.versionId);
+    if (!version || version.chatId !== input.context.chatId) {
+      throw new NotFoundError("Sandbox version");
+    }
+    const now = new Date();
+    const lease: SandboxLeaseData<Framework> & ScopedRecord = {
+      id: input.id,
+      sandboxId: input.sandboxId,
+      provider: input.provider,
+      context: input.context,
+      ports: [...input.ports],
+      status: "active",
+      expiresAt: input.expiresAt,
+      createdAt: now,
+      updatedAt: now,
+      stoppedAt: null,
+      ...scope,
+    };
+    this.sandboxLeases.set(lease.id, lease);
+    return lease;
+  }
+
+  async getSandboxLease<Framework extends FrameworkId>(
+    scope: UserScope,
+    id: string,
+  ): Promise<SandboxLeaseData<Framework> | null> {
+    const lease = this.sandboxLeases.get(id);
+    return lease && inScope(lease, scope)
+      ? lease as unknown as SandboxLeaseData<Framework>
+      : null;
+  }
+
+  async closeSandboxLease(
+    scope: UserScope,
+    id: string,
+    status: Exclude<SandboxLeaseStatus, "active">,
+  ): Promise<void> {
+    const lease = this.sandboxLeases.get(id);
+    if (!lease || !inScope(lease, scope) || lease.status !== "active") return;
+    const now = new Date();
+    this.sandboxLeases.set(id, {
+      ...lease,
+      status,
+      updatedAt: now,
+      stoppedAt: now,
+    });
   }
 
   #requireGeneration(scope: UserScope, id: string): GenerationData & ScopedRecord {

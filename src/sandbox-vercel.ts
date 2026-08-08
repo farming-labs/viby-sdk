@@ -61,6 +61,15 @@ export interface VercelSandboxFactoryInput {
   readonly signal?: AbortSignal;
 }
 
+export interface VercelSandboxConnectorInput {
+  readonly name: string;
+  readonly resume: true;
+  readonly token?: string;
+  readonly teamId?: string;
+  readonly projectId?: string;
+  readonly signal?: AbortSignal;
+}
+
 export interface VercelSandboxClient {
   readonly name: string;
   readonly cwd: string;
@@ -108,9 +117,14 @@ export type VercelSandboxFactory = (
   input: VercelSandboxFactoryInput,
 ) => Promise<VercelSandboxClient>;
 
+export type VercelSandboxConnector = (
+  input: VercelSandboxConnectorInput,
+) => Promise<VercelSandboxClient>;
+
 export function vercelSandbox(
   options: VercelSandboxAdapterOptions = {},
   factory: VercelSandboxFactory = createVercelSandbox,
+  connector: VercelSandboxConnector = connectVercelSandbox,
 ): SandboxAdapter {
   validateOptions(options);
   return {
@@ -121,6 +135,7 @@ export function vercelSandbox(
       commandStreaming: true,
       portUrls: true,
       backgroundProcesses: true,
+      reconnect: true,
     }),
     async create(input) {
       if (input.ports.length > MAX_VERCEL_PORTS) {
@@ -142,6 +157,19 @@ export function vercelSandbox(
         ...(options.resources ? { resources: { ...options.resources } } : {}),
         ...(options.networkPolicy ? { networkPolicy: options.networkPolicy } : {}),
         ...(options.tags ? { tags: { ...options.tags } } : {}),
+        ...(options.token ? {
+          token: options.token,
+          teamId: options.teamId,
+          projectId: options.projectId,
+        } : {}),
+        ...(input.signal ? { signal: input.signal } : {}),
+      });
+      return new VercelSandboxInstance(client);
+    },
+    async reconnect(input) {
+      const client = await connector({
+        name: input.sandboxId,
+        resume: true,
         ...(options.token ? {
           token: options.token,
           teamId: options.teamId,
@@ -270,6 +298,14 @@ async function createVercelSandbox(
 ): Promise<VercelSandboxClient> {
   return VercelSandbox.create(
     input as Parameters<typeof VercelSandbox.create>[0],
+  ) as unknown as Promise<VercelSandboxClient>;
+}
+
+async function connectVercelSandbox(
+  input: VercelSandboxConnectorInput,
+): Promise<VercelSandboxClient> {
+  return VercelSandbox.get(
+    input as Parameters<typeof VercelSandbox.get>[0],
   ) as unknown as Promise<VercelSandboxClient>;
 }
 
