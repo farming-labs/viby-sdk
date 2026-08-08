@@ -8,7 +8,10 @@ import {
 } from "ai";
 import { z } from "zod";
 import { AgentWorkspace } from "./agent-workspace.js";
-import { ConfigurationError } from "./errors.js";
+import {
+  ConfigurationError,
+  SandboxCommandApprovalRequiredError,
+} from "./errors.js";
 import type {
   AgentTracePart,
   GeneratorInput,
@@ -23,6 +26,7 @@ import type {
   MessagePartDataMap,
   MessagePartType,
   SourceChange,
+  PermissionTaskRequest,
 } from "./types.js";
 import { errorMessage } from "./utils.js";
 
@@ -111,7 +115,8 @@ implements ProjectGenerator<Framework> {
   ): Promise<GeneratorOutput> {
     const workspace = new AgentWorkspace(input.previousFiles, async () => undefined);
     const budget = new AgentExecutionBudget(this.#config);
-    const tools = createAgentTools(workspace, input, options, budget, this.#config);
+    const approval = new AgentApprovalState();
+    const tools = createAgentTools(workspace, input, options, budget, this.#config, approval);
     const agent = new ToolLoopAgent({
       model: this.#model,
       instructions: createAgentInstructions(input),
@@ -128,6 +133,7 @@ implements ProjectGenerator<Framework> {
           (total, step) => total + (step.usage.totalTokens ?? 0),
           0,
         ) >= this.#config.maxTokens,
+        () => approval.proposedAction !== null,
       ],
     });
     const result = await agent.generate({
@@ -138,6 +144,14 @@ implements ProjectGenerator<Framework> {
         toolMs: this.#config.commandTimeoutMs,
       },
     });
+    if (approval.proposedAction) {
+      return {
+        kind: "task",
+        task: approval.task(),
+        usage: result.totalUsage,
+        finishReason: result.finishReason,
+      };
+    }
     const output = result.output;
     if (output.outcome === "task") {
       if (!output.task || output.title || output.summary) {
@@ -187,6 +201,7 @@ function createAgentTools<Framework extends FrameworkId>(
   options: GeneratorOptions,
   budget: AgentExecutionBudget,
   config: NormalizedAgentRunnerConfig,
+  approval: AgentApprovalState,
 ) {
   const workspaceTools = {
     workspace_list_files: tool({
@@ -328,12 +343,33 @@ function createAgentTools<Framework extends FrameworkId>(
         execute: async ({ command, args, cwd, timeoutMs }, { toolCallId }) => {
           budget.useCommand();
           const boundedTimeout = Math.min(timeoutMs ?? config.commandTimeoutMs, config.commandTimeoutMs);
+          const commandInput = {
+            command,
+            args,
+            ...(cwd ? { cwd } : {}),
+            timeoutMs: boundedTimeout,
+            ...(options.signal ? { signal: options.signal } : {}),
+          };
+          let grant;
+          try {
+            grant = await input.sandbox!.authorizeCommand(commandInput);
+          } catch (error) {
+            if (error instanceof SandboxCommandApprovalRequiredError) {
+              approval.request(error);
+              return {
+                approvalRequired: true,
+                idempotencyKey: error.proposedAction.idempotencyKey,
+              };
+            }
+            throw error;
+          }
           return executeDurableTool(
             options,
             {
               toolCallId,
               name: "sandbox.run-command",
-              effect: "write",
+              effect: "external",
+              idempotencyKey: grant.proposedAction.idempotencyKey,
               arguments: { command, args, cwd, timeoutMs: boundedTimeout },
             },
             {
@@ -348,15 +384,11 @@ function createAgentTools<Framework extends FrameworkId>(
             },
             async (part) => {
               const result = await input.sandbox!.run({
-                command,
-                args,
-                ...(cwd ? { cwd } : {}),
-                timeoutMs: boundedTimeout,
-                ...(options.signal ? { signal: options.signal } : {}),
+                ...commandInput,
                 ...(input.sandbox!.supports("commandStreaming") && part
                   ? { onOutput: (event) => part.delta(event.data) }
                   : {}),
-              });
+              }, grant);
               return {
                 ...result,
                 stdout: truncateUtf8(result.stdout, config.maxCommandOutputBytes),
@@ -391,8 +423,9 @@ function createAgentTools<Framework extends FrameworkId>(
 interface DurableToolInput {
   readonly toolCallId: string;
   readonly name: string;
-  readonly effect: "read" | "write";
+  readonly effect: "read" | "write" | "external";
   readonly arguments: JsonValue;
+  readonly idempotencyKey?: string;
 }
 
 type TraceDescriptor<Type extends MessagePartType> = {
@@ -412,11 +445,23 @@ async function executeDurableTool<Type extends MessagePartType>(
     name: input.name,
     effect: input.effect,
     arguments: input.arguments,
+    ...(input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : {}),
   });
   if (call && !call.created) {
-    if (call.toolCall.status === "succeeded") return call.toolCall.result;
-    if (call.toolCall.status === "failed") throw new Error(call.toolCall.error ?? "Tool call failed.");
-    throw new ConfigurationError(`Tool call ${call.toolCall.id} is already pending reconciliation.`);
+    if (call.toolCall.status === "succeeded") {
+      if (part && trace) await part.complete(trace.complete(call.toolCall.result));
+      return call.toolCall.result;
+    }
+    const message = call.toolCall.status === "failed"
+      ? call.toolCall.error ?? "Tool call failed."
+      : `Tool call ${call.toolCall.id} is already pending reconciliation.`;
+    await part?.fail({
+      message,
+      code: call.toolCall.status === "failed" ? "tool_failed" : "pending_reconciliation",
+      retryable: false,
+    });
+    if (call.toolCall.status === "failed") throw new Error(message);
+    throw new ConfigurationError(message);
   }
   try {
     const result = await execute(part);
@@ -444,6 +489,36 @@ class AgentExecutionBudget {
     if (this.#commands > this.#maxCommands) {
       throw new ConfigurationError(`The agent exceeded its ${this.#maxCommands}-command budget.`);
     }
+  }
+}
+
+class AgentApprovalState {
+  proposedAction: SandboxCommandApprovalRequiredError["proposedAction"] | null = null;
+  #reason = "";
+
+  request(error: SandboxCommandApprovalRequiredError): void {
+    if (
+      this.proposedAction
+      && this.proposedAction.idempotencyKey !== error.proposedAction.idempotencyKey
+    ) {
+      throw new ConfigurationError("The agent requested multiple approvals in one execution step.");
+    }
+    this.proposedAction = error.proposedAction;
+    this.#reason = error.reason;
+  }
+
+  task(): PermissionTaskRequest {
+    if (!this.proposedAction) throw new ConfigurationError("The proposed agent action is missing.");
+    const { command } = this.proposedAction;
+    const rendered = [command.command, ...command.args].join(" ");
+    return {
+      kind: "permission",
+      title: "Approve sandbox command",
+      message: this.#reason,
+      action: `Run ${rendered}`,
+      permissions: ["sandbox.command.run"],
+      proposedAction: this.proposedAction,
+    };
   }
 }
 
@@ -479,6 +554,9 @@ function createAgentPrompt<Framework extends FrameworkId>(input: GeneratorInput<
     kind: task.kind,
     status: task.status,
     resolution: task.resolution,
+    ...(task.kind === "permission" && task.proposedAction
+      ? { proposedAction: task.proposedAction }
+      : {}),
   })).join("\n");
   return [
     history ? `Conversation so far:\n${history}` : "This is the first generation in the chat.",

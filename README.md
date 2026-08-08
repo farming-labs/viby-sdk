@@ -229,7 +229,25 @@ const viby = createViby({
 });
 ```
 
-`sandboxPolicy` may also be an async function returning `{ allow: true }` or `{ allow: false, reason }`, which lets a product apply tenant roles or its own approval store. Viby authorizes normalized command metadata before calling `run` or `start`; a denial, thrown policy error, or malformed decision is fail-closed. Policy requests include environment variable names but never their values. Keep credentials out of command arguments as well, since arguments are necessarily visible to command authorization.
+`sandboxPolicy` may also be an async function returning `{ decision: "allow" }`, `{ decision: "deny", reason }`, or `{ decision: "approval-required", reason }`. The earlier `{ allow: true | false, reason? }` form remains accepted for compatibility. Viby authorizes normalized command metadata before calling `run` or `start`; a denial, thrown policy error, or malformed decision is fail-closed. Policy requests and persisted approval tasks include environment variable names but never their values. Keep credentials out of command arguments as well, since arguments are necessarily visible to command authorization.
+
+When the default agent receives `approval-required`, it stops before adapter execution and persists the exact proposed action on a permission task. Resolve that task through the normal durable generation API:
+
+```ts
+const outcome = await generation.wait();
+
+if (outcome.status === "waiting") {
+  const task = outcome.tasks.find((candidate) => candidate.kind === "permission");
+  if (task?.kind === "permission" && task.proposedAction) {
+    await generation.resolve({
+      taskId: task.id,
+      resolution: { kind: "permission", decision: "allow" },
+    });
+  }
+}
+```
+
+The resumed attempt can execute only the approved action fingerprint. Agent commands are recorded as external effects under the same stable idempotency key, so a completed call is reused and a pending, uncertain call must be reconciled instead of repeated. A denied task keeps that exact action denied for the generation.
 
 Adapter authors can import `verifySandboxAdapter` from `@viby/sdk/sandbox/conformance` in their own test suite. The caller supplies a harmless runtime-specific command and fixture credentials; Viby verifies capability declarations, text and binary file roundtrips, commands, streaming, port URLs, and idempotent cleanup without assuming a framework, image, or provider.
 
@@ -480,7 +498,7 @@ if (outcome.status === "waiting") {
 }
 ```
 
-Plan resolutions use `approve` or `revise`; permission resolutions use `allow` or `deny`. Resolution starts a new durable attempt, and the complete task history remains available through `generation.tasks()`.
+Plan resolutions use `approve` or `revise`; permission resolutions use `allow` or `deny`. Permission tasks created by the default sandbox agent also carry the exact secret-free `proposedAction`. Resolution starts a new durable attempt, and the complete task history remains available through `generation.tasks()`.
 
 ## Download framework source
 
@@ -591,6 +609,7 @@ Included now:
 - raw source ZIP downloads
 - sandboxed execution, durable leases, and preview URLs when an adapter supports them
 - enforced provider-neutral sandbox command authorization
+- durable approval-gated sandbox actions with exact-action, idempotent resume
 
 Planned as separate capabilities later:
 

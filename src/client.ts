@@ -1168,6 +1168,26 @@ class GenerationRunner<Framework extends FrameworkId> {
             ports: this.#dependencies.agent.sandboxPorts,
             signal,
           },
+          {
+            approvedActionKeys: tasks.flatMap((task) => (
+              task.kind === "permission"
+              && task.status === "resolved"
+              && task.resolution?.kind === "permission"
+              && task.resolution.decision === "allow"
+              && task.proposedAction
+                ? [task.proposedAction.idempotencyKey]
+                : []
+            )),
+            deniedActionKeys: tasks.flatMap((task) => (
+              task.kind === "permission"
+              && task.status === "resolved"
+              && task.resolution?.kind === "permission"
+              && task.resolution.decision === "deny"
+              && task.proposedAction
+                ? [task.proposedAction.idempotencyKey]
+                : []
+            )),
+          },
         );
       }
 

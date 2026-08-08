@@ -1327,7 +1327,9 @@ export class PostgresRepository implements Repository {
           tenant_id, user_id, generation_id, attempt_id, type, data
         ) VALUES (
           ${scope.tenantId}, ${scope.userId}, ${input.generationId}, ${input.attemptId},
-          'task.created', ${sql.json({ task: { id: input.taskId, ...input.task } })}
+          'task.created', ${sql.json(JSON.parse(JSON.stringify({
+            task: { id: input.taskId, ...input.task },
+          })))}
         )
       `;
       return task;
@@ -1373,15 +1375,6 @@ export class PostgresRepository implements Repository {
           resolved_at = now()
         WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId} AND id = ${input.taskId}
       `;
-      await insertMessage(sql, scope, {
-        chatId: generation.chat_id,
-        generationId: input.generationId,
-        attemptId: input.attemptId,
-        role: "user",
-        content: input.resolutionMessage,
-        parts: [{ type: "text", data: { text: input.resolutionMessage } }],
-      });
-
       const number = generation.attempt_count + 1;
       const [attempt] = await sql<GenerationAttemptRow[]>`
         INSERT INTO viby.generation_attempts (
@@ -1393,6 +1386,15 @@ export class PostgresRepository implements Repository {
         RETURNING *
       `;
       if (!attempt) throw new Error("Postgres did not return the created attempt.");
+
+      await insertMessage(sql, scope, {
+        chatId: generation.chat_id,
+        generationId: input.generationId,
+        attemptId: input.attemptId,
+        role: "user",
+        content: input.resolutionMessage,
+        parts: [{ type: "text", data: { text: input.resolutionMessage } }],
+      });
 
       await sql`
         UPDATE viby.generations SET

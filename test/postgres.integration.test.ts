@@ -371,6 +371,99 @@ test("persists a durable generation, iteration, events, and download in Postgres
     } finally {
       await agentViby.close();
     }
+
+    const approvalRepository = new PostgresRepository(databaseUrl);
+    let approvalAttempt = 0;
+    const approvalViby = createVibyWithDependencies(
+      {
+        framework: "farm",
+        model: "test/approval" as LanguageModel,
+        skills: {},
+      },
+      {
+        repository: approvalRepository,
+        generator: {
+          async generate(): Promise<GeneratorOutput> {
+            approvalAttempt += 1;
+            if (approvalAttempt === 1) {
+              return {
+                kind: "task",
+                task: {
+                  kind: "permission",
+                  title: "Approve sandbox command",
+                  message: "A user must approve package scripts.",
+                  action: "Run pnpm test",
+                  permissions: ["sandbox.command.run"],
+                  proposedAction: {
+                    type: "sandbox-command",
+                    idempotencyKey: "sandbox-command:postgres-integration",
+                    provider: "integration-sandbox",
+                    action: "run",
+                    context: null,
+                    command: {
+                      command: "pnpm",
+                      args: ["test"],
+                      cwd: ".",
+                      environment: ["CI"],
+                      timeoutMs: 60_000,
+                    },
+                  },
+                },
+                usage,
+                finishReason: "stop",
+              };
+            }
+            const content = "export const approved = true;\n";
+            return {
+              kind: "project",
+              title: "Approved Postgres project",
+              summary: "Resumed after a durable permission task.",
+              files: [{
+                path: "src/approved.ts",
+                content,
+                mediaType: "text/javascript",
+                size: Buffer.byteLength(content),
+                checksum: sha256(content),
+              }],
+              usage,
+              finishReason: "stop",
+            };
+          },
+        },
+        skillResolver: new SkillResolver({}),
+      },
+    );
+    try {
+      const approvalScope = {
+        tenantId: `approval-${randomUUID()}`,
+        userId: `approval-${randomUUID()}`,
+      };
+      const approvalChat = await approvalViby.forUser(approvalScope).chats.create();
+      const approvalGeneration = await approvalChat.start({ prompt: "Build after approval" });
+      const waiting = await approvalGeneration.wait({ pollIntervalMs: 10 });
+      assert.equal(waiting.status, "waiting");
+      if (waiting.status !== "waiting") throw new Error("Expected durable approval task");
+      const task = waiting.tasks[0];
+      assert.equal(task?.kind, "permission");
+      if (!task || task.kind !== "permission") throw new Error("Expected permission task");
+      assert.equal(task.proposedAction?.idempotencyKey, "sandbox-command:postgres-integration");
+      assert.deepEqual(task.proposedAction?.command.environment, ["CI"]);
+      await approvalGeneration.resolve({
+        taskId: task.id,
+        resolution: { kind: "permission", decision: "allow" },
+      });
+      assert.equal((await approvalGeneration.wait({ pollIntervalMs: 10 })).status, "succeeded");
+      const [persistedTask] = await approvalGeneration.tasks();
+      assert.equal(persistedTask?.status, "resolved");
+      assert.equal(
+        persistedTask?.kind === "permission"
+          ? persistedTask.proposedAction?.command.command
+          : undefined,
+        "pnpm",
+      );
+    } finally {
+      await approvalViby.close();
+    }
   } finally {
     await viby.close();
   }
