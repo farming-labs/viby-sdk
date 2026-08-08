@@ -81,6 +81,7 @@ test("generates and validates a complete structured source project through AI SD
         },
       ],
     },
+    changes: null,
     task: null,
   }));
 
@@ -109,6 +110,7 @@ test("rejects unsafe paths even when the model returns schema-valid JSON", async
       summary: "Should be rejected.",
       files: [{ path: "../.env", content: "SECRET=value", mediaType: null }],
     },
+    changes: null,
     task: null,
   }));
 
@@ -122,10 +124,39 @@ test("rejects unsafe paths even when the model returns schema-valid JSON", async
   }));
 });
 
+test("rejects full-tree replacement output when iterating an existing version", async () => {
+  const generator = new AiProjectGenerator<"farm">(createMockModel({
+    outcome: "project",
+    project: {
+      title: "Replacement",
+      summary: "A full replacement that should not be accepted.",
+      files: [{ path: "src/index.ts", content: "export {};\n", mediaType: null }],
+    },
+    changes: null,
+    task: null,
+  }));
+
+  await assert.rejects(() => generator.generate({
+    framework: "farm",
+    prompt: "Update the project",
+    messages: [],
+    previousFiles: [{
+      path: "src/index.ts",
+      content: "export const before = true;\n",
+      mediaType: "text/javascript",
+      size: 28,
+      checksum: "before",
+    }],
+    skills: [],
+    tasks: [],
+  }), /must return source changes/);
+});
+
 test("returns a typed question task when generation needs critical input", async () => {
   const generator = new AiProjectGenerator<"farm">(createMockModel({
     outcome: "task",
     project: null,
+    changes: null,
     task: {
       kind: "question",
       title: "Choose a data source",
@@ -165,6 +196,7 @@ test("streams structured output deltas while retaining the validated final proje
         mediaType: null,
       }],
     },
+    changes: null,
     task: null,
   }));
   const deltas: string[] = [];
@@ -187,4 +219,70 @@ test("streams structured output deltas while retaining the validated final proje
   if (output.kind !== "project") throw new Error("Expected project output");
   assert.equal(output.title, "Streaming dashboard");
   assert.equal(output.files[0]?.path, "src/index.ts");
+});
+
+test("returns validated immutable changes for an existing source version", async () => {
+  const generator = new AiProjectGenerator<"farm">(createMockModel({
+    outcome: "changes",
+    project: null,
+    changes: {
+      title: "Refined dashboard",
+      summary: "Updated the entrypoint and documentation.",
+      changes: [
+        {
+          type: "write",
+          path: "./src/index.ts",
+          content: "export const version = 2;\n",
+          mediaType: "text/javascript",
+          from: null,
+          to: null,
+        },
+        {
+          type: "move",
+          path: null,
+          content: null,
+          mediaType: null,
+          from: "README.md",
+          to: "docs/README.md",
+        },
+      ],
+    },
+    task: null,
+  }));
+
+  const output = await generator.generate({
+    framework: "farm",
+    prompt: "Refine the dashboard",
+    messages: [],
+    previousFiles: [
+      {
+        path: "README.md",
+        content: "# Dashboard\n",
+        mediaType: "text/markdown",
+        size: 12,
+        checksum: "readme",
+      },
+      {
+        path: "src/index.ts",
+        content: "export const version = 1;\n",
+        mediaType: "text/javascript",
+        size: 26,
+        checksum: "source",
+      },
+    ],
+    skills: [],
+    tasks: [],
+  });
+
+  assert.equal(output.kind, "changes");
+  if (output.kind !== "changes") throw new Error("Expected changes output");
+  assert.deepEqual(output.changes, [
+    {
+      type: "write",
+      path: "src/index.ts",
+      content: "export const version = 2;\n",
+      mediaType: "text/javascript",
+    },
+    { type: "move", from: "README.md", to: "docs/README.md" },
+  ]);
 });

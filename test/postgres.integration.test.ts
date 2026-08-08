@@ -153,6 +153,11 @@ test("persists a durable generation, iteration, events, and download in Postgres
     assert.equal(editedVersion.number, 2);
     assert.equal((await importedVersion.files()).some((file) => file.path === "package.json"), true);
     assert.equal((await editedVersion.files()).some((file) => file.path === "fixtures/package.json"), true);
+    assert.deepEqual(await importedVersion.changes(), []);
+    assert.deepEqual(await editedVersion.changes(), [
+      { type: "write", path: "src/main.ts", content: "export const imported = 2;\n" },
+      { type: "move", from: "package.json", to: "fixtures/package.json" },
+    ]);
 
     const forkedChat = await importedVersion.fork({ title: "Postgres fork" });
     const forkedVersion = await forkedChat.latestVersion();

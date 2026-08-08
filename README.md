@@ -104,6 +104,29 @@ const editedVersion = await importedVersion!.apply({
 
 `apply` creates a complete immutable child snapshot. It never changes the selected version in place.
 
+For agent loops, open an in-memory workspace over an immutable version and expose its portable tools to the model wrapper you own:
+
+```ts
+const workspace = await importedVersion!.workspace();
+
+await workspace.tools.readFile({ path: "src/index.ts" });
+await workspace.tools.search({ query: "legacy", prefix: "src" });
+await workspace.tools.writeFile({
+  path: "src/index.ts",
+  content: updatedSource,
+});
+await workspace.tools.moveFile({ from: "README.md", to: "docs/README.md" });
+await workspace.tools.deleteFile({ path: "src/legacy.ts" });
+
+const proposedChanges = workspace.changes();
+const nextVersion = await workspace.commit({
+  title: "Agent-refined project",
+  summary: "Reviewed and committed the staged source changes.",
+});
+```
+
+The functions are ordinary typed JavaScript functions, so they can be mapped into any model provider's tool format without importing provider concepts into Viby. Reads and writes operate only on the in-memory workspace. `commit` validates the complete change set and atomically creates one immutable child version; it never mutates the base version or performs external effects.
+
 Fork or restore any historical snapshot without a model request:
 
 ```ts
@@ -116,7 +139,7 @@ const restored = await importedVersion!.restore();
 
 `fork` creates a new chat whose first version points back to the selected source version. `restore` copies the selected files into a new latest version in the same chat.
 
-Every generation attempt is stored, including failures and token usage. Successful attempts create immutable versions with a parent relationship and complete source snapshot.
+Every generation attempt is stored, including failures and token usage. Initial generations produce a complete source tree. Iterations produce typed `write`, `delete`, and `move` operations, which Viby validates against the selected base and stores alongside the resulting complete immutable snapshot. `version.changes()` returns those ordered operations; imported, forked, and restored versions return an empty list.
 
 ## Run a version in an isolated sandbox
 
@@ -510,6 +533,7 @@ Included now:
 - immutable attempt history and usage
 - typed plan, question, and permission tasks
 - immutable versions and iteration
+- portable agent workspace tools and durable immutable change sets
 - raw source ZIP downloads
 - sandboxed execution, durable leases, and preview URLs when an adapter supports them
 - enforced provider-neutral sandbox command authorization

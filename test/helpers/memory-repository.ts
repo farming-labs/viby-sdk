@@ -9,6 +9,7 @@ import type {
   GenerationTaskData,
   MessageData,
   ResolvedSkill,
+  SourceChange,
   UserScope,
   VersionData,
   VersionFile,
@@ -55,6 +56,7 @@ export class MemoryRepository implements Repository {
   readonly versions = new Map<string, VersionData & ScopedRecord>();
   readonly messages: Array<MessageData & ScopedRecord> = [];
   readonly files = new Map<string, VersionFile[]>();
+  readonly changes = new Map<string, SourceChange[]>();
   readonly events: Array<GenerationEvent & ScopedRecord> = [];
   readonly tasks = new Map<string, GenerationTaskData & ScopedRecord>();
   readonly skills = new Map<string, ResolvedSkill[]>();
@@ -138,6 +140,7 @@ export class MemoryRepository implements Repository {
     };
     this.versions.set(version.id, version);
     this.files.set(version.id, [...input.files]);
+    this.changes.set(version.id, input.changes.map((change) => ({ ...change })));
     this.chats.set(chat.id, { ...chat, updatedAt: new Date() });
     return version;
   }
@@ -566,6 +569,9 @@ export class MemoryRepository implements Repository {
     const completedAt = new Date();
     this.versions.set(version.id, version);
     this.files.set(version.id, [...input.files]);
+    if (input.changes) {
+      this.changes.set(version.id, input.changes.map((change) => ({ ...change })));
+    }
     this.attempts.set(attempt.id, {
       ...attempt,
       status: "succeeded",
@@ -900,6 +906,11 @@ export class MemoryRepository implements Repository {
   async getVersionFiles(scope: UserScope, versionId: string): Promise<VersionFile[]> {
     const version = await this.getVersion(scope, versionId);
     return version ? [...(this.files.get(versionId) ?? [])] : [];
+  }
+
+  async getVersionChanges(scope: UserScope, versionId: string): Promise<SourceChange[]> {
+    const version = await this.getVersion(scope, versionId);
+    return version ? (this.changes.get(versionId) ?? []).map((change) => ({ ...change })) : [];
   }
 
   async createSandboxLease<Framework extends FrameworkId>(

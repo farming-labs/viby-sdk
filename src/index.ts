@@ -10,6 +10,13 @@ export {
 } from "./client.js";
 export { skillRead } from "./skills.js";
 export { DownloadArtifact } from "./download.js";
+export { AgentWorkspace } from "./agent-workspace.js";
+export type {
+  AgentWorkspaceCommitInput,
+  AgentWorkspaceFile,
+  AgentWorkspaceSearchResult,
+  AgentWorkspaceTools,
+} from "./agent-workspace.js";
 export {
   SANDBOX_CAPABILITY_NAMES,
   SandboxProcess,

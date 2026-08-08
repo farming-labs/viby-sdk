@@ -23,7 +23,7 @@ Status meanings:
 | Source state | Read, replace, download, and restore current chat files | Read, change, download, fork, and restore immutable versions |
 | Preview | Hosted VM preview with a short-lived access token | Optional sandbox-backed preview session; never guaranteed by core |
 | Deployment | Creates and deploys a Vercel project | Future deployment adapter; no vendor identifiers in core records |
-| Tools | Hosted MCP server connections and agent actions | Portable tool interface plus host-owned connections and credentials |
+| Tools | Hosted MCP server connections and agent actions | Shipped source workspace tools plus host-owned connections and credentials |
 | Identity | v0 account/team, privacy, and write permissions | Host passes `tenantId` and `userId`; authorization stays app-owned |
 
 v0 v2 removed public version resources. Viby intentionally keeps immutable versions because deterministic downloads, branching, restoration, auditability, and provider-independent source history are core SDK properties. Applications may still present the simpler v0-style model by treating `chat.latestVersion()` as current workspace state.
@@ -96,7 +96,7 @@ Thinking content must be represented as provider-safe summaries or opaque status
 | Branch source history | Duplicate Chat | `version.fork` | Shipped |
 | Binary files | base64-encoded chat files | source import supports validated UTF-8 projects; binary artifact policy is planned | Partial |
 | Locked files | retained v1 capability and import option | immutable file-policy metadata enforced during generation | Planned |
-| Incremental agent patches | file-edit message parts | proposed agent source changes persisted before snapshot materialization | Planned |
+| Incremental agent patches | file-edit message parts | `version.workspace` tools and generated source changes persisted with the materialized snapshot | Shipped |
 
 Downloads remain framework-native source derived from a persisted Viby version. Sandbox images, provider bootstrap files, and deployment output must not silently replace the raw source artifact.
 
@@ -127,14 +127,13 @@ Viby separates a portable tool call from the credentialed connection used to ful
 
 ## Prioritized parity backlog
 
-Capability discovery, the adapter conformance suite, background processes, readiness checks, durable sandbox leases, reconnect-by-ID, generation worker leases with heartbeats, and sandbox command policy enforcement are shipped.
+Capability discovery, the adapter conformance suite, background processes, readiness checks, durable sandbox leases, reconnect-by-ID, generation worker leases with heartbeats, sandbox command policy enforcement, and immutable agent workspace change sets are shipped.
 
 1. Permission decisions around agent-initiated sandbox actions.
-2. Agent workspace tools that emit immutable source changes instead of replacing a full tree.
-3. Typed message parts for file operations, commands, tools, status, errors, and usage.
-4. Optional sandbox-backed preview sessions and a host-proxy contract.
-5. Attachments, generation-scoped model/skill configuration, file locks, lookup, deletion, search, and outbound event sinks.
-6. Explicit Git and deployment adapters after the portable generation workflow is complete.
+2. Typed message parts for file operations, commands, tools, status, errors, and usage.
+3. Optional sandbox-backed preview sessions and a host-proxy contract.
+4. Attachments, generation-scoped model/skill configuration, file locks, lookup, deletion, search, and outbound event sinks.
+5. Explicit Git and deployment adapters after the portable generation workflow is complete.
 
 ## Persistence rules
 
@@ -143,7 +142,7 @@ Every portable parity feature follows these rules:
 1. Every record is constrained by both `tenantId` and `userId`.
 2. A logical generation and immutable attempt exist before model or tool work begins.
 3. Work claims, external actions, state transitions, failures, and cancellations are durably auditable.
-4. Successful source changes create immutable full snapshots with parent lineage.
+4. Successful source changes are stored in order and create immutable full snapshots with parent lineage.
 5. Exact resolved skills are content-addressed and linked to the generation that used them.
 6. Model, sandbox, Git, deployment, and tool credentials are never persisted in the Viby schema.
 7. Provider-specific capabilities are discovered explicitly and never inferred from a provider name.

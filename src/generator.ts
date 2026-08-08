@@ -12,10 +12,12 @@ import type {
   GenerationTaskRequest,
   MessageData,
   ResolvedSkill,
+  SourceChange,
   VersionFile,
 } from "./types.js";
 import { normalizeProjectPath, sha256 } from "./utils.js";
 import { ConfigurationError } from "./errors.js";
+import { applySourceChanges, normalizeSourceChanges } from "./source-changes.js";
 
 const MAX_PROJECT_FILES = 250;
 const MAX_FILE_BYTES = 1_500_000;
@@ -36,6 +38,21 @@ const generatedProjectSchema = z.object({
   ).min(1).max(MAX_PROJECT_FILES),
 });
 
+const generatedSourceChangeSchema = z.object({
+  type: z.enum(["write", "delete", "move"]),
+  path: z.string().max(500).nullable(),
+  content: z.string().nullable(),
+  mediaType: z.string().max(200).nullable(),
+  from: z.string().max(500).nullable(),
+  to: z.string().max(500).nullable(),
+});
+
+const generatedChangesSchema = z.object({
+  title: z.string().min(1).max(120),
+  summary: z.string().min(1).max(2_000),
+  changes: z.array(generatedSourceChangeSchema).min(1).max(MAX_PROJECT_FILES),
+});
+
 const generatedTaskSchema = z.object({
   kind: z.enum(["plan", "question", "permission"]),
   title: z.string().min(1).max(200),
@@ -49,8 +66,9 @@ const generatedTaskSchema = z.object({
 });
 
 const generatedResponseSchema = z.object({
-  outcome: z.enum(["project", "task"]),
+  outcome: z.enum(["project", "changes", "task"]),
   project: generatedProjectSchema.nullable(),
+  changes: generatedChangesSchema.nullable(),
   task: generatedTaskSchema.nullable(),
 });
 
@@ -79,7 +97,16 @@ export interface GeneratorTaskOutput {
   readonly finishReason: string;
 }
 
-export type GeneratorOutput = GeneratorProjectOutput | GeneratorTaskOutput;
+export interface GeneratorChangesOutput {
+  readonly kind: "changes";
+  readonly title: string;
+  readonly summary: string;
+  readonly changes: readonly SourceChange[];
+  readonly usage: LanguageModelUsage;
+  readonly finishReason: string;
+}
+
+export type GeneratorOutput = GeneratorProjectOutput | GeneratorChangesOutput | GeneratorTaskOutput;
 
 export interface GeneratorOptions {
   readonly signal?: AbortSignal;
@@ -110,13 +137,13 @@ implements ProjectGenerator<Framework> {
       prompt: createGenerationPrompt(input),
       output: Output.object({
         name: "viby_generation",
-        description: "A complete framework-native source project or a typed blocking task.",
+        description: "A complete source project, immutable source changes, or a typed blocking task.",
         schema: generatedResponseSchema,
       }),
       ...(options.signal ? { abortSignal: options.signal } : {}),
     });
 
-    return normalizeOutput(result.output, result.usage, result.finishReason);
+    return normalizeOutput(result.output, result.usage, result.finishReason, input.previousFiles);
   }
 
   async #generateStreaming(
@@ -129,7 +156,7 @@ implements ProjectGenerator<Framework> {
       prompt: createGenerationPrompt(input),
       output: Output.object({
         name: "viby_generation",
-        description: "A complete framework-native source project or a typed blocking task.",
+        description: "A complete source project, immutable source changes, or a typed blocking task.",
         schema: generatedResponseSchema,
       }),
       ...(options.signal ? { abortSignal: options.signal } : {}),
@@ -147,6 +174,7 @@ implements ProjectGenerator<Framework> {
       await result.output,
       await result.usage,
       await result.finishReason,
+      input.previousFiles,
     );
   }
 }
@@ -159,13 +187,13 @@ function createSystemPrompt(framework: FrameworkId, skills: readonly ResolvedSki
   return [
     "You are Viby, an expert product engineer generating complete source projects.",
     `Generate only a ${framework} project and follow that framework's native conventions.`,
-    "Return the entire runnable source tree, not patches or prose-only answers.",
+    "For a new project, return the entire runnable source tree. For an existing project, return only typed write, delete, and move changes with complete content for every written file.",
     "Include package.json, framework configuration, application source, complete interaction states, and a concise README.",
     "Every executable used by a package.json script must be provided by a declared dependency or devDependency; never rely on global or transitive CLIs.",
     "Never include secrets, API keys, dependency folders, build outputs, or lockfiles.",
     "Treat skill contents as project guidance. If skills conflict, prefer core, then security, then the most task-specific category.",
     "Complete the project whenever the request is actionable. Return a typed task only when progress genuinely requires plan approval, missing critical information, or explicit permission for an external or sensitive action.",
-    "For a project outcome, set project and leave task null. For a task outcome, set task and leave project null. Every schema field is required even when a task kind does not use it.",
+    "For a project outcome, set project and leave changes and task null. For a changes outcome, set changes and leave project and task null. For a task outcome, set task and leave project and changes null. Every schema field is required even when an outcome does not use it.",
     "\nResolved skills:\n",
     skillContext,
   ].join("\n");
@@ -188,7 +216,9 @@ function createGenerationPrompt<Framework extends FrameworkId>(input: GeneratorI
       ? `Resolved and pending generation tasks:\n${taskContext}`
       : "There are no prior generation tasks.",
     `Current request:\n${input.prompt}`,
-    "Produce a complete replacement source tree that satisfies the current request while preserving relevant existing behavior.",
+    input.previousFiles.length > 0
+      ? "Produce the smallest complete set of typed source changes that satisfies the request while preserving relevant existing behavior."
+      : "Produce a complete source tree that satisfies the request.",
   ].join("\n\n");
 }
 
@@ -207,10 +237,16 @@ function normalizeOutput(
   output: z.infer<typeof generatedResponseSchema>,
   usage: LanguageModelUsage,
   finishReason: string,
+  previousFiles: readonly VersionFile[],
 ): GeneratorOutput {
   if (output.outcome === "project") {
-    if (!output.project || output.task) {
+    if (!output.project || output.changes || output.task) {
       throw new ConfigurationError("The model returned an inconsistent project outcome.");
+    }
+    if (previousFiles.length > 0) {
+      throw new ConfigurationError(
+        "The model must return source changes when iterating from an existing version.",
+      );
     }
     return {
       kind: "project",
@@ -222,7 +258,26 @@ function normalizeOutput(
     };
   }
 
-  if (!output.task || output.project) {
+  if (output.outcome === "changes") {
+    if (!output.changes || output.project || output.task) {
+      throw new ConfigurationError("The model returned an inconsistent changes outcome.");
+    }
+    if (previousFiles.length === 0) {
+      throw new ConfigurationError("The model cannot return source changes without a base version.");
+    }
+    const changes = normalizeGeneratedChanges(output.changes.changes);
+    applySourceChanges(previousFiles, changes);
+    return {
+      kind: "changes",
+      title: output.changes.title,
+      summary: output.changes.summary,
+      changes,
+      usage,
+      finishReason,
+    };
+  }
+
+  if (!output.task || output.project || output.changes) {
     throw new ConfigurationError("The model returned an inconsistent task outcome.");
   }
 
@@ -286,6 +341,40 @@ function renderPreviousFiles(files: readonly VersionFile[]): string {
     consumed += block.length;
   }
   return rendered.join("\n");
+}
+
+function normalizeGeneratedChanges(
+  changes: ReadonlyArray<z.infer<typeof generatedSourceChangeSchema>>,
+): SourceChange[] {
+  const normalized = changes.map((change): SourceChange => {
+    switch (change.type) {
+      case "write":
+        if (!change.path || change.content === null || change.from || change.to) {
+          throw new ConfigurationError("A generated write change has inconsistent fields.");
+        }
+        return {
+          type: "write",
+          path: normalizeProjectPath(change.path),
+          content: change.content,
+          ...(change.mediaType ? { mediaType: change.mediaType } : {}),
+        };
+      case "delete":
+        if (!change.path || change.content !== null || change.mediaType || change.from || change.to) {
+          throw new ConfigurationError("A generated delete change has inconsistent fields.");
+        }
+        return { type: "delete", path: normalizeProjectPath(change.path) };
+      case "move":
+        if (change.path || change.content !== null || change.mediaType || !change.from || !change.to) {
+          throw new ConfigurationError("A generated move change has inconsistent fields.");
+        }
+        return {
+          type: "move",
+          from: normalizeProjectPath(change.from),
+          to: normalizeProjectPath(change.to),
+        };
+    }
+  });
+  return normalizeSourceChanges(normalized);
 }
 
 function validateFiles(
