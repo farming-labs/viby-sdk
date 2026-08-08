@@ -51,7 +51,7 @@ import type {
   ProjectGenerator,
 } from "./generator.js";
 import type { GenerationWorkerLease, Repository } from "./repository.js";
-import { AiProjectGenerator } from "./generator.js";
+import { AgentProjectGenerator, normalizeAgentRunnerConfig } from "./agent-runner.js";
 import { PostgresRepository } from "./postgres-repository.js";
 import { SkillResolver } from "./skills.js";
 import {
@@ -151,7 +151,7 @@ export function createViby<const Framework extends FrameworkId>(
 
   return createVibyWithDependencies(config, {
     repository: new PostgresRepository(databaseUrl),
-    generator: new AiProjectGenerator(config.model),
+    generator: new AgentProjectGenerator(config.model, config.agent),
     skillResolver: new SkillResolver(config.skills),
   });
 }
@@ -203,6 +203,9 @@ class VibyClient<Framework extends FrameworkId> implements Viby<Framework> {
       automatic: normalizeGenerationExecution(config.generation) === "embedded",
       modelProvider: this.#modelProvider,
       modelId: this.#modelId,
+      sandbox: this.#sandbox,
+      sandboxes: this.#sandboxes,
+      agent: normalizeAgentRunnerConfig(config.agent),
     });
   }
 
@@ -984,6 +987,9 @@ interface RunnerDependencies<Framework extends FrameworkId> {
   readonly automatic: boolean;
   readonly modelProvider: string;
   readonly modelId: string;
+  readonly sandbox: SandboxAdapter | undefined;
+  readonly sandboxes: SandboxRegistry;
+  readonly agent: ReturnType<typeof normalizeAgentRunnerConfig>;
 }
 
 class GenerationRunner<Framework extends FrameworkId> {
@@ -1100,6 +1106,7 @@ class GenerationRunner<Framework extends FrameworkId> {
     cancelOnAbort: boolean,
   ): Promise<void> {
     const { scope, generationId, attemptId, leaseToken } = lease;
+    let sandbox: SandboxSession | undefined;
     const trace = new DurableAgentTrace(async (type, data) => {
       signal.throwIfAborted();
       await this.#dependencies.repository.appendGenerationEvent(scope, {
@@ -1146,6 +1153,23 @@ class GenerationRunner<Framework extends FrameworkId> {
         this.#dependencies.repository.listGenerationTasks(scope, generationId),
       ]);
       signal.throwIfAborted();
+      if (generation.baseVersionId && this.#dependencies.sandbox) {
+        sandbox = await this.#dependencies.sandboxes.open(
+          this.#dependencies.sandbox,
+          scope,
+          {
+            id: generation.baseVersionId,
+            chatId: generation.chatId,
+            framework: chat.framework,
+          },
+          previousFiles,
+          {
+            timeoutMs: this.#dependencies.agent.maxDurationMs,
+            ports: this.#dependencies.agent.sandboxPorts,
+            signal,
+          },
+        );
+      }
 
       const output = await this.#dependencies.generator.generate(
         {
@@ -1155,6 +1179,7 @@ class GenerationRunner<Framework extends FrameworkId> {
           previousFiles,
           skills,
           tasks,
+          ...(sandbox ? { sandbox } : {}),
         },
         {
           signal,
@@ -1218,8 +1243,7 @@ class GenerationRunner<Framework extends FrameworkId> {
         changes,
         assistantMessage: output.summary,
         assistantParts: [
-          ...trace.completedParts(),
-          ...fileEditMessageParts(files, changes),
+          ...mergeTraceAndFileEditParts(trace.completedParts(), files, changes),
           { type: "text", data: { text: output.summary } },
           usageMessagePart(inputTokens, outputTokens, totalTokens),
         ],
@@ -1251,6 +1275,8 @@ class GenerationRunner<Framework extends FrameworkId> {
         leaseToken,
         errorMessage(error),
       ).catch(() => undefined);
+    } finally {
+      await sandbox?.stop().catch(() => undefined);
     }
   }
 }
@@ -1439,6 +1465,26 @@ class DurableAgentToolCalls implements AgentToolCallWriter {
       },
     };
   }
+}
+
+function mergeTraceAndFileEditParts(
+  traceParts: readonly MessagePartInput[],
+  files: readonly VersionFile[],
+  changes: readonly SourceChange[] | null,
+): MessagePartInput[] {
+  const tracedEdits = new Set(traceParts.flatMap((part) => (
+    part.type === "file-edit" ? [fileEditPartKey(part)] : []
+  )));
+  return [
+    ...traceParts,
+    ...fileEditMessageParts(files, changes).filter((part) => !tracedEdits.has(fileEditPartKey(part))),
+  ];
+}
+
+function fileEditPartKey(part: MessagePartInput<"file-edit">): string {
+  return part.data.operation === "move"
+    ? `move:${part.data.from}:${part.data.to}`
+    : `${part.data.operation}:${part.data.path}`;
 }
 
 function fileEditMessageParts(

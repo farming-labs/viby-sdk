@@ -2,8 +2,10 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { test } from "node:test";
 import type { LanguageModel, LanguageModelUsage } from "ai";
+import { MockLanguageModelV4 } from "ai/test";
 import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
 import { createVibyWithDependencies } from "../src/client.js";
+import { AgentProjectGenerator } from "../src/agent-runner.js";
 import type { GeneratorInput, GeneratorOutput, ProjectGenerator } from "../src/generator.js";
 import { migrateDatabase } from "../src/migrations.js";
 import { PostgresRepository } from "../src/postgres-repository.js";
@@ -292,6 +294,82 @@ test("persists a durable generation, iteration, events, and download in Postgres
       assert.ok(attempt?.leaseExpiresAt);
     } finally {
       await workerViby.close();
+    }
+
+    const agentModel = new MockLanguageModelV4({
+      doGenerate: [
+        {
+          content: [{
+            type: "tool-call",
+            toolCallId: "postgres-agent-write-1",
+            toolName: "workspace_write_file",
+            input: JSON.stringify({
+              path: "src/agent.ts",
+              content: "export const agent = true;\n",
+              mediaType: "text/javascript",
+            }),
+          }],
+          finishReason: { unified: "tool-calls", raw: undefined },
+          usage: {
+            inputTokens: { total: 5, noCache: 5, cacheRead: undefined, cacheWrite: undefined },
+            outputTokens: { total: 5, text: 5, reasoning: undefined },
+          },
+          warnings: [],
+        },
+        {
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              outcome: "complete",
+              title: "Postgres agent project",
+              summary: "Created through the bounded workspace agent.",
+              task: null,
+            }),
+          }],
+          finishReason: { unified: "stop", raw: undefined },
+          usage: {
+            inputTokens: { total: 5, noCache: 5, cacheRead: undefined, cacheWrite: undefined },
+            outputTokens: { total: 5, text: 5, reasoning: undefined },
+          },
+          warnings: [],
+        },
+      ],
+    });
+    const agentRepository = new PostgresRepository(databaseUrl);
+    const agentViby = createVibyWithDependencies(
+      {
+        framework: "farm",
+        model: agentModel,
+        skills: {},
+        agent: { maxSteps: 4, maxDurationMs: 10_000, maxTokens: 10_000 },
+      },
+      {
+        repository: agentRepository,
+        generator: new AgentProjectGenerator(agentModel, {
+          maxSteps: 4,
+          maxDurationMs: 10_000,
+          maxTokens: 10_000,
+        }),
+        skillResolver: new SkillResolver({}),
+      },
+    );
+    try {
+      const agentScope = {
+        tenantId: `agent-${randomUUID()}`,
+        userId: `agent-${randomUUID()}`,
+      };
+      const agentChat = await agentViby.forUser(agentScope).chats.create();
+      const agentGeneration = await agentChat.start({ prompt: "Create through workspace tools" });
+      const agentOutcome = await agentGeneration.wait({ pollIntervalMs: 10 });
+      assert.equal(agentOutcome.status, "succeeded");
+      if (agentOutcome.status !== "succeeded") throw new Error("Expected agent success");
+      assert.equal((await agentOutcome.version.files())[0]?.path, "src/agent.ts");
+      assert.equal((await agentGeneration.toolCalls())[0]?.name, "workspace.write-file");
+      assert.ok((await agentChat.listMessages()).items
+        .find((message) => message.role === "assistant")?.parts
+        .some((part) => part.type === "tool-call"));
+    } finally {
+      await agentViby.close();
     }
   } finally {
     await viby.close();

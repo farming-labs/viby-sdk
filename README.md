@@ -33,6 +33,14 @@ import { openai } from "@ai-sdk/openai";
 export const viby = createViby({
   framework: "farm",
   model: openai("your-model-id"),
+  agent: {
+    maxSteps: 20,
+    maxDurationMs: 300_000,
+    maxTokens: 200_000,
+    maxCommands: 20,
+    commandTimeoutMs: 60_000,
+    sandboxPorts: [3000],
+  },
   skills: {
     core: [skillRead("./skills/company")],
     design: [skillRead("./skills/design-engineer")],
@@ -42,7 +50,7 @@ export const viby = createViby({
 });
 ```
 
-The model provider reads its own credential from your environment. Viby does not receive or store it.
+The model provider reads its own credential from your environment. Viby does not receive or store it. The default generator is a bounded AI SDK tool-loop agent: it reads and changes source through `AgentWorkspace`, emits durable tool and trace records, and returns either an immutable project result or a typed blocking task.
 
 Remote skill strings use the stable skills.sh `owner/repository/slug` form. Local skills can point at a directory containing `SKILL.md` or at the file itself. Remote skills are resolved through the authenticated skills.sh API when Vercel OIDC is available, with public GitHub repositories as the portable fallback. Set `GITHUB_TOKEN` only when you need higher GitHub API limits.
 
@@ -104,7 +112,7 @@ const editedVersion = await importedVersion!.apply({
 
 `apply` creates a complete immutable child snapshot. It never changes the selected version in place.
 
-For agent loops, open an in-memory workspace over an immutable version and expose its portable tools to the model wrapper you own:
+The default agent uses the same workspace primitives automatically. Advanced consumers can also open an in-memory workspace over an immutable version and expose its portable tools to a custom model runtime:
 
 ```ts
 const workspace = await importedVersion!.workspace();
@@ -126,6 +134,8 @@ const nextVersion = await workspace.commit({
 ```
 
 The functions are ordinary typed JavaScript functions, so they can be mapped into any model provider's tool format without importing provider concepts into Viby. Reads and writes operate only on the in-memory workspace. `commit` validates the complete change set and atomically creates one immutable child version; it never mutates the base version or performs external effects.
+
+The built-in agent enforces total step, wall-clock, observed-token, sandbox-command, per-command timeout, and command-output limits. Its workspace tools are always portable. During an iteration, a configured sandbox adapter may materialize the immutable base version; read, command, streaming-output, and port URL tools are exposed only when that session declares the matching capability. Viby checks capabilities, not provider names. New projects have no persisted base version yet, so they start with workspace tools and no sandbox session.
 
 Fork or restore any historical snapshot without a model request:
 
@@ -577,6 +587,7 @@ Included now:
 - typed plan, question, and permission tasks
 - immutable versions and iteration
 - portable agent workspace tools and durable immutable change sets
+- a bounded default workspace agent with capability-gated sandbox tools
 - raw source ZIP downloads
 - sandboxed execution, durable leases, and preview URLs when an adapter supports them
 - enforced provider-neutral sandbox command authorization
