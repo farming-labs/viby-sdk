@@ -1,141 +1,167 @@
-# v0 core API capability reference
+# v0 API v2 capability audit
 
-This document records the product-generation surface exposed by `v0-sdk@0.16.7` and the official v0 Platform API documentation as reviewed on 2026-08-05. It exists to keep Viby feature planning complete without copying v0's hosted-product assumptions into a framework-agnostic SDK.
+This document maps the official v0 Platform API v2 beta surface to Viby as reviewed on 2026-08-08. It is a capability audit, not a wire-compatibility promise and not an instruction to copy v0's hosted architecture.
 
-This is a capability map, not a drop-in compatibility layer. Method names under **v0** describe the audited source. Method names under **Viby** describe either the current v1 API or the intended Viby-native shape.
+Viby remains framework-, model-, runtime-, storage-, and provider-agnostic. A capability belongs in core only when it is portable across those boundaries. Hosted URLs, credentials, deployment vendors, OAuth connections, and account policy remain application-owned or adapter-owned.
 
 Status meanings:
 
-- **Shipped**: implemented and covered by the current v1 contract.
-- **Partial**: the durable core exists, but options such as cursor pagination or streaming are not shipped.
-- **Planned**: part of the core parity target, but deliberately absent from the current package.
-- **App-owned**: belongs to the product embedding Viby rather than this SDK.
-- **Excluded**: a third-party or hosted-service feature outside this phase.
+- **Shipped**: implemented and covered by the current Viby contract.
+- **Partial**: the durable primitive exists, but the complete product-facing capability does not.
+- **Planned**: portable and appropriate for Viby core, but not implemented yet.
+- **Adapter**: belongs behind an explicit provider-neutral adapter.
+- **App-owned**: belongs to the product embedding Viby.
+- **Excluded**: tied to v0's hosted account or a specific third party.
 
-## Complete audited method inventory
+## Architectural comparison
 
-This is the complete top-level surface exported by `createClient()` in `v0-sdk@0.16.7`, classified before the more detailed capability mapping below.
-
-| Namespace | Audited methods | Viby disposition |
+| Concern | v0 API v2 | Viby decision |
 | --- | --- | --- |
-| `chats` | `create`, `find`, `init`, `delete`, `getById`, `update`, `favorite`, `fork`, `findMessages`, `sendMessage`, `getMessage`, `findVersions`, `getVersion`, `updateVersion`, `downloadVersion`, `deleteVersionFiles`, `resume`, `stop`, `resolveTask`, `restore` | core parity target; shipped/partial/planned status is detailed below |
-| `projects` | `getByChatId`, `find`, `create`, `getById`, `update`, `delete`, `assign` | app-owned grouping; the current v0 docs deprecate this resource |
-| `projects` secrets | `findEnvVars`, `createEnvVars`, `updateEnvVars`, `deleteEnvVars`, `getEnvVar` | excluded secret/provider layer |
-| `deployments` | `find`, `create`, `getById`, `delete`, `findLogs`, `findErrors` | excluded hosted deployment layer |
-| `hooks` | `find`, `create`, `getById`, `update`, `delete` | excluded outbound third-party delivery layer |
-| `integrations.vercel.projects` | `find`, `create` | excluded provider connection layer |
-| `mcpServers` | `find`, `create`, `getById`, `update`, `delete`, `createOAuthAuthorizationUrl` | excluded external tool/OAuth layer |
-| `rateLimits` | `find` | hosted-account concern; the embedding app owns rate limits |
-| `user` | `get`, `getBilling`, `getPlan`, `getScopes` | hosted-account concern; the embedding app owns identity and billing |
-| `reports` | `getUsage`, `getAIUsage`, `getUserActivity` | app-owned reporting; Viby persists the underlying per-generation usage |
-| package utility | `parseStreamingResponse` | no decoder required; Viby returns typed durable events from `generation.stream` |
+| Primary state | A VM-backed chat is the current mutable workspace | A chat owns immutable, parent-linked source versions; keep this stronger history model |
+| Conversation history | Messages contain ordered agent-trace parts | Add portable typed message parts while retaining durable generation events |
+| Generation modes | Separate sync, async, and SSE endpoints | Keep `generate`, `start`/`wait`, and resumable `stream` methods over one durable generation |
+| Source state | Read, replace, download, and restore current chat files | Read, change, download, fork, and restore immutable versions |
+| Preview | Hosted VM preview with a short-lived access token | Optional sandbox-backed preview session; never guaranteed by core |
+| Deployment | Creates and deploys a Vercel project | Future deployment adapter; no vendor identifiers in core records |
+| Tools | Hosted MCP server connections and agent actions | Portable tool interface plus host-owned connections and credentials |
+| Identity | v0 account/team, privacy, and write permissions | Host passes `tenantId` and `userId`; authorization stays app-owned |
 
-Within chat requests, the audited inputs also include privacy, metadata, attachments, per-request system prompts, model/thinking/image options, response mode, design-system ID, remote/memory/project skills, integration/tool IDs, and typed task resolutions. Viby keeps portable generation inputs (prompt, model, skills, attachments, metadata, response mode, and task state) in the parity target and excludes provider connection identifiers.
+v0 v2 removed public version resources. Viby intentionally keeps immutable versions because deterministic downloads, branching, restoration, auditability, and provider-independent source history are core SDK properties. Applications may still present the simpler v0-style model by treating `chat.latestVersion()` as current workspace state.
+
+## Audited v2 resource inventory
+
+The official v2 documentation organizes the API around these resources and endpoint families:
+
+| Resource | Audited surface | Viby disposition |
+| --- | --- | --- |
+| Chats | create sync/async/streaming; create from files, ZIP, or repository; list, get, update, duplicate, and delete; resume stream | portable chat and generation behavior belongs in core; privacy and hosted URLs are app-owned |
+| Chat files | get, update, download, and restore from a message | immutable version files, changes, downloads, and restore are core |
+| Preview and deployment | get preview, create Vercel project, deploy chat | preview belongs behind sandbox capability checks; project creation and deployment require future adapters |
+| Messages | list, get, send sync/async/streaming, resolve task sync/async/streaming, restore message | portable message history, parts, generation modes, tasks, and restore belong in core |
+| MCP servers | list, create, get, update, delete, and OAuth authorization | host-owned connection registry; portable tools may be passed into Viby without Viby owning OAuth |
+| Webhooks | list, create, get, update, and delete | optional outbound-event adapter; not required for in-process SDK use |
 
 ## Chats and generation
 
-| Capability | v0 surface | Viby-native surface | Status | Durable state |
-| --- | --- | --- | --- | --- |
-| Create a chat and immediately generate | `chats.create` | `chats.create` then `chat.generate` | Shipped | chat, two messages, generation, version, files, skill snapshots |
-| Create an empty chat | `chats.init` with source | `chats.create` | Shipped | chat |
-| Initialize from local source files | `chats.init({ type: "files" })` | `chats.import({ source: { type: "files", files } })` | Shipped | chat plus immutable imported version and files |
-| Initialize from a ZIP | `chats.init({ type: "zip" })` | `chats.import({ source: { type: "zip", bytes } })` | Shipped | chat plus immutable imported version and files |
-| Initialize from a repository, registry, or hosted template | `chats.init` variants | provider adapter | Excluded | none in core |
-| List chats and filter them | `chats.find` | `chats.list({ limit, after })` | Shipped | reads chats with an opaque stable cursor |
-| Get one chat | `chats.getById` | `chats.get(id)` | Shipped | reads chat |
-| Rename and attach arbitrary metadata | `chats.update` | `chat.update` | Shipped | chat name and validated JSON metadata |
-| Favorite a chat | deprecated `chats.favorite`; v0 recommends metadata | `chat.update({ metadata: { favorite } })` | Shipped | chat metadata |
-| Delete a chat | `chats.delete` | proposed `chat.delete` | Planned | soft-delete marker; later purge policy |
-| Fork a chat from a version | `chats.fork` | `version.fork` | Shipped | new chat and copied immutable version lineage |
-| Continue from the latest version | `chats.sendMessage` | `chat.generate` | Shipped | message, generation, child version, files |
-| Continue from any historical version | `chats.sendMessage`/fork workflow | `version.iterate` | Shipped | message, generation, child version, files |
-| Per-request system instructions | `system` | categorized configured skills | Partial | resolved skill snapshot per generation |
-| Per-request remote, memory, and project skills | `skills`, `attachedSkillIds` | categorized local and skills.sh-compatible skills | Partial | resolved skill snapshot and generation link |
-| Text and URL attachments | `attachments` | proposed `attachments` on `generate` | Planned | attachment metadata and a content snapshot when allowed |
-| Model and reasoning options | `modelConfiguration` | AI SDK model configured on `createViby` | Partial | provider, model ID, usage, finish state |
-| Sync generation | `responseMode: "sync"` | awaited `chat.generate` | Shipped | complete durable attempt |
-| Async generation | `responseMode: "async"` | `chat.start` and `generation.wait` | Shipped | queued/running/final logical state plus immutable attempts |
-| Streaming generation events | `responseMode: "experimental_stream"` | `generation.stream({ after })` | Shipped | canonical state, ordered durable events, and resumable cursor |
-| Stop a running generation | `chats.stop` | `generation.cancel` | Shipped | cancellation state, event, timestamp, and local model abort |
-| Resume an interrupted generation | `chats.resume` | `generation.resume` | Shipped | new attempt linked by generation ID; prior active attempt becomes interrupted |
-| Retry a failed generation | implicit new message/retry | `generation.retry` | Shipped | new immutable attempt on the same logical generation |
-| Resolve plans, questions, or permission tasks | `chats.resolveTask` | typed `generation.resolve` | Shipped | discriminated task and resolution records plus continuation attempt |
-
-Viby does not copy v0's hosted privacy values, `webUrl`, `apiUrl`, `demoUrl`, or screenshot URLs. Authentication, authorization, sharing routes, and product URLs belong to the application. Preview URLs only become meaningful when a future execution or deployment adapter is configured.
-
-## Messages
-
-| Capability | v0 surface | Viby-native surface | Status | Durable state |
-| --- | --- | --- | --- | --- |
-| List chat messages | `chats.findMessages` | `chat.listMessages` | Partial | reads messages |
-| Cursor pagination | `limit`, `cursor` | `chat.listMessages({ limit, after })` | Shipped | no new state |
-| Get one message | `chats.getMessage` | proposed `chat.getMessage` | Planned | reads message |
-| User and assistant roles | message resource | `MessageData.role` | Shipped | role and content |
-| Parent message/thread linkage | `parentId` | version parent lineage | Partial | version parent ID; message parent ID is planned |
-| Finish reason and rich generation state | `finishReason`, experimental task content | generation attempts, events, and typed tasks | Shipped | attempt finish reason, usage, ordered events, and task records |
-| Attachment metadata | message attachments | proposed attachment resource | Planned | scoped attachment rows |
-
-## Versions, files, and artifacts
-
-| Capability | v0 surface | Viby-native surface | Status | Durable state |
-| --- | --- | --- | --- | --- |
-| List versions | `chats.findVersions` | `chat.listVersions` | Shipped | reads versions |
-| Get latest version | chat `latestVersion` | `chat.latestVersion` | Shipped | reads version |
-| Get a version by ID | `chats.getVersion` | `chat.getVersion` | Shipped | reads version |
-| Read complete source files | `getVersion({ includeDefaultFiles })` | `version.files` | Shipped | reads version file snapshot |
-| Edit or add files | `chats.updateVersion` | `version.apply({ changes })` with `write` | Shipped | a new immutable child version, never in-place mutation |
-| Delete files | `chats.deleteVersionFiles` | `version.apply({ changes })` with `delete` | Shipped | a new immutable child version |
-| Restore a version | `chats.restore` | `version.restore` | Shipped | a new immutable child version pointing at the restored snapshot |
-| Download ZIP | `chats.downloadVersion({ format: "zip" })` | `version.download` | Shipped | artifact is generated from persisted files |
-| Download tarball | `format: "tarball"` | proposed artifact format option | Planned | artifact is generated from persisted files |
-| Locked/default files | file `locked`; `includeDefaultFiles` | framework skill and generated source | Planned | lock policy on version files |
-| Version status | pending/completed/failed | generation status plus successful immutable version | Shipped | generation and version records |
-| Preview, screenshots, and demo URL | hosted version fields | future execution/deployment adapter | Excluded | not produced by core SDK |
-
-## Projects, discovery, and account features
-
-v0 exposes project grouping and search, but its current documentation marks v0 Projects as deprecated in favor of chat metadata or deployment-platform projects. Viby therefore does not copy that hosted project resource into v1.
-
-| Capability | v0 surface | Viby decision | Status |
+| Capability | v0 v2 | Viby-native surface | Status |
 | --- | --- | --- | --- |
-| Group chats into projects | `projects.create/find/get/update/assign/delete` | use app-owned workspaces plus planned chat metadata; reconsider a neutral collection only if real products need it | App-owned |
-| Search chats/projects | account search surface | proposed tenant-scoped chat/message metadata search | Planned |
-| User/team account and preferences | account surface | pass `{ tenantId, userId }` from the host application's auth | App-owned |
-| Usage and billing | account usage surface | persist per-generation tokens; billing policy belongs to the app | App-owned |
+| Create and generate | Create Chat | `chats.create` then `chat.generate` | Shipped |
+| Create in background | Create Chat Async | `chat.start` and `generation.wait` | Shipped |
+| Create with live updates | Create Chat Streaming | `generation.stream({ after })` | Shipped |
+| Create from files | Create Chat From Files | `chats.import({ source: { type: "files" } })` | Shipped |
+| Create from ZIP | Create Chat From ZIP | `chats.import({ source: { type: "zip" } })` | Shipped |
+| Create from repository | Create Chat From Repository | future source-import adapter | Adapter |
+| List and filter chats | List Chats, including metadata filters | `chats.list({ limit, after })` | Partial |
+| Get one chat | Get Chat | `chats.get(id)` | Shipped |
+| Update title and metadata | Update Chat | `chat.update` | Shipped |
+| Privacy and write permission | Chat privacy fields | host authorization and metadata | App-owned |
+| Duplicate current workspace | Duplicate Chat | `version.fork` | Shipped |
+| Delete a chat | Delete Chat | proposed `chat.delete` with retention policy | Planned |
+| Stop work | stop/cancel active agent work | `generation.cancel` | Shipped |
+| Resume interrupted work | Resume Chat Stream and async task continuation | event cursor plus `generation.resume` | Shipped |
+| Per-request system prompt | `systemPrompt` | generation-scoped instruction/skill override | Planned |
+| Per-request model options | `modelConfiguration` | generation-scoped AI SDK settings | Planned |
+| Per-request skills | remote, memory, and project skills | configured categorized skills and stored snapshots | Partial |
+| Attachments and image generation | attachment URLs and image option | portable attachment snapshots and multimodal input | Planned |
 
-## Explicitly excluded third-party and hosted surfaces
+Viby does not copy v0's privacy enum, author identity, account URLs, or hosted write-permission field. The embedding application already owns those decisions.
 
-These v0 SDK areas are intentionally outside this core parity document and the Viby v1 package:
+## Messages and agent trace
 
-- deployments, build logs, deployment errors, preview hosting, screenshots, and domains;
-- deployment-platform project connections and provider credentials;
-- GitHub/repository synchronization, commits, branches, and pull requests;
-- integration marketplace products and integration connections;
-- project environment-variable storage or secret decryption;
-- MCP server registration, OAuth, presets, and connection management;
-- outgoing hooks/webhooks and their delivery logs;
-- hosted v0 API keys, rate limits, credits, billing, and account management.
+v0 v2 messages contain ordered parts such as text, thinking, file reads, file edits, searches, shell commands, tool calls, and agent actions. This is the largest portable parity gap because applications need the trace to render useful progress and audit what happened.
 
-Those capabilities can later live behind explicit adapters. They must not change the portable source-generation contract or make provider credentials visible to Viby core.
+| Capability | v0 v2 | Viby-native surface | Status |
+| --- | --- | --- | --- |
+| List messages | Get Messages | `chat.listMessages` | Shipped |
+| Get one message | Get Message | proposed `chat.getMessage` | Planned |
+| Send sync | Send Message | `chat.generate` or `version.iterate` | Shipped |
+| Send async | Send Message Async | `chat.start` or `version.startIteration` | Shipped |
+| Send streaming | Send Message Streaming | `generation.stream` | Shipped |
+| Ordered message parts | `Message.parts` | typed durable agent parts linked to attempts | Planned |
+| Final text and finish reason | message content and `finishReason` | message content plus attempt finish reason | Partial |
+| Token and credit usage | per-message usage | token usage is durable; currency/cost policy is host-owned | Partial |
+| Resolve blocking work | Resolve Task sync/async/streaming | typed `generation.resolve` followed by wait or stream | Shipped |
+| Restore historical state | Restore Message | `version.restore` | Shipped |
 
-## Persistence rules for parity work
+Thinking content must be represented as provider-safe summaries or opaque status metadata. Viby must not promise hidden model reasoning that a provider does not expose.
 
-Every future parity feature follows these rules:
+## Files, versions, and artifacts
 
-1. Every row is constrained by both `tenantId` and `userId`.
-2. The logical generation and immutable attempt are durable before a model request begins; every transition, failure, and cancellation has an ordered durable event.
-3. Successful source changes create immutable full snapshots with parent lineage. Editing, deleting, and restoring files never mutate historical versions.
-4. Exact resolved skills are content-addressed and linked to the generation that used them.
-5. Model credentials and provider access tokens are never written to the Viby schema.
-6. Downloads are derived from a persisted version and contain framework-native source, not provider-specific output.
+| Capability | v0 v2 | Viby-native surface | Status |
+| --- | --- | --- | --- |
+| Read current files | Get Chat Files | `version.files` | Shipped |
+| Add, replace, move, or delete files | Update Chat Files | immutable `version.apply` change set | Shipped |
+| Download source ZIP | Download Chat Files | `version.download` | Shipped |
+| Restore prior source | Restore Message | `version.restore` | Shipped |
+| Branch source history | Duplicate Chat | `version.fork` | Shipped |
+| Binary files | base64-encoded chat files | source import supports validated UTF-8 projects; binary artifact policy is planned | Partial |
+| Locked files | retained v1 capability and import option | immutable file-policy metadata enforced during generation | Planned |
+| Incremental agent patches | file-edit message parts | proposed agent source changes persisted before snapshot materialization | Planned |
 
-## Audited sources
+Downloads remain framework-native source derived from a persisted Viby version. Sandbox images, provider bootstrap files, and deployment output must not silently replace the raw source artifact.
 
-- [v0 SDK package](https://www.npmjs.com/package/v0-sdk)
-- [v0 SDK reference](https://v0.app/docs/api/platform/packages/v0-sdk)
-- [Create Chat](https://v0.app/docs/api/platform/reference/chats/create)
-- [Initialize Chat](https://v0.app/docs/api/platform/reference/chats/init)
-- [Find Messages](https://v0.app/docs/api/platform/reference/chats/find-messages)
-- [Find Versions](https://v0.app/docs/api/platform/reference/chats/find-versions)
-- [Update Version](https://v0.app/docs/api/platform/reference/chats/update-version)
-- [Download Version](https://v0.app/docs/api/platform/reference/chats/download-version)
+## Sandboxes and previews
+
+v0 v2 makes its VM an implicit property of every chat. Viby keeps execution optional so products can use generation and downloads without buying a sandbox service.
+
+| Capability | v0 v2 | Viby decision | Status |
+| --- | --- | --- | --- |
+| Isolated execution | VM-backed chat | `SandboxAdapter` selected by the host | Shipped |
+| Read/write/run | internal VM tools | common file and command contract | Shipped |
+| Live preview | Get Preview URL | sandbox capability plus managed preview session | Partial |
+| Preview readiness | nullable preview response and polling | portable port readiness API | Planned |
+| Preview access token | short-lived hosted token | provider or app proxy policy, never a Viby API key | Adapter |
+| Long-running process | persistent VM services | provider-neutral background process handle | Planned |
+| Reconnect after host restart | chat VM identity | durable sandbox lease and adapter reconnect | Planned |
+| Screenshot/browser inspection | hosted agent tools | portable host-supplied browser tool | Planned |
+
+## Tools, MCP, webhooks, and integrations
+
+Viby separates a portable tool call from the credentialed connection used to fulfill it.
+
+- Core may define typed tools, calls, results, approval tasks, and durable events.
+- The host supplies tool implementations and authorizes each external effect.
+- MCP discovery, OAuth grants, refresh tokens, and connection storage remain host-owned.
+- Webhook delivery may be implemented by an optional event sink; in-process consumers can read durable generation events directly.
+- Deployment and Git provider credentials stay in their future adapters and never enter model context by default.
+
+## Prioritized parity backlog
+
+1. Sandbox capability discovery and a shared adapter conformance suite.
+2. Background processes, port readiness, durable leases, and reconnect-by-ID.
+3. Durable generation worker claims, leases, and heartbeats across application processes.
+4. Enforced command policy and permission decisions around real sandbox actions.
+5. Agent workspace tools that emit immutable source changes instead of replacing a full tree.
+6. Typed message parts for file operations, commands, tools, status, errors, and usage.
+7. Optional sandbox-backed preview sessions and a host-proxy contract.
+8. Attachments, generation-scoped model/skill configuration, file locks, lookup, deletion, search, and outbound event sinks.
+9. Explicit Git and deployment adapters after the portable generation workflow is complete.
+
+## Persistence rules
+
+Every portable parity feature follows these rules:
+
+1. Every record is constrained by both `tenantId` and `userId`.
+2. A logical generation and immutable attempt exist before model or tool work begins.
+3. Work claims, external actions, state transitions, failures, and cancellations are durably auditable.
+4. Successful source changes create immutable full snapshots with parent lineage.
+5. Exact resolved skills are content-addressed and linked to the generation that used them.
+6. Model, sandbox, Git, deployment, and tool credentials are never persisted in the Viby schema.
+7. Provider-specific capabilities are discovered explicitly and never inferred from a provider name.
+8. Framework behavior comes from source and skills, not a hard-coded framework registry.
+
+## Audited official sources
+
+- [Platform API v2 migration guide](https://v0.app/docs/api/v2/guides/migrating-from-v1-to-v2)
+- [Create Chat From Files](https://v0.app/docs/api/v2/reference/chats/create-chat-from-files)
+- [Get Chat Files](https://v0.app/docs/api/v2/reference/chats/get-chat-files)
+- [Duplicate Chat](https://v0.app/docs/api/v2/reference/chats/duplicate-chat)
+- [Get Message](https://v0.app/docs/api/v2/reference/messages/get-message)
+- [Send Message](https://v0.app/docs/api/v2/reference/messages/send-message)
+- [Resolve Task Streaming](https://v0.app/docs/api/v2/reference/messages/resolve-task-streaming)
+- [Accessing Previews](https://v0.app/docs/api/v2/guides/accessing-previews)
+- [Handling Integrations](https://v0.app/docs/api/v2/guides/handling-integrations)
+- [v0 MCP Server](https://v0.app/docs/api/v2/guides/mcp-server)
+- [List Webhooks](https://v0.app/docs/api/v2/reference/webhooks/list-webhooks)
+
+API v2 is explicitly beta. Future audits should record the review date and treat breaking v0 changes as reference updates, not automatic Viby contract changes.
