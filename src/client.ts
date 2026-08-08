@@ -27,7 +27,12 @@ import type {
   VersionFile,
   VibyConfig,
 } from "./types.js";
-import type { SandboxAdapter, SandboxOpenOptions } from "./sandbox.js";
+import type {
+  SandboxAdapter,
+  SandboxLeaseData,
+  SandboxOpenOptions,
+  SandboxReconnectOptions,
+} from "./sandbox.js";
 import type { ProjectGenerator } from "./generator.js";
 import type { Repository } from "./repository.js";
 import { AiProjectGenerator } from "./generator.js";
@@ -133,7 +138,7 @@ class VibyClient<Framework extends FrameworkId> implements Viby<Framework> {
   readonly #modelId: string;
   readonly #sandbox: SandboxAdapter | undefined;
   readonly #registry = new GenerationRunRegistry();
-  readonly #sandboxes = new SandboxRegistry();
+  readonly #sandboxes: SandboxRegistry;
   readonly #runner: GenerationRunner<Framework>;
 
   constructor(
@@ -143,6 +148,7 @@ class VibyClient<Framework extends FrameworkId> implements Viby<Framework> {
     this.framework = config.framework;
     this.#sandbox = config.sandbox;
     this.#repository = dependencies.repository;
+    this.#sandboxes = new SandboxRegistry(this.#repository);
     this.#skillResolver = dependencies.skillResolver;
     if (typeof config.model === "string") {
       this.#modelProvider = config.model.split("/", 1)[0] || "gateway";
@@ -205,11 +211,42 @@ export class ScopedViby<Framework extends FrameworkId = FrameworkId> {
   readonly scope: UserScope;
   readonly chats: ChatCollection<Framework>;
   readonly generations: GenerationCollection<Framework>;
+  readonly sandboxes: SandboxCollection<Framework>;
 
   constructor(dependencies: ScopedDependencies<Framework>) {
     this.scope = dependencies.scope;
     this.chats = new ChatCollection(dependencies);
     this.generations = new GenerationCollection(dependencies);
+    this.sandboxes = new SandboxCollection(dependencies);
+  }
+}
+
+export class SandboxCollection<Framework extends FrameworkId = FrameworkId> {
+  readonly #dependencies: ScopedDependencies<Framework>;
+
+  constructor(dependencies: ScopedDependencies<Framework>) {
+    this.#dependencies = dependencies;
+  }
+
+  async get(id: string): Promise<SandboxLeaseData<Framework>> {
+    const lease = await this.#dependencies.sandboxes.get<Framework>(
+      this.#dependencies.scope,
+      id,
+    );
+    if (!lease) throw new NotFoundError("Sandbox lease");
+    return lease;
+  }
+
+  reconnect(
+    id: string,
+    options: SandboxReconnectOptions = {},
+  ): Promise<SandboxSession> {
+    return this.#dependencies.sandboxes.reconnect(
+      this.#dependencies.sandbox,
+      this.#dependencies.scope,
+      id,
+      options,
+    );
   }
 }
 

@@ -121,6 +121,7 @@ export function cloudflareSandbox<Binding extends object>(
       commandStreaming: true,
       portUrls: normalized.preview !== undefined,
       backgroundProcesses: true,
+      reconnect: true,
     }),
     async create(input) {
       const id = typeof normalized.id === "function"
@@ -168,6 +169,30 @@ export function cloudflareSandbox<Binding extends object>(
         await client.destroy().catch(() => {});
         throw error;
       }
+    },
+    async reconnect(input) {
+      const client = await factory({
+        binding: normalized.binding,
+        id: input.sandboxId,
+        options: {
+          sleepAfter: normalized.sleepAfter
+            ?? Math.max(1, Math.ceil((input.expiresAt.getTime() - Date.now()) / 1_000)),
+          keepAlive: normalized.keepAlive,
+          enableDefaultSession: false,
+          normalizeId: true,
+          transport: normalized.transport,
+          ...(normalized.labels ? { labels: { ...normalized.labels } } : {}),
+          ...(normalized.containerTimeouts
+            ? { containerTimeouts: { ...normalized.containerTimeouts } }
+            : {}),
+        },
+      });
+      return new CloudflareSandboxInstance(
+        input.sandboxId,
+        client,
+        input.ports,
+        normalized.preview,
+      );
     },
   };
 }

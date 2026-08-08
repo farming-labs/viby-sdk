@@ -18,6 +18,11 @@ import type {
   VersionFile,
   VersionOrigin,
 } from "./types.js";
+import type {
+  CreateSandboxLeaseRecord,
+  SandboxLeaseData,
+  SandboxLeaseStatus,
+} from "./sandbox.js";
 
 export interface ImportChatRecord<Framework extends FrameworkId = FrameworkId> {
   readonly chatId: string;
@@ -272,4 +277,17 @@ export interface Repository {
     after: MessagePageCursor | null,
   ): Promise<RepositoryPage<MessageData>>;
   getVersionFiles(scope: UserScope, versionId: string): Promise<VersionFile[]>;
+  createSandboxLease<Framework extends FrameworkId>(
+    scope: UserScope,
+    input: CreateSandboxLeaseRecord<Framework>,
+  ): Promise<SandboxLeaseData<Framework>>;
+  getSandboxLease<Framework extends FrameworkId>(
+    scope: UserScope,
+    id: string,
+  ): Promise<SandboxLeaseData<Framework> | null>;
+  closeSandboxLease(
+    scope: UserScope,
+    id: string,
+    status: Exclude<SandboxLeaseStatus, "active">,
+  ): Promise<void>;
 }

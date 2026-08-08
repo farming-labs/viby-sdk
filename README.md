@@ -148,7 +148,7 @@ try {
 
 Commands use a separate executable and argument list instead of an interpolated shell command. Sessions support streamed output, relative file reads and writes, optional public port URLs, abort signals, and idempotent cleanup. `viby.close()` stops any session the application left open.
 
-Inspect `sandbox.capabilities` or call `sandbox.supports("portUrls")` before using optional behavior. The typed capability record is provider-neutral and reports what the configured adapter implements; unsupported future primitives such as background processes, reconnect, and snapshots remain `false` until the adapter exposes them through Viby.
+Inspect `sandbox.capabilities` or call `sandbox.supports("portUrls")` before using optional behavior. The typed capability record is provider-neutral and reports what the configured adapter implements; unsupported primitives remain `false` until the adapter exposes them through Viby.
 
 Adapters with `backgroundProcesses` can start a long-running server without blocking the request. Readiness works across any adapter with `portUrls` and accepts a custom check for authenticated or nonstandard preview routes:
 
@@ -166,6 +166,15 @@ await server.kill();
 ```
 
 E2B, Vercel Sandbox, and Cloudflare currently expose native background handles. Other adapters report the capability as `false`; Viby never detaches a process through an untracked shell workaround.
+
+Every opened sandbox receives a tenant- and user-scoped durable lease. Keep its Viby-owned lease id and reconnect after a request or process restart:
+
+```ts
+const leaseId = sandbox.leaseId;
+const reconnected = await userViby.sandboxes.reconnect(leaseId);
+```
+
+`userViby.sandboxes.get(leaseId)` returns the portable lease metadata. Viby stores the provider name, opaque provider sandbox id, source version, framework, declared ports, state, and expiration. It never stores provider credentials, environment values, or vendor response payloads. E2B, Vercel Sandbox, and Cloudflare implement native reconnect today; other adapters fail through the capability gate.
 
 Adapter authors can import `verifySandboxAdapter` from `@viby/sdk/sandbox/conformance` in their own test suite. The caller supplies a harmless runtime-specific command and fixture credentials; Viby verifies capability declarations, text and binary file roundtrips, commands, streaming, port URLs, and idempotent cleanup without assuming a framework, image, or provider.
 
@@ -459,10 +468,10 @@ Included now:
 - typed plan, question, and permission tasks
 - immutable versions and iteration
 - raw source ZIP downloads
+- sandboxed execution, durable leases, and preview URLs when an adapter supports them
 
 Planned as separate capabilities later:
 
-- sandboxed execution and preview URLs
 - deployment presets and provider connections
 - GitHub export and pull requests
 - managed Viby infrastructure

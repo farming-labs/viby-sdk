@@ -13,6 +13,7 @@ import type {
   SandboxOperationOptions,
   SandboxOutputEvent,
   SandboxProcessInstance,
+  SandboxReconnectInput,
 } from "../src/sandbox.js";
 import { sandboxCapabilities } from "../src/sandbox.js";
 import { SkillResolver } from "../src/skills.js";
@@ -96,8 +97,10 @@ class FakeSandboxAdapter implements SandboxAdapter {
     commandStreaming: true,
     portUrls: true,
     backgroundProcesses: true,
+    reconnect: true,
   });
   readonly creates: SandboxCreateInput[] = [];
+  readonly reconnects: SandboxReconnectInput[] = [];
   readonly instances: FakeSandboxInstance[] = [];
   failWrites = false;
 
@@ -105,6 +108,13 @@ class FakeSandboxAdapter implements SandboxAdapter {
     this.creates.push(input);
     const instance = new FakeSandboxInstance();
     instance.failWrites = this.failWrites;
+    this.instances.push(instance);
+    return instance;
+  }
+
+  async reconnect(input: SandboxReconnectInput): Promise<SandboxInstance> {
+    this.reconnects.push(input);
+    const instance = new FakeSandboxInstance();
     this.instances.push(instance);
     return instance;
   }
@@ -285,7 +295,71 @@ test("validates sandbox input and requires an adapter", async () => {
     () => foregroundSession.waitForPort(3000),
     SandboxUnavailableError,
   );
+  await assert.rejects(
+    () => foregroundOnly.viby
+      .forUser({ tenantId: "tenant-a", userId: "user-a" })
+      .sandboxes.reconnect(foregroundSession.leaseId!),
+    /does not support reconnecting by id/,
+  );
   await foregroundOnly.viby.close();
+});
+
+test("persists tenant-scoped leases and reconnects through the configured adapter", async () => {
+  const adapter = new FakeSandboxAdapter();
+  const { version, viby, repository } = await importedVersion(adapter);
+  const user = viby.forUser({ tenantId: "tenant-a", userId: "user-a" });
+  const session = await version.sandbox({ timeoutMs: 60_000, ports: [3000] });
+  assert.ok(session.leaseId);
+
+  const lease = await user.sandboxes.get(session.leaseId);
+  assert.equal(lease.sandboxId, session.id);
+  assert.equal(lease.provider, "fake");
+  assert.equal(lease.status, "active");
+  assert.equal(lease.context.versionId, version.id);
+  assert.deepEqual(lease.ports, [3000]);
+  assert.equal("env" in lease, false);
+
+  await assert.rejects(
+    () => viby.forUser({ tenantId: "tenant-a", userId: "user-b" }).sandboxes.get(session.leaseId!),
+    /Sandbox lease was not found/,
+  );
+  const reconnected = await user.sandboxes.reconnect(session.leaseId);
+  assert.equal(reconnected.id, session.id);
+  assert.equal(reconnected.leaseId, session.leaseId);
+  assert.deepEqual(adapter.reconnects[0], {
+    sandboxId: "sandbox_test",
+    context: lease.context,
+    ports: [3000],
+    expiresAt: lease.expiresAt,
+  });
+  assert.equal(adapter.instances[1]!.files.size, 0);
+
+  await reconnected.stop();
+  assert.equal((await user.sandboxes.get(session.leaseId)).status, "stopped");
+  await assert.rejects(
+    () => user.sandboxes.reconnect(session.leaseId!),
+    /lease is stopped/,
+  );
+  assert.equal(repository.sandboxLeases.size, 1);
+  await viby.close();
+});
+
+test("expires stale leases before an adapter can reconnect", async () => {
+  const adapter = new FakeSandboxAdapter();
+  const { version, viby, repository } = await importedVersion(adapter);
+  const session = await version.sandbox();
+  const persisted = repository.sandboxLeases.get(session.leaseId!);
+  assert.ok(persisted);
+  repository.sandboxLeases.set(session.leaseId!, {
+    ...persisted,
+    expiresAt: new Date(Date.now() - 1),
+  });
+
+  const user = viby.forUser({ tenantId: "tenant-a", userId: "user-a" });
+  await assert.rejects(() => user.sandboxes.reconnect(session.leaseId!), /lease has expired/);
+  assert.equal((await user.sandboxes.get(session.leaseId!)).status, "expired");
+  assert.equal(adapter.reconnects.length, 0);
+  await viby.close();
 });
 
 test("normalizes immutable provider-agnostic capability records", () => {

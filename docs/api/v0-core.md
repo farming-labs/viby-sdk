@@ -109,10 +109,10 @@ v0 v2 makes its VM an implicit property of every chat. Viby keeps execution opti
 | Isolated execution | VM-backed chat | `SandboxAdapter` selected by the host | Shipped |
 | Read/write/run | internal VM tools | common file and command contract | Shipped |
 | Live preview | Get Preview URL | sandbox capability plus managed preview session | Partial |
-| Preview readiness | nullable preview response and polling | portable port readiness API | Planned |
+| Preview readiness | nullable preview response and polling | portable port readiness API | Shipped |
 | Preview access token | short-lived hosted token | provider or app proxy policy, never a Viby API key | Adapter |
-| Long-running process | persistent VM services | provider-neutral background process handle | Planned |
-| Reconnect after host restart | chat VM identity | durable sandbox lease and adapter reconnect | Planned |
+| Long-running process | persistent VM services | provider-neutral background process handle | Shipped |
+| Reconnect after host restart | chat VM identity | durable sandbox lease and adapter reconnect | Shipped |
 | Screenshot/browser inspection | hosted agent tools | portable host-supplied browser tool | Planned |
 
 ## Tools, MCP, webhooks, and integrations
@@ -127,15 +127,15 @@ Viby separates a portable tool call from the credentialed connection used to ful
 
 ## Prioritized parity backlog
 
-1. Sandbox capability discovery and a shared adapter conformance suite.
-2. Background processes, port readiness, durable leases, and reconnect-by-ID.
-3. Durable generation worker claims, leases, and heartbeats across application processes.
-4. Enforced command policy and permission decisions around real sandbox actions.
-5. Agent workspace tools that emit immutable source changes instead of replacing a full tree.
-6. Typed message parts for file operations, commands, tools, status, errors, and usage.
-7. Optional sandbox-backed preview sessions and a host-proxy contract.
-8. Attachments, generation-scoped model/skill configuration, file locks, lookup, deletion, search, and outbound event sinks.
-9. Explicit Git and deployment adapters after the portable generation workflow is complete.
+Capability discovery, the adapter conformance suite, background processes, readiness checks, durable leases, and reconnect-by-ID are shipped.
+
+1. Durable generation worker claims, leases, and heartbeats across application processes.
+2. Enforced command policy and permission decisions around real sandbox actions.
+3. Agent workspace tools that emit immutable source changes instead of replacing a full tree.
+4. Typed message parts for file operations, commands, tools, status, errors, and usage.
+5. Optional sandbox-backed preview sessions and a host-proxy contract.
+6. Attachments, generation-scoped model/skill configuration, file locks, lookup, deletion, search, and outbound event sinks.
+7. Explicit Git and deployment adapters after the portable generation workflow is complete.
 
 ## Persistence rules
 

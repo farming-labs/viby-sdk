@@ -166,6 +166,19 @@ test("maps the common sandbox contract to a Cloudflare quick-tunnel sandbox", as
     },
   });
   assert.deepEqual(client.directories, ["/workspace"]);
+  const reconnected = await adapter.reconnect!({
+    sandboxId: "viby-version-a",
+    context: createInput.context,
+    ports: createInput.ports,
+    expiresAt: new Date(Date.now() + 30_000),
+  });
+  assert.equal(reconnected.id, "viby-version-a");
+  assert.equal(adapter.capabilities.reconnect, true);
+  assert.equal(factoryInput?.id, "viby-version-a");
+  assert.ok(typeof factoryInput?.options.sleepAfter === "number");
+  assert.ok((factoryInput?.options.sleepAfter as number) >= 1);
+  assert.ok((factoryInput?.options.sleepAfter as number) <= 30);
+  assert.deepEqual(client.directories, ["/workspace"]);
 
   await instance.writeFiles([
     { path: "src/index.js", content: "console.log('safe')\n" },

@@ -7,6 +7,7 @@ import {
   vercelSandbox,
   type VercelSandboxClient,
   type VercelCommandHandle,
+  type VercelSandboxConnectorInput,
   type VercelSandboxFactoryInput,
 } from "../src/sandbox-vercel.js";
 
@@ -95,6 +96,7 @@ const createInput = {
 test("maps the common sandbox contract to Vercel Sandbox", async () => {
   const client = new FakeVercelClient();
   let factoryInput: VercelSandboxFactoryInput | undefined;
+  let connectorInput: VercelSandboxConnectorInput | undefined;
   const adapter = vercelSandbox(
     {
       token: "token",
@@ -107,6 +109,10 @@ test("maps the common sandbox contract to Vercel Sandbox", async () => {
     },
     async (input) => {
       factoryInput = input;
+      return client;
+    },
+    async (input) => {
+      connectorInput = input;
       return client;
     },
   );
@@ -125,6 +131,21 @@ test("maps the common sandbox contract to Vercel Sandbox", async () => {
     timeout: 120_000,
     env: { NODE_ENV: "test" },
     persistent: false,
+  });
+  const reconnected = await adapter.reconnect!({
+    sandboxId: "viby-test",
+    context: createInput.context,
+    ports: createInput.ports,
+    expiresAt: new Date(Date.now() + 30_000),
+  });
+  assert.equal(reconnected.id, "viby-test");
+  assert.equal(adapter.capabilities.reconnect, true);
+  assert.deepEqual(connectorInput, {
+    name: "viby-test",
+    resume: true,
+    token: "token",
+    teamId: "team",
+    projectId: "project",
   });
 
   await instance.writeFiles([

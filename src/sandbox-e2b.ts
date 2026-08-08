@@ -37,6 +37,17 @@ export interface E2BSandboxFactoryInput {
   };
 }
 
+export interface E2BSandboxConnectorInput {
+  readonly sandboxId: string;
+  readonly options: {
+    readonly apiKey?: string;
+    readonly domain?: string;
+    readonly requestTimeoutMs?: number;
+    readonly timeoutMs: number;
+    readonly signal?: AbortSignal;
+  };
+}
+
 export interface E2BSandboxClient {
   readonly sandboxId: string;
   readonly files: {
@@ -81,9 +92,14 @@ export type E2BSandboxFactory = (
   input: E2BSandboxFactoryInput,
 ) => Promise<E2BSandboxClient>;
 
+export type E2BSandboxConnector = (
+  input: E2BSandboxConnectorInput,
+) => Promise<E2BSandboxClient>;
+
 export function e2bSandbox(
   options: E2BSandboxAdapterOptions = {},
   factory: E2BSandboxFactory = createE2BSandbox,
+  connector: E2BSandboxConnector = connectE2BSandbox,
 ): SandboxAdapter {
   return {
     provider: "e2b",
@@ -93,6 +109,7 @@ export function e2bSandbox(
       commandStreaming: true,
       portUrls: true,
       backgroundProcesses: true,
+      reconnect: true,
     }),
     async create(input) {
       const client = await factory({
@@ -107,6 +124,21 @@ export function e2bSandbox(
             : {}),
           ...(options.secure !== undefined ? { secure: options.secure } : {}),
           ...(options.metadata ? { metadata: { ...options.metadata } } : {}),
+          ...(input.signal ? { signal: input.signal } : {}),
+        },
+      });
+      return new E2BSandboxInstance(client);
+    },
+    async reconnect(input) {
+      const client = await connector({
+        sandboxId: input.sandboxId,
+        options: {
+          timeoutMs: Math.max(1, input.expiresAt.getTime() - Date.now()),
+          ...(options.apiKey ? { apiKey: options.apiKey } : {}),
+          ...(options.domain ? { domain: options.domain } : {}),
+          ...(options.requestTimeoutMs !== undefined
+            ? { requestTimeoutMs: options.requestTimeoutMs }
+            : {}),
           ...(input.signal ? { signal: input.signal } : {}),
         },
       });
@@ -227,6 +259,10 @@ async function createE2BSandbox(input: E2BSandboxFactoryInput): Promise<E2BSandb
   return (input.template
     ? E2BSandbox.create(input.template, input.options)
     : E2BSandbox.create(input.options)) as unknown as E2BSandboxClient;
+}
+
+async function connectE2BSandbox(input: E2BSandboxConnectorInput): Promise<E2BSandboxClient> {
+  return E2BSandbox.connect(input.sandboxId, input.options) as unknown as Promise<E2BSandboxClient>;
 }
 
 function projectPath(path: string): string {

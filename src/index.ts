@@ -3,6 +3,7 @@ export {
   Chat,
   Generation,
   GenerationCollection,
+  SandboxCollection,
   ScopedViby,
   Version,
 } from "./client.js";
@@ -35,6 +36,10 @@ export type {
   SandboxCommandResult,
   SandboxCreateContext,
   SandboxCreateInput,
+  SandboxReconnectInput,
+  SandboxReconnectOptions,
+  SandboxLeaseData,
+  SandboxLeaseStatus,
   SandboxFile,
   SandboxInstance,
   SandboxOpenOptions,

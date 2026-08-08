@@ -125,6 +125,23 @@ test("persists a durable generation, iteration, events, and download in Postgres
     assert.equal(await importedVersion.generation(), null);
     assert.equal((await importedVersion.files()).length, 2);
 
+    const lease = await repository.createSandboxLease(scope, {
+      id: randomUUID(),
+      sandboxId: "provider-sandbox-id",
+      provider: "integration-provider",
+      context: {
+        ...scope,
+        chatId: importedVersion.chatId,
+        versionId: importedVersion.id,
+        framework: "farm",
+      },
+      ports: [3000],
+      expiresAt: new Date(Date.now() + 60_000),
+    });
+    assert.equal((await user.sandboxes.get(lease.id)).sandboxId, "provider-sandbox-id");
+    await repository.closeSandboxLease(scope, lease.id, "stopped");
+    assert.equal((await user.sandboxes.get(lease.id)).status, "stopped");
+
     const editedVersion = await importedVersion.apply({
       changes: [
         { type: "write", path: "src/main.ts", content: "export const imported = 2;\n" },

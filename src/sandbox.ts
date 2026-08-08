@@ -1,6 +1,6 @@
 import { ConfigurationError, SandboxError, SandboxUnavailableError } from "./errors.js";
 import type { FrameworkId, UserScope, VersionFile } from "./types.js";
-import { errorMessage, normalizeProjectPath } from "./utils.js";
+import { createId, errorMessage, normalizeProjectPath } from "./utils.js";
 
 const DEFAULT_SANDBOX_TIMEOUT_MS = 300_000;
 const MAX_SANDBOX_TIMEOUT_MS = 86_400_000;
@@ -48,6 +48,7 @@ export interface SandboxAdapter {
   readonly provider: string;
   readonly capabilities: SandboxCapabilities;
   create(input: SandboxCreateInput): Promise<SandboxInstance>;
+  reconnect?(input: SandboxReconnectInput): Promise<SandboxInstance>;
 }
 
 export interface SandboxCreateContext<Framework extends FrameworkId = FrameworkId> {
@@ -66,10 +67,62 @@ export interface SandboxCreateInput<Framework extends FrameworkId = FrameworkId>
   readonly signal?: AbortSignal;
 }
 
+export interface SandboxReconnectInput<Framework extends FrameworkId = FrameworkId> {
+  readonly sandboxId: string;
+  readonly context: SandboxCreateContext<Framework>;
+  readonly ports: readonly number[];
+  readonly expiresAt: Date;
+  readonly signal?: AbortSignal;
+}
+
+export type SandboxLeaseStatus = "active" | "stopped" | "expired";
+
+export interface SandboxLeaseData<Framework extends FrameworkId = FrameworkId> {
+  readonly id: string;
+  readonly sandboxId: string;
+  readonly provider: string;
+  readonly context: SandboxCreateContext<Framework>;
+  readonly ports: readonly number[];
+  readonly status: SandboxLeaseStatus;
+  readonly expiresAt: Date;
+  readonly createdAt: Date;
+  readonly updatedAt: Date;
+  readonly stoppedAt: Date | null;
+}
+
+export interface CreateSandboxLeaseRecord<Framework extends FrameworkId = FrameworkId> {
+  readonly id: string;
+  readonly sandboxId: string;
+  readonly provider: string;
+  readonly context: SandboxCreateContext<Framework>;
+  readonly ports: readonly number[];
+  readonly expiresAt: Date;
+}
+
+export interface SandboxLeaseStore {
+  createSandboxLease<Framework extends FrameworkId>(
+    scope: UserScope,
+    input: CreateSandboxLeaseRecord<Framework>,
+  ): Promise<SandboxLeaseData<Framework>>;
+  getSandboxLease<Framework extends FrameworkId>(
+    scope: UserScope,
+    id: string,
+  ): Promise<SandboxLeaseData<Framework> | null>;
+  closeSandboxLease(
+    scope: UserScope,
+    id: string,
+    status: Exclude<SandboxLeaseStatus, "active">,
+  ): Promise<void>;
+}
+
 export interface SandboxOpenOptions {
   readonly timeoutMs?: number;
   readonly env?: Readonly<Record<string, string>>;
   readonly ports?: readonly number[];
+  readonly signal?: AbortSignal;
+}
+
+export interface SandboxReconnectOptions {
   readonly signal?: AbortSignal;
 }
 
@@ -166,19 +219,22 @@ export class SandboxSession {
   readonly id: string;
   readonly provider: string;
   readonly capabilities: SandboxCapabilities;
+  readonly leaseId: string | null;
   readonly #instance: SandboxInstance;
-  readonly #onStopped: () => void;
+  readonly #onStopped: () => void | Promise<void>;
   #stopPromise: Promise<void> | null = null;
 
   constructor(
     provider: string,
     capabilities: SandboxCapabilities,
     instance: SandboxInstance,
-    onStopped: () => void = () => {},
+    onStopped: () => void | Promise<void> = () => {},
+    leaseId: string | null = null,
   ) {
     this.provider = normalizeProvider(provider);
     this.capabilities = sandboxCapabilities(capabilities);
     this.id = normalizeSandboxId(instance.id);
+    this.leaseId = leaseId;
     this.#instance = instance;
     this.#onStopped = onStopped;
   }
@@ -347,6 +403,15 @@ export class SandboxSession {
 export class SandboxRegistry {
   readonly #sessions = new Set<SandboxSession>();
 
+  constructor(readonly store: SandboxLeaseStore) {}
+
+  async get<Framework extends FrameworkId>(
+    scope: UserScope,
+    leaseId: string,
+  ): Promise<SandboxLeaseData<Framework> | null> {
+    return this.store.getSandboxLease<Framework>(scope, normalizeLeaseId(leaseId));
+  }
+
   async open<Framework extends FrameworkId>(
     adapter: SandboxAdapter | undefined,
     scope: UserScope,
@@ -385,10 +450,8 @@ export class SandboxRegistry {
     const instance = await sandboxOperation(adapter.provider, "create sandbox", () => (
       adapter.create(createInput)
     ));
-    const session = new SandboxSession(adapter.provider, capabilities, instance, () => {
-      this.#sessions.delete(session);
-    });
-    this.#sessions.add(session);
+    const lease = await this.#createLease(scope, createInput, adapter.provider, instance);
+    const session = this.#trackSession(adapter.provider, capabilities, instance, scope, lease.id);
     try {
       await session.writeFiles(files.map((file) => ({
         path: file.path,
@@ -405,6 +468,60 @@ export class SandboxRegistry {
     }
   }
 
+  async reconnect<Framework extends FrameworkId>(
+    adapter: SandboxAdapter | undefined,
+    scope: UserScope,
+    leaseId: string,
+    options: SandboxReconnectOptions = {},
+  ): Promise<SandboxSession> {
+    if (!adapter) {
+      throw new SandboxUnavailableError(
+        "No sandbox adapter is configured. Pass sandbox to createViby before reconnecting.",
+      );
+    }
+    if (!options || typeof options !== "object") {
+      throw new ConfigurationError("Sandbox reconnect options must be an object.");
+    }
+    const lease = await this.get<Framework>(scope, leaseId);
+    if (!lease) throw new SandboxUnavailableError("The sandbox lease was not found.");
+    if (lease.status !== "active") {
+      throw new SandboxUnavailableError(`The sandbox lease is ${lease.status}.`);
+    }
+    if (lease.expiresAt.getTime() <= Date.now()) {
+      await this.store.closeSandboxLease(scope, lease.id, "expired");
+      throw new SandboxUnavailableError("The sandbox lease has expired.");
+    }
+    const provider = normalizeProvider(adapter.provider);
+    if (provider !== lease.provider) {
+      throw new SandboxUnavailableError(
+        `Sandbox lease ${lease.id} belongs to ${lease.provider}, not ${provider}.`,
+      );
+    }
+    const capabilities = sandboxCapabilities(adapter.capabilities);
+    if (!capabilities.reconnect || !adapter.reconnect) {
+      throw new SandboxUnavailableError(
+        `Sandbox provider ${provider} does not support reconnecting by id.`,
+      );
+    }
+    const instance = await sandboxOperation(provider, "reconnect sandbox", () => (
+      adapter.reconnect!({
+        sandboxId: lease.sandboxId,
+        context: lease.context,
+        ports: lease.ports,
+        expiresAt: lease.expiresAt,
+        ...(options.signal ? { signal: options.signal } : {}),
+      })
+    ));
+    if (normalizeSandboxId(instance.id) !== lease.sandboxId) {
+      throw new SandboxError(
+        provider,
+        "reconnect sandbox",
+        "The adapter returned a different sandbox id than the persisted lease.",
+      );
+    }
+    return this.#trackSession(provider, capabilities, instance, scope, lease.id);
+  }
+
   async stopAll(): Promise<void> {
     const results = await Promise.allSettled([...this.#sessions].map((session) => session.stop()));
     const failure = results.find((result): result is PromiseRejectedResult => (
@@ -412,6 +529,50 @@ export class SandboxRegistry {
     ));
     if (failure) throw failure.reason;
   }
+
+  async #createLease<Framework extends FrameworkId>(
+    scope: UserScope,
+    input: SandboxCreateInput<Framework>,
+    provider: string,
+    instance: SandboxInstance,
+  ): Promise<SandboxLeaseData<Framework>> {
+    try {
+      return await this.store.createSandboxLease(scope, {
+        id: createId(),
+        sandboxId: normalizeSandboxId(instance.id),
+        provider: normalizeProvider(provider),
+        context: input.context,
+        ports: input.ports,
+        expiresAt: new Date(Date.now() + input.timeoutMs),
+      });
+    } catch (error) {
+      await sandboxOperation(provider, "stop sandbox", () => instance.stop()).catch(() => {});
+      throw error;
+    }
+  }
+
+  #trackSession(
+    provider: string,
+    capabilities: SandboxCapabilities,
+    instance: SandboxInstance,
+    scope: UserScope,
+    leaseId: string,
+  ): SandboxSession {
+    const session = new SandboxSession(provider, capabilities, instance, async () => {
+      this.#sessions.delete(session);
+      await this.store.closeSandboxLease(scope, leaseId, "stopped");
+    }, leaseId);
+    this.#sessions.add(session);
+    return session;
+  }
+}
+
+function normalizeLeaseId(value: string): string {
+  const normalized = normalizeSandboxId(value);
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(normalized)) {
+    throw new ConfigurationError("Sandbox lease id must be a UUID.");
+  }
+  return normalized;
 }
 
 function normalizeOpenOptions(options: SandboxOpenOptions): {

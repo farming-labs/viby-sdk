@@ -4,6 +4,7 @@ import {
   e2bSandbox,
   type E2BSandboxClient,
   type E2BCommandHandle,
+  type E2BSandboxConnectorInput,
   type E2BSandboxFactoryInput,
 } from "../src/sandbox-e2b.js";
 import type { SandboxOutputEvent } from "../src/sandbox.js";
@@ -82,6 +83,7 @@ const createInput = {
 test("maps the common sandbox contract to E2B", async () => {
   const client = new FakeE2BClient();
   let factoryInput: E2BSandboxFactoryInput | undefined;
+  let connectorInput: E2BSandboxConnectorInput | undefined;
   const adapter = e2bSandbox(
     {
       apiKey: "e2b_test_key",
@@ -93,6 +95,10 @@ test("maps the common sandbox contract to E2B", async () => {
     },
     async (input) => {
       factoryInput = input;
+      return client;
+    },
+    async (input) => {
+      connectorInput = input;
       return client;
     },
   );
@@ -111,6 +117,20 @@ test("maps the common sandbox contract to E2B", async () => {
       timeoutMs: 60_000,
     },
   });
+  const expiresAt = new Date(Date.now() + 30_000);
+  const reconnected = await adapter.reconnect!({
+    sandboxId: "e2b_test",
+    context: createInput.context,
+    ports: createInput.ports,
+    expiresAt,
+  });
+  assert.equal(reconnected.id, "e2b_test");
+  assert.equal(adapter.capabilities.reconnect, true);
+  assert.equal(connectorInput?.sandboxId, "e2b_test");
+  assert.equal(connectorInput?.options.apiKey, "e2b_test_key");
+  assert.equal(connectorInput?.options.domain, "example.internal");
+  assert.ok((connectorInput?.options.timeoutMs ?? 0) > 0);
+  assert.ok((connectorInput?.options.timeoutMs ?? 0) <= 30_000);
 
   await instance.writeFiles([
     { path: "src/index.ts", content: "export {};\n" },
