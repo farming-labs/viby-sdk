@@ -96,7 +96,7 @@ Thinking content must be represented as provider-safe summaries or opaque status
 | Restore prior source | Restore Message | `version.restore` | Shipped |
 | Branch source history | Duplicate Chat | `version.fork` | Shipped |
 | Binary files | base64-encoded chat files | source import supports validated UTF-8 projects; binary artifact policy is planned | Partial |
-| Locked files | retained v1 capability and import option | immutable file-policy metadata enforced during generation | Planned |
+| Locked files | retained v1 capability and import option | `filePolicy.locked`, per-file import locks, and enforcement across all edit paths | Shipped |
 | Incremental agent patches | file-edit message parts | `version.workspace` tools and generated source changes persisted with the materialized snapshot | Shipped |
 
 Downloads remain framework-native source derived from a persisted Viby version. Sandbox images, provider bootstrap files, and deployment output must not silently replace the raw source artifact.

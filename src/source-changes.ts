@@ -15,16 +15,19 @@ export function applySourceChanges(
     switch (change.type) {
       case "write": {
         const current = files.get(change.path);
+        assertUnlocked(current, change.path);
         files.set(change.path, {
           path: change.path,
           content: change.content,
           mediaType: change.mediaType || current?.mediaType || "",
           size: 0,
           checksum: "",
+          locked: false,
         });
         break;
       }
       case "delete": {
+        assertUnlocked(files.get(change.path), change.path);
         if (!files.delete(change.path)) {
           throw new ConfigurationError(`Cannot delete missing source file: ${change.path}`);
         }
@@ -36,6 +39,7 @@ export function applySourceChanges(
         }
         const source = files.get(change.from);
         if (!source) throw new ConfigurationError(`Cannot move missing source file: ${change.from}`);
+        assertUnlocked(source, change.from);
         if (files.has(change.to)) {
           throw new ConfigurationError(`Cannot overwrite source file during move: ${change.to}`);
         }
@@ -47,6 +51,27 @@ export function applySourceChanges(
   }
 
   return normalizeSourceFiles([...files.values()], "Edited");
+}
+
+export function preserveLockedFiles(
+  baseFiles: readonly VersionFile[],
+  nextFiles: readonly VersionFile[],
+): VersionFile[] {
+  const locked = baseFiles.filter((file) => file.locked);
+  if (locked.length === 0) return nextFiles.map((file) => ({ ...file }));
+  const nextByPath = new Map(nextFiles.map((file) => [file.path, file]));
+  for (const file of locked) {
+    const next = nextByPath.get(file.path);
+    if (!next || next.content !== file.content || next.mediaType !== file.mediaType) {
+      throw new ConfigurationError(`Source file is locked: ${file.path}`);
+    }
+    nextByPath.set(file.path, { ...next, locked: true });
+  }
+  return [...nextByPath.values()].sort((left, right) => left.path.localeCompare(right.path));
+}
+
+function assertUnlocked(file: VersionFile | undefined, path: string): void {
+  if (file?.locked) throw new ConfigurationError(`Source file is locked: ${path}`);
 }
 
 export function normalizeSourceChanges(changes: readonly SourceChange[]): SourceChange[] {

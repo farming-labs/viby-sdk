@@ -103,6 +103,11 @@ export interface SourceFileInput {
   readonly path: string;
   readonly content: string;
   readonly mediaType?: string;
+  readonly locked?: boolean;
+}
+
+export interface ImportFilePolicy {
+  readonly locked?: "all" | readonly string[];
 }
 
 export type ImportProjectSource =
@@ -119,6 +124,7 @@ export interface ImportProjectInput {
   readonly title?: string;
   readonly summary?: string;
   readonly metadata?: ChatMetadata;
+  readonly filePolicy?: ImportFilePolicy;
   readonly source: ImportProjectSource;
 }
 
@@ -546,6 +552,7 @@ export interface VersionFile {
   readonly mediaType: string;
   readonly size: number;
   readonly checksum: string;
+  readonly locked: boolean;
 }
 
 export interface SkillFile {

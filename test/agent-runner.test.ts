@@ -123,6 +123,7 @@ test("gates sandbox tools by capabilities and enforces the command budget", asyn
       mediaType: "text/javascript",
       size: 22,
       checksum: "before",
+      locked: false,
     }],
     skills: [],
     tasks: [],

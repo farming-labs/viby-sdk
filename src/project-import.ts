@@ -1,6 +1,11 @@
 import { unzipSync } from "fflate";
 import { ConfigurationError } from "./errors.js";
-import type { ImportProjectSource, SourceFileInput, VersionFile } from "./types.js";
+import type {
+  ImportFilePolicy,
+  ImportProjectSource,
+  SourceFileInput,
+  VersionFile,
+} from "./types.js";
 import { normalizeProjectPath, sha256 } from "./utils.js";
 
 const MAX_ARCHIVE_BYTES = 12_000_000;
@@ -15,12 +20,21 @@ const ZIP64_SENTINEL_32 = 0xffffffff;
 const UNIX_FILE_TYPE_MASK = 0o170000;
 const UNIX_SYMLINK = 0o120000;
 
-export function importProjectFiles(source: ImportProjectSource): VersionFile[] {
-  if (source.type === "files") return normalizeSourceFiles(source.files, "Imported");
-  if (!(source.bytes instanceof Uint8Array)) {
+export function importProjectFiles(
+  source: ImportProjectSource,
+  policy: ImportFilePolicy | undefined = undefined,
+): VersionFile[] {
+  const files = source.type === "files"
+    ? normalizeSourceFiles(source.files, "Imported")
+    : importZipSource(source.bytes);
+  return applyImportFilePolicy(files, policy);
+}
+
+function importZipSource(bytes: Uint8Array): VersionFile[] {
+  if (!(bytes instanceof Uint8Array)) {
     throw new ConfigurationError("ZIP source bytes must be a Uint8Array.");
   }
-  return importZipFiles(source.bytes);
+  return importZipFiles(bytes);
 }
 
 function importZipFiles(bytes: Uint8Array): VersionFile[] {
@@ -72,6 +86,9 @@ export function normalizeSourceFiles(
     if (!file || typeof file.path !== "string" || typeof file.content !== "string") {
       throw new ConfigurationError("Imported files require string path and content values.");
     }
+    if (file.locked !== undefined && typeof file.locked !== "boolean") {
+      throw new ConfigurationError("Imported file locked values must be booleans.");
+    }
     const path = normalizeProjectPath(file.path);
     if (path.length > MAX_PATH_LENGTH) {
       throw new ConfigurationError(`Imported file path exceeds ${MAX_PATH_LENGTH} characters: ${path}`);
@@ -98,10 +115,39 @@ export function normalizeSourceFiles(
       mediaType,
       size,
       checksum: sha256(file.content),
+      locked: file.locked ?? false,
     });
   }
 
   return normalized.sort((left, right) => left.path.localeCompare(right.path));
+}
+
+function applyImportFilePolicy(
+  files: readonly VersionFile[],
+  policy: ImportFilePolicy | undefined,
+): VersionFile[] {
+  if (policy === undefined) return files.map((file) => ({ ...file }));
+  if (!policy || typeof policy !== "object" || Array.isArray(policy)) {
+    throw new ConfigurationError("Import filePolicy must be an object when provided.");
+  }
+  if (policy.locked === undefined) return files.map((file) => ({ ...file }));
+  if (policy.locked === "all") return files.map((file) => ({ ...file, locked: true }));
+  if (!Array.isArray(policy.locked)) {
+    throw new ConfigurationError('Import filePolicy.locked must be "all" or an array of paths.');
+  }
+  const locked = new Set<string>();
+  for (const value of policy.locked) {
+    if (typeof value !== "string") {
+      throw new ConfigurationError("Every locked file path must be a string.");
+    }
+    const path = normalizeProjectPath(value);
+    if (locked.has(path)) throw new ConfigurationError(`Locked file path is duplicated: ${path}`);
+    locked.add(path);
+  }
+  const paths = new Set(files.map((file) => file.path));
+  const missing = [...locked].find((path) => !paths.has(path));
+  if (missing) throw new ConfigurationError(`Locked file was not found in the import: ${missing}`);
+  return files.map((file) => ({ ...file, locked: file.locked || locked.has(file.path) }));
 }
 
 function inspectZipDirectory(bytes: Uint8Array): void {

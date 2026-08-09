@@ -43,6 +43,7 @@ class FakeGenerator<Framework extends FrameworkId> implements ProjectGenerator<F
       mediaType: "text/javascript",
       size: Buffer.byteLength(content),
       checksum: sha256(content),
+      locked: false,
     }];
     return {
       kind: "project",
@@ -428,6 +429,7 @@ test("deduplicates concurrent workspace commits and permits retry after persiste
     mediaType: "text/javascript",
     size: 26,
     checksum: "before",
+    locked: false,
   }], async (changes) => {
     calls += 1;
     if (calls === 1) throw new Error("temporary persistence failure");
@@ -484,6 +486,87 @@ test("rejects invalid source change sets before persistence", async () => {
     /unsafe/,
   );
   assert.equal((await chat.listVersions()).items.length, 1);
+});
+
+test("enforces immutable locked files across every source editing path", async () => {
+  const { viby } = setup();
+  const user = viby.forUser({ tenantId: "tenant-a", userId: "user-a" });
+  const chat = await user.chats.import({
+    title: "Protected project",
+    filePolicy: { locked: ["package.json"] },
+    source: {
+      type: "files",
+      files: [
+        { path: "package.json", content: "{}\n" },
+        { path: "farm.config.ts", content: "export default {};\n", locked: true },
+        { path: "src/index.ts", content: "export const version = 1;\n" },
+      ],
+    },
+  });
+  const version = await chat.latestVersion();
+  assert.ok(version);
+  assert.deepEqual((await version.files()).map(({ path, locked }) => ({ path, locked })), [
+    { path: "farm.config.ts", locked: true },
+    { path: "package.json", locked: true },
+    { path: "src/index.ts", locked: false },
+  ]);
+
+  for (const changes of [
+    [{ type: "write", path: "package.json", content: "changed" }] as const,
+    [{ type: "delete", path: "package.json" }] as const,
+    [{ type: "move", from: "package.json", to: "package.old.json" }] as const,
+  ]) {
+    await assert.rejects(() => version.apply({ changes }), /locked: package\.json/);
+  }
+
+  const workspace = await version.workspace();
+  assert.equal((await workspace.tools.listFiles()).find((file) => file.path === "package.json")?.locked,
+    true);
+  await assert.rejects(
+    () => workspace.tools.writeFile({ path: "package.json", content: "changed" }),
+    /locked: package\.json/,
+  );
+  await assert.rejects(() => workspace.tools.deleteFile({ path: "package.json" }),
+    /locked: package\.json/);
+  await assert.rejects(
+    () => workspace.tools.moveFile({ from: "package.json", to: "package.old.json" }),
+    /locked: package\.json/,
+  );
+
+  const edited = await version.apply({
+    changes: [{ type: "write", path: "src/index.ts", content: "export const version = 2;\n" }],
+  });
+  assert.equal((await edited.files()).find((file) => file.path === "package.json")?.locked, true);
+  const forked = await version.fork();
+  assert.equal((await (await forked.latestVersion())?.files())?.find(
+    (file) => file.path === "package.json",
+  )?.locked, true);
+  const restored = await version.restore();
+  assert.equal((await restored.files()).find((file) => file.path === "package.json")?.locked, true);
+
+  await assert.rejects(() => version.iterate({ prompt: "Replace the entire project" }),
+    /locked: farm\.config\.ts/);
+  assert.equal((await chat.listVersions()).items.length, 3);
+});
+
+test("applies locked import policies to ZIP archives and validates policy paths", async () => {
+  const { viby } = setup();
+  const user = viby.forUser({ tenantId: "tenant-a", userId: "user-a" });
+  const chat = await user.chats.import({
+    filePolicy: { locked: "all" },
+    source: {
+      type: "zip",
+      bytes: zipSync({ "package.json": strToU8("{}\n"), "src/index.ts": strToU8("export {};\n") }),
+    },
+  });
+  assert.equal((await (await chat.latestVersion())?.files())?.every((file) => file.locked), true);
+  await assert.rejects(
+    () => user.chats.import({
+      filePolicy: { locked: ["missing.ts"] },
+      source: { type: "files", files: [{ path: "src/index.ts", content: "export {};\n" }] },
+    }),
+    /not found in the import/,
+  );
 });
 
 test("forks and restores exact immutable version snapshots", async () => {

@@ -12,6 +12,7 @@ export interface AgentWorkspaceFile {
   readonly mediaType: string;
   readonly size: number;
   readonly checksum: string;
+  readonly locked: boolean;
 }
 
 export interface AgentWorkspaceSearchResult {
@@ -91,7 +92,13 @@ export class AgentWorkspace<Result = unknown> {
     const prefix = normalizePrefix(input.prefix);
     return this.#files
       .filter((file) => !prefix || file.path === prefix || file.path.startsWith(`${prefix}/`))
-      .map(({ path, mediaType, size, checksum }) => ({ path, mediaType, size, checksum }));
+      .map(({ path, mediaType, size, checksum, locked }) => ({
+        path,
+        mediaType,
+        size,
+        checksum,
+        locked,
+      }));
   }
 
   async read(input: { readonly path: string }): Promise<VersionFile> {

@@ -91,6 +91,7 @@ export type {
   GenerateInput,
   ImportProjectInput,
   ImportProjectSource,
+  ImportFilePolicy,
   GenerationAttemptData,
   GenerationAttemptReason,
   GenerationAttemptStatus,
