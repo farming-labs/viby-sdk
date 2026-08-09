@@ -1,5 +1,6 @@
 import type {
   ChatData,
+  ChatMetadata,
   FrameworkId,
   GenerationAttemptData,
   GenerationData,
@@ -10,6 +11,7 @@ import type {
   MessageData,
   MessagePart,
   MessagePartInput,
+  JsonValue,
   ResolvedSkill,
   SourceChange,
   ToolCallData,
@@ -256,8 +258,11 @@ export class MemoryRepository implements Repository {
     scope: UserScope,
     limit: number,
     after: ChatPageCursor | null,
+    metadata: ChatMetadata,
   ): Promise<RepositoryPage<ChatData<Framework>>> {
-    let records = sortChats([...this.chats.values()].filter((chat) => inScope(chat, scope)));
+    let records = sortChats([...this.chats.values()].filter((chat) => (
+      inScope(chat, scope) && containsJson(chat.metadata, metadata)
+    )));
     if (after) {
       records = records.filter((chat) => (
         chat.updatedAt < after.updatedAt
@@ -1157,6 +1162,21 @@ function sortChats<Item extends ChatData>(chats: Item[]): Item[] {
   return chats.sort((left, right) => (
     right.updatedAt.getTime() - left.updatedAt.getTime() || right.id.localeCompare(left.id)
   ));
+}
+
+function containsJson(value: JsonValue, filter: JsonValue): boolean {
+  if (Array.isArray(filter)) {
+    return Array.isArray(value) && filter.every((entry) => (
+      value.some((candidate) => containsJson(candidate, entry))
+    ));
+  }
+  if (filter !== null && typeof filter === "object") {
+    if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+    return Object.entries(filter).every(([key, entry]) => (
+      Object.hasOwn(value, key) && containsJson(value[key]!, entry)
+    ));
+  }
+  return Object.is(value, filter);
 }
 
 function createMemoryMessage(

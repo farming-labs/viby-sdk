@@ -538,9 +538,14 @@ const updated = await chat.update({
   title: "Customer analytics",
   metadata: { favorite: true, workspaceId: "workspace_123" },
 });
+
+const workspaceChats = await userViby.chats.list({
+  metadata: { workspaceId: "workspace_123" },
+  limit: 20,
+});
 ```
 
-Pagination cursors are opaque and stable for the resource ordering. All reads and writes remain constrained by both `tenantId` and `userId`.
+Metadata filters use JSON containment, including nested objects and array members, and are applied before pagination. Pagination cursors are opaque and stable for the resource ordering. Reuse the same filter with later cursors. All reads and writes remain constrained by both `tenantId` and `userId`.
 
 ## Render typed message parts
 

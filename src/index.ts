@@ -81,6 +81,7 @@ export type {
   ApplySourceChangesInput,
   AgentRunnerConfig,
   ChatData,
+  ChatListOptions,
   ChatMetadata,
   CreateChatInput,
   CursorPage,

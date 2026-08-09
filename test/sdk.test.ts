@@ -592,6 +592,56 @@ test("updates JSON chat metadata and paginates chats, messages, and versions", a
   );
 });
 
+test("filters tenant-scoped chat pages by nested metadata containment", async () => {
+  const { viby } = setup();
+  const user = viby.forUser({ tenantId: "tenant-a", userId: "user-a" });
+  const first = await user.chats.create({
+    title: "First dashboard",
+    metadata: {
+      workspace: { id: "workspace-1", owner: "design" },
+      labels: ["dashboard", "analytics"],
+    },
+  });
+  await user.chats.create({
+    title: "Different workspace",
+    metadata: { workspace: { id: "workspace-2" }, labels: ["dashboard"] },
+  });
+  const second = await user.chats.create({
+    title: "Second dashboard",
+    metadata: {
+      workspace: { id: "workspace-1", owner: "engineering" },
+      labels: ["saas", "dashboard"],
+    },
+  });
+  const filter = { workspace: { id: "workspace-1" }, labels: ["dashboard"] };
+
+  const pageOne = await user.chats.list({ limit: 1, metadata: filter });
+  assert.equal(pageOne.items.length, 1);
+  assert.ok(pageOne.nextCursor);
+  const pageTwo = await user.chats.list({
+    limit: 1,
+    after: pageOne.nextCursor,
+    metadata: filter,
+  });
+  assert.equal(pageTwo.items.length, 1);
+  assert.equal(pageTwo.nextCursor, null);
+  assert.deepEqual(
+    new Set([...pageOne.items, ...pageTwo.items].map((chat) => chat.id)),
+    new Set([first.id, second.id]),
+  );
+  assert.deepEqual((await user.chats.list({ metadata: { missing: true } })).items, []);
+  assert.deepEqual(
+    (await viby.forUser({ tenantId: "tenant-b", userId: "user-b" }).chats.list({
+      metadata: filter,
+    })).items,
+    [],
+  );
+  await assert.rejects(
+    () => user.chats.list({ metadata: { score: Number.NaN } }),
+    /must be finite/,
+  );
+});
+
 test("persists failed generation attempts without creating partial versions", async () => {
   const { viby, repository, generator } = setup();
   generator.shouldFail = true;

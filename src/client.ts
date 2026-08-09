@@ -1,5 +1,6 @@
 import type {
   ChatData,
+  ChatListOptions,
   CursorPage,
   ApplySourceChangesInput,
   CreateChatInput,
@@ -424,12 +425,14 @@ export class ChatCollection<Framework extends FrameworkId = FrameworkId> {
     return new Chat(data, this.#dependencies);
   }
 
-  async list(options: PageOptions = {}): Promise<CursorPage<Chat<Framework>>> {
+  async list(options: ChatListOptions = {}): Promise<CursorPage<Chat<Framework>>> {
     const limit = normalizePageLimit(options.limit);
+    const metadata = normalizeChatMetadata(options.metadata);
     const page = await this.#dependencies.repository.listChatPage<Framework>(
       this.#dependencies.scope,
       limit,
       decodeChatCursor(options.after),
+      metadata,
     );
     const items = page.items.map((record) => new Chat(record, this.#dependencies));
     const last = page.items.at(-1);

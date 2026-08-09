@@ -51,7 +51,7 @@ The official v2 documentation organizes the API around these resources and endpo
 | Create from files | Create Chat From Files | `chats.import({ source: { type: "files" } })` | Shipped |
 | Create from ZIP | Create Chat From ZIP | `chats.import({ source: { type: "zip" } })` | Shipped |
 | Create from repository | Create Chat From Repository | future source-import adapter | Adapter |
-| List and filter chats | List Chats, including metadata filters | `chats.list({ limit, after })` | Partial |
+| List and filter chats | List Chats, including metadata filters | `chats.list({ limit, after, metadata })` | Shipped |
 | Get one chat | Get Chat | `chats.get(id)` | Shipped |
 | Update title and metadata | Update Chat | `chat.update` | Shipped |
 | Privacy and write permission | Chat privacy fields | host authorization and metadata | App-owned |
@@ -133,7 +133,7 @@ Viby separates a portable tool call from the credentialed connection used to ful
 Capability discovery, the adapter conformance suite, background processes, readiness checks, durable sandbox leases, reconnect-by-ID, generation worker leases with heartbeats, sandbox command policy enforcement, immutable agent workspace change sets, typed durable message parts, and permission-gated agent sandbox actions are shipped.
 
 1. Optional sandbox-backed preview sessions and a host-proxy contract.
-2. Attachments, generation-scoped model/skill configuration, file locks, lookup, deletion, search, and outbound event sinks.
+2. Attachments, generation-scoped model/skill configuration, file locks, lookup, deletion, and outbound event sinks.
 3. Explicit Git and deployment adapters after the portable generation workflow is complete.
 
 ## Persistence rules

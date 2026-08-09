@@ -571,12 +571,15 @@ export class PostgresRepository implements Repository {
     scope: UserScope,
     limit: number,
     after: ChatPageCursor | null,
+    metadata: ChatMetadata,
   ): Promise<RepositoryPage<ChatData<Framework>>> {
     await this.assertReady();
+    const filter = this.#sql.json(JSON.parse(JSON.stringify(metadata)));
     const rows = after
       ? await this.#sql<ChatRow[]>`
           SELECT * FROM viby.chats
           WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+            AND metadata @> ${filter}::jsonb
             AND (
               date_trunc('milliseconds', updated_at) < ${after.updatedAt}
               OR (
@@ -590,6 +593,7 @@ export class PostgresRepository implements Repository {
       : await this.#sql<ChatRow[]>`
           SELECT * FROM viby.chats
           WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+            AND metadata @> ${filter}::jsonb
           ORDER BY date_trunc('milliseconds', updated_at) DESC, id DESC
           LIMIT ${limit + 1}
         `;
