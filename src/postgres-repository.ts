@@ -1697,6 +1697,18 @@ export class PostgresRepository implements Repository {
     return this.#messagesWithParts(scope, rows);
   }
 
+  async getMessage(scope: UserScope, chatId: string, id: string): Promise<MessageData | null> {
+    await this.assertReady();
+    const rows = await this.#sql<MessageRow[]>`
+      SELECT id, chat_id, generation_id, role, content, created_at
+      FROM viby.messages
+      WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+        AND chat_id = ${chatId} AND id = ${id}
+      LIMIT 1
+    `;
+    return (await this.#messagesWithParts(scope, rows))[0] ?? null;
+  }
+
   async listMessagePage(
     scope: UserScope,
     chatId: string,

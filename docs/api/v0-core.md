@@ -73,7 +73,7 @@ v0 v2 messages contain ordered parts such as text, thinking, file reads, file ed
 | Capability | v0 v2 | Viby-native surface | Status |
 | --- | --- | --- | --- |
 | List messages | Get Messages | `chat.listMessages` | Shipped |
-| Get one message | Get Message | proposed `chat.getMessage` | Planned |
+| Get one message | Get Message | `chat.getMessage(id)` | Shipped |
 | Send sync | Send Message | `chat.generate` or `version.iterate` | Shipped |
 | Send async | Send Message Async | `chat.start` or `version.startIteration` | Shipped |
 | Send streaming | Send Message Streaming | `generation.stream` | Shipped |
@@ -133,7 +133,7 @@ Viby separates a portable tool call from the credentialed connection used to ful
 Capability discovery, the adapter conformance suite, background processes, readiness checks, durable sandbox leases, reconnect-by-ID, generation worker leases with heartbeats, sandbox command policy enforcement, immutable agent workspace change sets, typed durable message parts, and permission-gated agent sandbox actions are shipped.
 
 1. Optional sandbox-backed preview sessions and a host-proxy contract.
-2. Attachments, generation-scoped model/skill configuration, file locks, lookup, deletion, and outbound event sinks.
+2. Attachments, generation-scoped model/skill configuration, file locks, deletion, and outbound event sinks.
 3. Explicit Git and deployment adapters after the portable generation workflow is complete.
 
 ## Persistence rules
