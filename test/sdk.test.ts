@@ -684,6 +684,83 @@ test("updates JSON chat metadata and paginates chats, messages, and versions", a
   );
 });
 
+test("soft deletes, restores, and purges chats according to retention", async () => {
+  const { viby, repository } = setup();
+  const owner = viby.forUser({ tenantId: "tenant-a", userId: "user-a" });
+  const stranger = viby.forUser({ tenantId: "tenant-b", userId: "user-b" });
+  const chat = await owner.chats.import({
+    title: "Retained project",
+    source: { type: "files", files: [{ path: "src/index.ts", content: "export {};\n" }] },
+  });
+  const version = await chat.latestVersion();
+  assert.ok(version);
+
+  const deleted = await chat.delete();
+  assert.equal(deleted.chatId, chat.id);
+  assert.equal(deleted.purgeAfter!.getTime() - deleted.deletedAt.getTime(), 30 * 24 * 60 * 60 * 1_000);
+  await assert.rejects(() => owner.chats.get(chat.id), NotFoundError);
+  await assert.rejects(() => chat.latestVersion(), NotFoundError);
+  await assert.rejects(() => version.files(), NotFoundError);
+  await assert.rejects(() => stranger.chats.restore(chat.id), NotFoundError);
+  assert.deepEqual((await owner.chats.list()).items, []);
+
+  const restored = await owner.chats.restore(chat.id);
+  assert.equal((await restored.latestVersion())?.id, version.id);
+  assert.equal((await version.files())[0]?.path, "src/index.ts");
+
+  await restored.delete({ retentionMs: null });
+  assert.equal(await owner.chats.purgeDeleted(), 0);
+  const restoredAgain = await owner.chats.restore(chat.id);
+  await restoredAgain.delete({ retentionMs: 0 });
+  await assert.rejects(() => owner.chats.restore(chat.id), NotFoundError);
+  assert.equal(await owner.chats.purgeDeleted(), 1);
+  assert.equal(repository.chats.has(chat.id), false);
+  assert.equal(repository.versions.has(version.id), false);
+  assert.equal(await owner.chats.purgeDeleted(), 0);
+});
+
+test("rejects deletion while a chat has an active durable generation", async () => {
+  const repository = new MemoryRepository();
+  const generator = new FakeGenerator<"farm">();
+  const viby = createVibyWithDependencies(
+    {
+      framework: "farm",
+      model: "test/mock" as LanguageModel,
+      generation: { execution: "worker" },
+    },
+    { repository, generator, skillResolver: new SkillResolver({}) },
+  );
+  const chat = await viby
+    .forUser({ tenantId: "tenant-a", userId: "user-a" })
+    .chats.create();
+  const generation = await chat.start({ prompt: "Build a dashboard" });
+  await assert.rejects(() => chat.delete(), /active generation/);
+  await generation.cancel("Delete requested.");
+  assert.equal((await chat.delete({ retentionMs: 0 })).chatId, chat.id);
+});
+
+test("validates the declarative deleted-chat retention policy", () => {
+  const repository = new MemoryRepository();
+  const generator = new FakeGenerator<"farm">();
+  const dependencies = { repository, generator, skillResolver: new SkillResolver({}) };
+  assert.throws(
+    () => createVibyWithDependencies({
+      framework: "farm",
+      model: "test/mock" as LanguageModel,
+      retention: { deletedChatsMs: -1 },
+    }, dependencies),
+    /Deleted chat retention/,
+  );
+  assert.throws(
+    () => createVibyWithDependencies({
+      framework: "farm",
+      model: "test/mock" as LanguageModel,
+      retention: "forever" as never,
+    }, dependencies),
+    /retention must be an object/,
+  );
+});
+
 test("filters tenant-scoped chat pages by nested metadata containment", async () => {
   const { viby } = setup();
   const user = viby.forUser({ tenantId: "tenant-a", userId: "user-a" });

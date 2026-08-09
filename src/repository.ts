@@ -1,5 +1,6 @@
 import type {
   ChatData,
+  ChatDeletionData,
   ChatMetadata,
   FrameworkId,
   GenerationAttemptData,
@@ -69,6 +70,11 @@ export interface ForkVersionRecord<Framework extends FrameworkId = FrameworkId> 
 export interface UpdateChatRecord {
   readonly title: string;
   readonly metadata: ChatMetadata;
+}
+
+export interface DeleteChatRecord {
+  readonly deletedAt: Date;
+  readonly purgeAfter: Date | null;
 }
 
 export interface RepositoryPage<Item> {
@@ -247,6 +253,17 @@ export interface Repository {
     id: string,
     input: UpdateChatRecord,
   ): Promise<ChatData<Framework>>;
+  deleteChat(
+    scope: UserScope,
+    id: string,
+    input: DeleteChatRecord,
+  ): Promise<ChatDeletionData>;
+  restoreChat<Framework extends FrameworkId>(
+    scope: UserScope,
+    id: string,
+    now: Date,
+  ): Promise<ChatData<Framework>>;
+  purgeDeletedChats(scope: UserScope, now: Date, limit: number): Promise<number>;
   getChat<Framework extends FrameworkId>(
     scope: UserScope,
     id: string,
