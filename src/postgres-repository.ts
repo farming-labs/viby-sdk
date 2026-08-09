@@ -1,6 +1,7 @@
 import postgres from "postgres";
 import type {
   ChatData,
+  ChatDeletionData,
   ChatMetadata,
   FrameworkId,
   GenerationAttemptData,
@@ -41,6 +42,7 @@ import type {
   CreatedGeneration,
   CreateGenerationRecord,
   CreateToolCallRecord,
+  DeleteChatRecord,
   CreatedToolCall,
   CreateSourceVersionRecord,
   ForkVersionRecord,
@@ -75,6 +77,8 @@ interface ChatRow {
   framework: string;
   created_at: Date;
   updated_at: Date;
+  deleted_at: Date | null;
+  purge_after: Date | null;
 }
 
 interface GenerationRow {
@@ -531,6 +535,7 @@ export class PostgresRepository implements Repository {
     const [row] = await this.#sql<ChatRow[]>`
       SELECT * FROM viby.chats
       WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId} AND id = ${id}
+        AND deleted_at IS NULL
       LIMIT 1
     `;
     return row ? mapChat<Framework>(row) : null;
@@ -548,10 +553,85 @@ export class PostgresRepository implements Repository {
         metadata = ${this.#sql.json(JSON.parse(JSON.stringify(input.metadata)))},
         updated_at = now()
       WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId} AND id = ${id}
+        AND deleted_at IS NULL
       RETURNING *
     `;
     if (!row) throw new NotFoundError("Chat");
     return mapChat<Framework>(row);
+  }
+
+  async deleteChat(
+    scope: UserScope,
+    id: string,
+    input: DeleteChatRecord,
+  ): Promise<ChatDeletionData> {
+    await this.assertReady();
+    return this.#sql.begin(async (sql) => {
+      const [chat] = await sql<ChatRow[]>`
+        SELECT * FROM viby.chats
+        WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+          AND id = ${id} AND deleted_at IS NULL
+        FOR UPDATE
+      `;
+      if (!chat) throw new NotFoundError("Chat");
+      const [active] = await sql<{ id: string }[]>`
+        SELECT id FROM viby.generations
+        WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+          AND chat_id = ${id} AND status IN ('queued', 'running', 'waiting')
+        LIMIT 1
+      `;
+      if (active) throw new GenerationStateError(id, "Chat has an active generation.");
+      const [deleted] = await sql<ChatRow[]>`
+        UPDATE viby.chats SET
+          deleted_at = ${input.deletedAt}, purge_after = ${input.purgeAfter}
+        WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId} AND id = ${id}
+        RETURNING *
+      `;
+      if (!deleted?.deleted_at) throw new Error("Postgres did not return the deleted chat.");
+      return {
+        chatId: deleted.id,
+        deletedAt: deleted.deleted_at,
+        purgeAfter: deleted.purge_after,
+      };
+    });
+  }
+
+  async restoreChat<Framework extends FrameworkId>(
+    scope: UserScope,
+    id: string,
+    now: Date,
+  ): Promise<ChatData<Framework>> {
+    await this.assertReady();
+    const [row] = await this.#sql<ChatRow[]>`
+      UPDATE viby.chats SET deleted_at = NULL, purge_after = NULL, updated_at = now()
+      WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId} AND id = ${id}
+        AND deleted_at IS NOT NULL
+        AND (purge_after IS NULL OR purge_after > ${now})
+      RETURNING *
+    `;
+    if (!row) throw new NotFoundError("Deleted chat");
+    return mapChat<Framework>(row);
+  }
+
+  async purgeDeletedChats(scope: UserScope, now: Date, limit: number): Promise<number> {
+    await this.assertReady();
+    const [row] = await this.#sql<{ count: number }[]>`
+      WITH candidates AS (
+        SELECT id FROM viby.chats
+        WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+          AND deleted_at IS NOT NULL AND purge_after IS NOT NULL AND purge_after <= ${now}
+        ORDER BY purge_after, id
+        LIMIT ${limit}
+        FOR UPDATE SKIP LOCKED
+      ), deleted AS (
+        DELETE FROM viby.chats AS chats
+        USING candidates
+        WHERE chats.id = candidates.id
+        RETURNING chats.id
+      )
+      SELECT count(*)::integer AS count FROM deleted
+    `;
+    return row?.count ?? 0;
   }
 
   async listChats<Framework extends FrameworkId>(
@@ -562,6 +642,7 @@ export class PostgresRepository implements Repository {
     const rows = await this.#sql<ChatRow[]>`
       SELECT * FROM viby.chats
       WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+        AND deleted_at IS NULL
       ORDER BY updated_at DESC
       LIMIT ${limit}
     `;
@@ -580,6 +661,7 @@ export class PostgresRepository implements Repository {
       ? await this.#sql<ChatRow[]>`
           SELECT * FROM viby.chats
           WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+            AND deleted_at IS NULL
             AND metadata @> ${filter}::jsonb
             AND (
               date_trunc('milliseconds', updated_at) < ${after.updatedAt}
@@ -594,6 +676,7 @@ export class PostgresRepository implements Repository {
       : await this.#sql<ChatRow[]>`
           SELECT * FROM viby.chats
           WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+            AND deleted_at IS NULL
             AND metadata @> ${filter}::jsonb
           ORDER BY date_trunc('milliseconds', updated_at) DESC, id DESC
           LIMIT ${limit + 1}
@@ -616,6 +699,7 @@ export class PostgresRepository implements Repository {
           ${input.attemptId}, 1, ${input.prompt}, 'queued', ${input.modelProvider}, ${input.modelId}
         FROM viby.chats
         WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId} AND id = ${input.chatId}
+          AND deleted_at IS NULL
         RETURNING *
       `;
       if (!generation) throw new NotFoundError("Chat");

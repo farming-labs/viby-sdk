@@ -56,7 +56,7 @@ The official v2 documentation organizes the API around these resources and endpo
 | Update title and metadata | Update Chat | `chat.update` | Shipped |
 | Privacy and write permission | Chat privacy fields | host authorization and metadata | App-owned |
 | Duplicate current workspace | Duplicate Chat | `version.fork` | Shipped |
-| Delete a chat | Delete Chat | proposed `chat.delete` with retention policy | Planned |
+| Delete a chat | Delete Chat | `chat.delete`, time-bounded restore, and explicit batched purge | Shipped |
 | Stop work | stop/cancel active agent work | `generation.cancel` | Shipped |
 | Resume interrupted work | Resume Chat Stream and async task continuation | event cursor plus `generation.resume` | Shipped |
 | Per-request system prompt | `systemPrompt` | generation-scoped instruction/skill override | Planned |

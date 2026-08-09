@@ -1,9 +1,11 @@
 import type {
   ChatData,
+  ChatDeletionData,
   ChatListOptions,
   CursorPage,
   ApplySourceChangesInput,
   CreateChatInput,
+  DeleteChatInput,
   FrameworkId,
   ForkVersionInput,
   GenerateInput,
@@ -26,6 +28,7 @@ import type {
   MessagePartType,
   JsonValue,
   PageOptions,
+  PurgeDeletedChatsInput,
   ResolveGenerationTaskInput,
   RestoreVersionInput,
   SourceChange,
@@ -96,6 +99,8 @@ const DEFAULT_EVENT_LIMIT = 100;
 const DEFAULT_WORKER_LEASE_MS = 30_000;
 const DEFAULT_WORKER_HEARTBEAT_MS = 10_000;
 const DEFAULT_WORKER_POLL_INTERVAL_MS = 500;
+const DEFAULT_DELETED_CHAT_RETENTION_MS = 30 * 24 * 60 * 60 * 1_000;
+const MAX_DELETED_CHAT_RETENTION_MS = 10 * 365 * 24 * 60 * 60 * 1_000;
 
 export interface GenerationWorkerOptions {
   readonly id: string;
@@ -182,6 +187,7 @@ class VibyClient<Framework extends FrameworkId> implements Viby<Framework> {
   readonly #sandboxes: SandboxRegistry;
   readonly #runner: GenerationRunner<Framework>;
   readonly #workers = new Set<GenerationWorker<Framework>>();
+  readonly #deletedChatsMs: number | null;
 
   constructor(
     config: VibyConfig<Framework>,
@@ -190,6 +196,7 @@ class VibyClient<Framework extends FrameworkId> implements Viby<Framework> {
     this.framework = config.framework;
     this.#sandbox = config.sandbox;
     this.#repository = dependencies.repository;
+    this.#deletedChatsMs = normalizeChatRetentionConfig(config.retention);
     this.#sandboxes = new SandboxRegistry(this.#repository, config.sandboxPolicy);
     this.#skillResolver = dependencies.skillResolver;
     if (typeof config.model === "string") {
@@ -229,6 +236,7 @@ class VibyClient<Framework extends FrameworkId> implements Viby<Framework> {
       modelId: this.#modelId,
       sandbox: this.#sandbox,
       sandboxes: this.#sandboxes,
+      deletedChatsMs: this.#deletedChatsMs,
     });
   }
 
@@ -330,6 +338,7 @@ interface ScopedDependencies<Framework extends FrameworkId> {
   readonly modelId: string;
   readonly sandbox: SandboxAdapter | undefined;
   readonly sandboxes: SandboxRegistry;
+  readonly deletedChatsMs: number | null;
 }
 
 export class ScopedViby<Framework extends FrameworkId = FrameworkId> {
@@ -429,6 +438,27 @@ export class ChatCollection<Framework extends FrameworkId = FrameworkId> {
     return new Chat(data, this.#dependencies);
   }
 
+  async restore(id: string): Promise<Chat<Framework>> {
+    const data = await this.#dependencies.repository.restoreChat<Framework>(
+      this.#dependencies.scope,
+      assertIdentifier(id, "Chat id"),
+      new Date(),
+    );
+    return new Chat(data, this.#dependencies);
+  }
+
+  async purgeDeleted(input: PurgeDeletedChatsInput = {}): Promise<number> {
+    if (!input || typeof input !== "object") {
+      throw new ConfigurationError("Deleted chat purge options must be an object.");
+    }
+    const limit = normalizePageLimit(input.limit);
+    return this.#dependencies.repository.purgeDeletedChats(
+      this.#dependencies.scope,
+      new Date(),
+      limit,
+    );
+  }
+
   async list(options: ChatListOptions = {}): Promise<CursorPage<Chat<Framework>>> {
     const limit = normalizePageLimit(options.limit);
     const metadata = normalizeChatMetadata(options.metadata);
@@ -462,6 +492,7 @@ export class GenerationCollection<Framework extends FrameworkId = FrameworkId> {
       id,
     );
     if (!generation) throw new NotFoundError("Generation");
+    await assertActiveChat(this.#dependencies, generation.chatId);
     return new Generation(generation.id, generation.chatId, this.#dependencies);
   }
 }
@@ -499,7 +530,20 @@ export class Chat<Framework extends FrameworkId = FrameworkId> {
     return new Chat(data, this.#dependencies);
   }
 
+  async delete(input: DeleteChatInput = {}): Promise<ChatDeletionData> {
+    if (!input || typeof input !== "object") {
+      throw new ConfigurationError("Chat deletion options must be an object.");
+    }
+    const retentionMs = normalizeRetentionMs(input.retentionMs, this.#dependencies.deletedChatsMs);
+    const deletedAt = new Date();
+    return this.#dependencies.repository.deleteChat(this.#dependencies.scope, this.id, {
+      deletedAt,
+      purgeAfter: retentionMs === null ? null : new Date(deletedAt.getTime() + retentionMs),
+    });
+  }
+
   async start(input: GenerateInput): Promise<Generation<Framework>> {
+    await this.#assertActive();
     const latest = await this.#dependencies.repository.getLatestVersion<Framework>(
       this.#dependencies.scope,
       this.id,
@@ -512,6 +556,7 @@ export class Chat<Framework extends FrameworkId = FrameworkId> {
   }
 
   async getGeneration(id: string): Promise<Generation<Framework>> {
+    await this.#assertActive();
     const generation = await this.#dependencies.repository.getGeneration(
       this.#dependencies.scope,
       id,
@@ -521,6 +566,7 @@ export class Chat<Framework extends FrameworkId = FrameworkId> {
   }
 
   async latestVersion(): Promise<Version<Framework> | null> {
+    await this.#assertActive();
     const data = await this.#dependencies.repository.getLatestVersion<Framework>(
       this.#dependencies.scope,
       this.id,
@@ -529,6 +575,7 @@ export class Chat<Framework extends FrameworkId = FrameworkId> {
   }
 
   async getVersion(id: string): Promise<Version<Framework>> {
+    await this.#assertActive();
     const data = await this.#dependencies.repository.getVersion<Framework>(
       this.#dependencies.scope,
       id,
@@ -538,6 +585,7 @@ export class Chat<Framework extends FrameworkId = FrameworkId> {
   }
 
   async listVersions(options: PageOptions = {}): Promise<CursorPage<Version<Framework>>> {
+    await this.#assertActive();
     const limit = normalizePageLimit(options.limit);
     const page = await this.#dependencies.repository.listVersionPage<Framework>(
       this.#dependencies.scope,
@@ -554,6 +602,7 @@ export class Chat<Framework extends FrameworkId = FrameworkId> {
   }
 
   async listMessages(options: PageOptions = {}): Promise<CursorPage<MessageData>> {
+    await this.#assertActive();
     const limit = normalizePageLimit(options.limit);
     const page = await this.#dependencies.repository.listMessagePage(
       this.#dependencies.scope,
@@ -571,6 +620,7 @@ export class Chat<Framework extends FrameworkId = FrameworkId> {
   }
 
   async getMessage(id: string): Promise<MessageData> {
+    await this.#assertActive();
     const message = await this.#dependencies.repository.getMessage(
       this.#dependencies.scope,
       this.id,
@@ -598,6 +648,7 @@ export class Chat<Framework extends FrameworkId = FrameworkId> {
     input: GenerateInput,
     baseVersion: VersionData<Framework> | null,
   ): Promise<Generation<Framework>> {
+    await this.#assertActive();
     const prompt = assertPrompt(input.prompt);
     const generationId = createId();
     const attemptId = createId();
@@ -612,6 +663,10 @@ export class Chat<Framework extends FrameworkId = FrameworkId> {
     });
     this.#dependencies.runner.schedule(this.#dependencies.scope, generationId, attemptId);
     return new Generation(generationId, this.id, this.#dependencies);
+  }
+
+  async #assertActive(): Promise<void> {
+    await assertActiveChat(this.#dependencies, this.id);
   }
 }
 
@@ -634,6 +689,7 @@ export class Generation<Framework extends FrameworkId = FrameworkId> {
   get chatId(): string { return this.#chatId; }
 
   async data(): Promise<GenerationData> {
+    await assertActiveChat(this.#dependencies, this.chatId);
     const generation = await this.#dependencies.repository.getGeneration(
       this.#dependencies.scope,
       this.id,
@@ -642,21 +698,24 @@ export class Generation<Framework extends FrameworkId = FrameworkId> {
     return generation;
   }
 
-  attempts(): Promise<GenerationAttemptData[]> {
+  async attempts(): Promise<GenerationAttemptData[]> {
+    await assertActiveChat(this.#dependencies, this.chatId);
     return this.#dependencies.repository.listGenerationAttempts(
       this.#dependencies.scope,
       this.id,
     );
   }
 
-  tasks(): Promise<GenerationTaskData[]> {
+  async tasks(): Promise<GenerationTaskData[]> {
+    await assertActiveChat(this.#dependencies, this.chatId);
     return this.#dependencies.repository.listGenerationTasks(
       this.#dependencies.scope,
       this.id,
     );
   }
 
-  toolCalls(): Promise<ToolCallData[]> {
+  async toolCalls(): Promise<ToolCallData[]> {
+    await assertActiveChat(this.#dependencies, this.chatId);
     return this.#dependencies.repository.listToolCalls(
       this.#dependencies.scope,
       this.id,
@@ -664,6 +723,7 @@ export class Generation<Framework extends FrameworkId = FrameworkId> {
   }
 
   async events(options: GenerationEventOptions = {}): Promise<GenerationEventPage> {
+    await assertActiveChat(this.#dependencies, this.chatId);
     const after = normalizeCursor(options.after);
     const limit = options.limit ?? DEFAULT_EVENT_LIMIT;
     if (!Number.isInteger(limit) || limit < 1 || limit > 500) {
@@ -764,6 +824,7 @@ export class Generation<Framework extends FrameworkId = FrameworkId> {
   }
 
   async retry(): Promise<this> {
+    await assertActiveChat(this.#dependencies, this.chatId);
     if (this.#dependencies.registry.has(this.id)) {
       throw new GenerationStateError(this.id, "Generation already has an active local attempt.");
     }
@@ -776,6 +837,7 @@ export class Generation<Framework extends FrameworkId = FrameworkId> {
   }
 
   async resume(): Promise<this> {
+    await assertActiveChat(this.#dependencies, this.chatId);
     if (this.#dependencies.registry.has(this.id)) {
       throw new GenerationStateError(this.id, "Generation already has an active local attempt.");
     }
@@ -788,6 +850,7 @@ export class Generation<Framework extends FrameworkId = FrameworkId> {
   }
 
   async resolve(input: ResolveGenerationTaskInput): Promise<this> {
+    await assertActiveChat(this.#dependencies, this.chatId);
     if (this.#dependencies.registry.has(this.id)) {
       throw new GenerationStateError(this.id, "Generation already has an active local attempt.");
     }
@@ -923,11 +986,13 @@ export class Version<Framework extends FrameworkId = FrameworkId> {
     return new Version(data, this.#dependencies);
   }
 
-  files(): Promise<VersionFile[]> {
+  async files(): Promise<VersionFile[]> {
+    await assertActiveChat(this.#dependencies, this.chatId);
     return this.#dependencies.repository.getVersionFiles(this.#dependencies.scope, this.id);
   }
 
-  changes(): Promise<SourceChange[]> {
+  async changes(): Promise<SourceChange[]> {
+    await assertActiveChat(this.#dependencies, this.chatId);
     return this.#dependencies.repository.getVersionChanges(this.#dependencies.scope, this.id);
   }
 
@@ -949,6 +1014,7 @@ export class Version<Framework extends FrameworkId = FrameworkId> {
   }
 
   async generation(): Promise<GenerationData | null> {
+    await assertActiveChat(this.#dependencies, this.chatId);
     if (!this.generationId) return null;
     const generation = await this.#dependencies.repository.getGeneration(
       this.#dependencies.scope,
@@ -961,6 +1027,14 @@ export class Version<Framework extends FrameworkId = FrameworkId> {
   async download(): Promise<DownloadArtifact> {
     return createSourceDownload(this.title, await this.files());
   }
+}
+
+async function assertActiveChat<Framework extends FrameworkId>(
+  dependencies: ScopedDependencies<Framework>,
+  chatId: string,
+): Promise<void> {
+  const chat = await dependencies.repository.getChat(dependencies.scope, chatId);
+  if (!chat) throw new NotFoundError("Chat");
 }
 
 function normalizeChatTitle(value: string | undefined): string {
@@ -1696,6 +1770,28 @@ function normalizeGenerationExecution(
     throw new ConfigurationError("generation.execution must be embedded or worker.");
   }
   return execution;
+}
+
+function normalizeRetentionMs(
+  value: number | null | undefined,
+  fallback: number | null,
+): number | null {
+  const retention = value === undefined ? fallback : value;
+  if (retention === null) return null;
+  if (!Number.isInteger(retention) || retention < 0 || retention > MAX_DELETED_CHAT_RETENTION_MS) {
+    throw new ConfigurationError(
+      `Deleted chat retention must be null or an integer between 0 and ${MAX_DELETED_CHAT_RETENTION_MS} milliseconds.`,
+    );
+  }
+  return retention;
+}
+
+function normalizeChatRetentionConfig(value: VibyConfig["retention"]): number | null {
+  if (value === undefined) return DEFAULT_DELETED_CHAT_RETENTION_MS;
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new ConfigurationError("retention must be an object.");
+  }
+  return normalizeRetentionMs(value.deletedChatsMs, DEFAULT_DELETED_CHAT_RETENTION_MS);
 }
 
 function normalizeGenerationWorkerOptions(

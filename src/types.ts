@@ -52,6 +52,9 @@ export interface VibyConfig<Framework extends FrameworkId = FrameworkId> {
   readonly generation?: {
     readonly execution?: "embedded" | "worker";
   };
+  readonly retention?: {
+    readonly deletedChatsMs?: number | null;
+  };
 }
 
 export interface AgentRunnerConfig {
@@ -83,6 +86,20 @@ export type ChatMetadata = Readonly<Record<string, JsonValue>>;
 export interface UpdateChatInput {
   readonly title?: string;
   readonly metadata?: ChatMetadata;
+}
+
+export interface DeleteChatInput {
+  readonly retentionMs?: number | null;
+}
+
+export interface ChatDeletionData {
+  readonly chatId: string;
+  readonly deletedAt: Date;
+  readonly purgeAfter: Date | null;
+}
+
+export interface PurgeDeletedChatsInput {
+  readonly limit?: number;
 }
 
 export interface PageOptions {

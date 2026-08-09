@@ -1,5 +1,6 @@
 import type {
   ChatData,
+  ChatDeletionData,
   ChatMetadata,
   FrameworkId,
   GenerationAttemptData,
@@ -34,6 +35,7 @@ import type {
   CreatedGeneration,
   CreateGenerationRecord,
   CreateToolCallRecord,
+  DeleteChatRecord,
   CreatedToolCall,
   CreateSourceVersionRecord,
   ForkVersionRecord,
@@ -59,6 +61,11 @@ interface ScopedRecord {
   userId: string;
 }
 
+type MemoryChatRecord = ChatData & {
+  deletedAt: Date | null;
+  purgeAfter: Date | null;
+};
+
 interface MemoryMessageInput {
   readonly chatId: string;
   readonly generationId: string;
@@ -70,7 +77,7 @@ interface MemoryMessageInput {
 }
 
 export class MemoryRepository implements Repository {
-  readonly chats = new Map<string, ChatData & ScopedRecord>();
+  readonly chats = new Map<string, MemoryChatRecord>();
   readonly generations = new Map<string, GenerationData & ScopedRecord>();
   readonly attempts = new Map<string, GenerationAttemptData & ScopedRecord>();
   readonly versions = new Map<string, VersionData & ScopedRecord>();
@@ -97,11 +104,16 @@ export class MemoryRepository implements Repository {
     input: { id: string; title: string; metadata: ChatData["metadata"]; framework: Framework },
   ): Promise<ChatData<Framework>> {
     const now = new Date();
-    const chat: ChatData<Framework> & ScopedRecord = {
+    const chat: ChatData<Framework> & ScopedRecord & {
+      deletedAt: Date | null;
+      purgeAfter: Date | null;
+    } = {
       ...input,
       ...scope,
       createdAt: now,
       updatedAt: now,
+      deletedAt: null,
+      purgeAfter: null,
     };
     this.chats.set(chat.id, chat);
     return chat;
@@ -162,7 +174,12 @@ export class MemoryRepository implements Repository {
     this.versions.set(version.id, version);
     this.files.set(version.id, [...input.files]);
     this.changes.set(version.id, input.changes.map((change) => ({ ...change })));
-    this.chats.set(chat.id, { ...chat, updatedAt: new Date() });
+    this.chats.set(chat.id, {
+      ...chat,
+      updatedAt: new Date(),
+      deletedAt: null,
+      purgeAfter: null,
+    });
     return version;
   }
 
@@ -222,7 +239,12 @@ export class MemoryRepository implements Repository {
     };
     this.versions.set(version.id, version);
     this.files.set(version.id, [...(this.files.get(source.id) ?? [])]);
-    this.chats.set(chat.id, { ...chat, updatedAt: new Date() });
+    this.chats.set(chat.id, {
+      ...chat,
+      updatedAt: new Date(),
+      deletedAt: null,
+      purgeAfter: null,
+    });
     return version;
   }
 
@@ -231,7 +253,9 @@ export class MemoryRepository implements Repository {
     id: string,
   ): Promise<ChatData<Framework> | null> {
     const chat = this.chats.get(id);
-    return chat && inScope(chat, scope) ? chat as ChatData<Framework> : null;
+    return chat && inScope(chat, scope) && chat.deletedAt === null
+      ? chat as unknown as ChatData<Framework>
+      : null;
   }
 
   async updateChat<Framework extends FrameworkId>(
@@ -241,17 +265,118 @@ export class MemoryRepository implements Repository {
   ): Promise<ChatData<Framework>> {
     const chat = await this.getChat<Framework>(scope, id);
     if (!chat) throw new NotFoundError("Chat");
-    const updated = { ...chat, ...input, updatedAt: new Date() };
+    const updated: MemoryChatRecord = {
+      ...chat,
+      ...input,
+      updatedAt: new Date(),
+      deletedAt: null,
+      purgeAfter: null,
+    };
     this.chats.set(id, updated);
-    return updated;
+    return updated as unknown as ChatData<Framework>;
+  }
+
+  async deleteChat(
+    scope: UserScope,
+    id: string,
+    input: DeleteChatRecord,
+  ): Promise<ChatDeletionData> {
+    const chat = this.chats.get(id);
+    if (!chat || !inScope(chat, scope) || chat.deletedAt) throw new NotFoundError("Chat");
+    const active = [...this.generations.values()].some((generation) => (
+      inScope(generation, scope)
+      && generation.chatId === id
+      && ["queued", "running", "waiting"].includes(generation.status)
+    ));
+    if (active) throw new GenerationStateError(id, "Chat has an active generation.");
+    chat.deletedAt = new Date(input.deletedAt);
+    chat.purgeAfter = input.purgeAfter ? new Date(input.purgeAfter) : null;
+    return { chatId: id, deletedAt: chat.deletedAt, purgeAfter: chat.purgeAfter };
+  }
+
+  async restoreChat<Framework extends FrameworkId>(
+    scope: UserScope,
+    id: string,
+    now: Date,
+  ): Promise<ChatData<Framework>> {
+    const chat = this.chats.get(id);
+    if (
+      !chat
+      || !inScope(chat, scope)
+      || !chat.deletedAt
+      || (chat.purgeAfter !== null && chat.purgeAfter <= now)
+    ) throw new NotFoundError("Deleted chat");
+    const restored: MemoryChatRecord = {
+      ...chat,
+      deletedAt: null,
+      purgeAfter: null,
+      updatedAt: new Date(),
+    };
+    this.chats.set(id, restored);
+    return restored as unknown as ChatData<Framework>;
+  }
+
+  async purgeDeletedChats(scope: UserScope, now: Date, limit: number): Promise<number> {
+    const ids = [...this.chats.values()]
+      .filter((chat) => (
+        inScope(chat, scope)
+        && chat.deletedAt !== null
+        && chat.purgeAfter !== null
+        && chat.purgeAfter <= now
+      ))
+      .sort((left, right) => (left.purgeAfter!.getTime() - right.purgeAfter!.getTime()))
+      .slice(0, limit)
+      .map((chat) => chat.id);
+    for (const id of ids) {
+      this.chats.delete(id);
+      const generationIds = [...this.generations.values()]
+        .filter((generation) => generation.chatId === id && inScope(generation, scope))
+        .map((generation) => generation.id);
+      const versionIds = [...this.versions.values()]
+        .filter((version) => version.chatId === id && inScope(version, scope))
+        .map((version) => version.id);
+      for (const generationId of generationIds) {
+        this.generations.delete(generationId);
+        this.skills.delete(generationId);
+      }
+      for (const [attemptId, attempt] of this.attempts) {
+        if (generationIds.includes(attempt.generationId)) {
+          this.attempts.delete(attemptId);
+          this.workerLeaseTokens.delete(attemptId);
+        }
+      }
+      for (const [taskId, task] of this.tasks) {
+        if (generationIds.includes(task.generationId)) this.tasks.delete(taskId);
+      }
+      for (const [toolCallId, toolCall] of this.toolCalls) {
+        if (generationIds.includes(toolCall.generationId)) this.toolCalls.delete(toolCallId);
+      }
+      for (const versionId of versionIds) {
+        this.versions.delete(versionId);
+        this.files.delete(versionId);
+        this.changes.delete(versionId);
+      }
+      for (let index = this.messages.length - 1; index >= 0; index -= 1) {
+        if (this.messages[index]?.chatId === id) this.messages.splice(index, 1);
+      }
+      for (let index = this.events.length - 1; index >= 0; index -= 1) {
+        if (generationIds.includes(this.events[index]!.generationId)) this.events.splice(index, 1);
+      }
+      for (const [leaseId, lease] of this.sandboxLeases) {
+        if (lease.context.chatId === id && inScope(lease, scope)) this.sandboxLeases.delete(leaseId);
+      }
+    }
+    return ids.length;
   }
 
   async listChats<Framework extends FrameworkId>(
     scope: UserScope,
     limit: number,
   ): Promise<Array<ChatData<Framework>>> {
-    return sortChats([...this.chats.values()].filter((chat) => inScope(chat, scope)))
-      .slice(0, limit) as Array<ChatData<Framework>>;
+    return sortChats([...this.chats.values()].filter((chat) => (
+      inScope(chat, scope) && chat.deletedAt === null
+    )))
+      .slice(0, limit) as unknown as Array<ChatData<Framework>>;
   }
 
   async listChatPage<Framework extends FrameworkId>(
@@ -261,7 +386,7 @@ export class MemoryRepository implements Repository {
     metadata: ChatMetadata,
   ): Promise<RepositoryPage<ChatData<Framework>>> {
     let records = sortChats([...this.chats.values()].filter((chat) => (
-      inScope(chat, scope) && containsJson(chat.metadata, metadata)
+      inScope(chat, scope) && chat.deletedAt === null && containsJson(chat.metadata, metadata)
     )));
     if (after) {
       records = records.filter((chat) => (
@@ -269,7 +394,7 @@ export class MemoryRepository implements Repository {
         || (chat.updatedAt.getTime() === after.updatedAt.getTime() && chat.id < after.id)
       ));
     }
-    return createPage(records as Array<ChatData<Framework>>, limit);
+    return createPage(records as unknown as Array<ChatData<Framework>>, limit);
   }
 
   async createGeneration(

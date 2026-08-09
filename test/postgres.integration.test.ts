@@ -491,3 +491,48 @@ test("persists a durable generation, iteration, events, and download in Postgres
     await viby.close();
   }
 });
+
+test("retains, restores, and purges deleted chats in Postgres", {
+  skip: databaseUrl ? false : "TEST_DATABASE_URL is not configured",
+}, async () => {
+  assert.ok(databaseUrl);
+  await migrateDatabase(databaseUrl);
+  const repository = new PostgresRepository(databaseUrl);
+  const viby = createVibyWithDependencies(
+    {
+      framework: "farm",
+      model: "test/postgres-retention" as LanguageModel,
+      retention: { deletedChatsMs: 60_000 },
+    },
+    {
+      repository,
+      generator: {
+        async generate(): Promise<GeneratorOutput> {
+          throw new Error("The retention test does not invoke generation.");
+        },
+      },
+      skillResolver: new SkillResolver({}),
+    },
+  );
+  try {
+    const user = viby.forUser({
+      tenantId: `retention-${randomUUID()}`,
+      userId: `retention-${randomUUID()}`,
+    });
+    const chat = await user.chats.import({
+      source: { type: "files", files: [{ path: "src/index.ts", content: "export {};\n" }] },
+    });
+    const version = await chat.latestVersion();
+    assert.ok(version);
+    const retained = await chat.delete();
+    assert.equal(retained.purgeAfter!.getTime() - retained.deletedAt.getTime(), 60_000);
+    await assert.rejects(() => user.chats.get(chat.id));
+    assert.equal((await user.chats.restore(chat.id)).id, chat.id);
+    await (await user.chats.get(chat.id)).delete({ retentionMs: 0 });
+    assert.equal(await user.chats.purgeDeleted(), 1);
+    await assert.rejects(() => user.chats.get(chat.id));
+    assert.deepEqual(await repository.getVersionFiles(user.scope, version.id), []);
+  } finally {
+    await viby.close();
+  }
+});

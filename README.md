@@ -33,6 +33,7 @@ import { openai } from "@ai-sdk/openai";
 export const viby = createViby({
   framework: "farm",
   model: openai("your-model-id"),
+  retention: { deletedChatsMs: 30 * 24 * 60 * 60 * 1_000 },
   agent: {
     maxSteps: 20,
     maxDurationMs: 300_000,
@@ -550,6 +551,18 @@ const workspaceChats = await userViby.chats.list({
 ```
 
 Metadata filters use JSON containment, including nested objects and array members, and are applied before pagination. Pagination cursors are opaque and stable for the resource ordering. Reuse the same filter with later cursors. All reads and writes remain constrained by both `tenantId` and `userId`.
+
+Delete a chat without making recovery or data-retention behavior implicit:
+
+```ts
+const deletion = await chat.delete(); // uses retention.deletedChatsMs
+await userViby.chats.restore(deletion.chatId); // only before purgeAfter
+
+await chat.delete({ retentionMs: 0 });
+const purged = await userViby.chats.purgeDeleted({ limit: 100 });
+```
+
+Deleted chats disappear from normal reads immediately. The default retention is 30 days; set `deletedChatsMs: null` (or `retentionMs: null` for one deletion) to retain a tombstone indefinitely. A value of `0` makes it eligible for immediate purge. Deletion refuses chats with queued, running, or waiting generations, so cancel or resolve active work first. `purgeDeleted` is an explicit, tenant-scoped maintenance primitive suitable for the host application's cron or worker and relies on database cascades for permanent removal.
 
 ## Render typed message parts
 
