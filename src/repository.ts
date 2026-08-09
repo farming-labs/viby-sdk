@@ -259,6 +259,7 @@ export interface Repository {
     scope: UserScope,
     limit: number,
     after: ChatPageCursor | null,
+    metadata: ChatMetadata,
   ): Promise<RepositoryPage<ChatData<Framework>>>;
   createGeneration(scope: UserScope, input: CreateGenerationRecord): Promise<CreatedGeneration>;
   startGenerationAttempt(

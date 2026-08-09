@@ -90,6 +90,10 @@ export interface PageOptions {
   readonly after?: string;
 }
 
+export interface ChatListOptions extends PageOptions {
+  readonly metadata?: ChatMetadata;
+}
+
 export interface CursorPage<Item> {
   readonly items: readonly Item[];
   readonly nextCursor: string | null;

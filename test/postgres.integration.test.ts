@@ -244,6 +244,10 @@ test("persists a durable generation, iteration, events, and download in Postgres
     const chatPage = await user.chats.list({ limit: 1 });
     assert.equal(chatPage.items[0]?.id, updatedChat.id);
     assert.ok(chatPage.nextCursor);
+    const filteredChats = await user.chats.list({
+      metadata: { favorite: true, labels: ["postgres"] },
+    });
+    assert.deepEqual(filteredChats.items.map((candidate) => candidate.id), [updatedChat.id]);
 
     const workerRepository = new PostgresRepository(databaseUrl);
     const workerViby = createVibyWithDependencies(
