@@ -10,6 +10,7 @@ import type {
   ForkVersionInput,
   GenerateInput,
   ImportProjectInput,
+  ImportProjectSource,
   GenerationAttemptData,
   GenerationData,
   GenerationEvent,
@@ -74,6 +75,10 @@ import {
 } from "./utils.js";
 import { createSourceDownload, type DownloadArtifact } from "./download.js";
 import { importProjectFiles } from "./project-import.js";
+import {
+  resolveSourceImport,
+  type AdapterProjectImportInput,
+} from "./source-import.js";
 import {
   applySourceChanges,
   normalizeSourceChanges,
@@ -403,16 +408,26 @@ export class ChatCollection<Framework extends FrameworkId = FrameworkId> {
     return new Chat(data, this.#dependencies);
   }
 
-  async import(input: ImportProjectInput): Promise<Chat<Framework>> {
+  async import<Input = never>(
+    input: ImportProjectInput | AdapterProjectImportInput<Input, Framework>,
+  ): Promise<Chat<Framework>> {
     if (!input || !input.source) {
-      throw new ConfigurationError("Project import requires a files or ZIP source.");
+      throw new ConfigurationError("Project import requires files, ZIP bytes, or an adapter source.");
     }
-    const title = normalizeChatTitle(input.title);
-    const summary = input.summary?.trim() || "Imported project source.";
+    const adapterResult = input.source.type === "adapter"
+      ? await resolveSourceImport(input as AdapterProjectImportInput<Input, Framework>, {
+          ...this.#dependencies.scope,
+          framework: this.#dependencies.framework,
+        })
+      : null;
+    const title = normalizeChatTitle(input.title ?? adapterResult?.title);
+    const summary = input.summary?.trim()
+      || adapterResult?.summary?.trim()
+      || "Imported project source.";
     if (summary.length > 2_000) {
       throw new ConfigurationError("An import summary cannot exceed 2,000 characters.");
     }
-    const files = importProjectFiles(input.source, input.filePolicy);
+    const files = importProjectFiles(adapterResult?.source ?? input.source as ImportProjectSource, input.filePolicy);
     const metadata = normalizeChatMetadata(input.metadata);
     const imported = await this.#dependencies.repository.importChat(
       this.#dependencies.scope,

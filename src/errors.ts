@@ -86,6 +86,16 @@ export class SkillResolutionError extends VibyError {
   }
 }
 
+export class SourceImportError extends VibyError {
+  readonly adapter: string;
+
+  constructor(adapter: string, options?: ErrorOptions) {
+    super("source_import_failed", `Source import adapter ${adapter} failed.`, options);
+    this.name = "SourceImportError";
+    this.adapter = adapter;
+  }
+}
+
 export class SandboxUnavailableError extends VibyError {
   constructor(message: string) {
     super("sandbox_unavailable", message);

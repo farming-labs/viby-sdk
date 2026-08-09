@@ -50,7 +50,7 @@ The official v2 documentation organizes the API around these resources and endpo
 | Create with live updates | Create Chat Streaming | `generation.stream({ after })` | Shipped |
 | Create from files | Create Chat From Files | `chats.import({ source: { type: "files" } })` | Shipped |
 | Create from ZIP | Create Chat From ZIP | `chats.import({ source: { type: "zip" } })` | Shipped |
-| Create from repository | Create Chat From Repository | future source-import adapter | Adapter |
+| Create from repository | Create Chat From Repository | typed provider-neutral source import adapter | Shipped |
 | List and filter chats | List Chats, including metadata filters | `chats.list({ limit, after, metadata })` | Shipped |
 | Get one chat | Get Chat | `chats.get(id)` | Shipped |
 | Update title and metadata | Update Chat | `chat.update` | Shipped |

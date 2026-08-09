@@ -72,10 +72,11 @@ try {
       "--input-type=module",
       "--eval",
       [
-        'import { createViby, DownloadArtifact, SandboxSession, skillRead } from "@viby/sdk";',
+        'import { createViby, DownloadArtifact, SandboxSession, SourceImportError, skillRead } from "@viby/sdk";',
         'if (typeof createViby !== "function") throw new Error("createViby export is missing");',
         'if (typeof DownloadArtifact !== "function") throw new Error("DownloadArtifact export is missing");',
         'if (typeof SandboxSession !== "function") throw new Error("SandboxSession export is missing");',
+        'if (typeof SourceImportError !== "function") throw new Error("SourceImportError export is missing");',
         'if (skillRead("./skills").source !== "file") throw new Error("skillRead export is invalid");',
       ].join("\n"),
     ],

@@ -102,6 +102,33 @@ Use `{ type: "zip", bytes }` for a ZIP archive. Imports reject unsafe paths, dup
 
 `filePolicy.locked` accepts `"all"` or normalized project paths. File-list imports may also set `locked: true` on individual files. A lock becomes immutable version metadata: direct changes, generated changes, and agent workspace tools cannot write, delete, or move the file. Forks, restores, and child snapshots preserve it.
 
+External sources use the same import pipeline through a provider-neutral adapter:
+
+```ts
+import type { SourceImportAdapter } from "@viby/sdk";
+
+const source: SourceImportAdapter<{ projectId: string }> = {
+  name: "company-source",
+  async import({ projectId }, { signal }) {
+    const bytes = await companyClient.downloadZip(projectId, { signal });
+    return {
+      title: `Imported ${projectId}`,
+      source: { type: "zip", bytes },
+    };
+  },
+};
+
+const imported = await userViby.chats.import({
+  source: {
+    type: "adapter",
+    adapter: source,
+    input: { projectId: "project_123" },
+  },
+});
+```
+
+The application owns adapter credentials and transport. Viby passes only tenant/user scope, framework, and an optional abort signal; it never stores adapter input. Returned files or ZIP bytes still pass every normal size, archive, path, UTF-8, and locked-file validation before one immutable version is committed.
+
 Apply deterministic source changes without invoking the model:
 
 ```ts

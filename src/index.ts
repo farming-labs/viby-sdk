@@ -36,12 +36,19 @@ export {
   GenerationTaskRequiredError,
   NotFoundError,
   SkillResolutionError,
+  SourceImportError,
   SandboxCommandDeniedError,
   SandboxCommandApprovalRequiredError,
   SandboxError,
   SandboxUnavailableError,
   VibyError,
 } from "./errors.js";
+export type {
+  AdapterProjectImportInput,
+  SourceImportAdapter,
+  SourceImportContext,
+  SourceImportResult,
+} from "./source-import.js";
 export type {
   SandboxAdapter,
   SandboxCapabilities,

@@ -13,7 +13,7 @@ import { SkillResolver } from "../src/skills.js";
 import { MESSAGE_PART_TYPES } from "../src/types.js";
 import type { FrameworkId, VersionFile } from "../src/types.js";
 import { sha256 } from "../src/utils.js";
-import { GenerationError, NotFoundError } from "../src/errors.js";
+import { GenerationError, NotFoundError, SourceImportError } from "../src/errors.js";
 import { MemoryRepository } from "./helpers/memory-repository.js";
 
 const usage: LanguageModelUsage = {
@@ -249,6 +249,129 @@ test("imports UTF-8 ZIP source and rejects unsafe or binary archives", async () 
       },
     }),
     /Symbolic links/,
+  );
+});
+
+test("imports typed external sources through a provider-neutral adapter", async () => {
+  const { viby, repository, generator } = setup();
+  const user = viby.forUser({ tenantId: "tenant-a", userId: "user-a" });
+  const calls: unknown[] = [];
+  const chat = await user.chats.import({
+    metadata: { workspace: "workspace-1" },
+    filePolicy: { locked: ["package.json"] },
+    source: {
+      type: "adapter",
+      adapter: {
+        name: "portable-source",
+        async import(input: { project: string; credential: string }, context) {
+          calls.push({ input, context });
+          return {
+            title: "Adapter project",
+            summary: "Imported from an application-owned source adapter.",
+            source: {
+              type: "files" as const,
+              files: [
+                { path: "package.json", content: '{"name":"adapter-project"}\n' },
+                { path: "src/index.ts", content: `export const project = "${input.project}";\n` },
+              ],
+            },
+          };
+        },
+      },
+      input: { project: "dashboard", credential: "must-not-be-persisted" },
+    },
+  });
+
+  assert.equal(chat.title, "Adapter project");
+  assert.deepEqual(chat.metadata, { workspace: "workspace-1" });
+  const version = await chat.latestVersion();
+  assert.ok(version);
+  assert.equal(version.summary, "Imported from an application-owned source adapter.");
+  assert.equal((await version.files()).find((file) => file.path === "package.json")?.locked, true);
+  assert.deepEqual(calls, [{
+    input: { project: "dashboard", credential: "must-not-be-persisted" },
+    context: { tenantId: "tenant-a", userId: "user-a", framework: "farm" },
+  }]);
+  assert.equal(JSON.stringify([...repository.chats.values()]).includes("must-not-be-persisted"), false);
+  assert.equal(JSON.stringify([...repository.versions.values()]).includes("must-not-be-persisted"), false);
+  assert.equal(generator.calls.length, 0);
+});
+
+test("validates, cancels, and safely reports source adapter imports", async () => {
+  const { viby } = setup();
+  const user = viby.forUser({ tenantId: "tenant-a", userId: "user-a" });
+  await assert.rejects(
+    () => user.chats.import({
+      source: {
+        type: "adapter",
+        adapter: {
+          name: "unsafe-source",
+          async import() {
+            return { source: { type: "files", files: [{ path: "../.env", content: "secret" }] } };
+          },
+        },
+        input: null,
+      },
+    }),
+    /unsafe/,
+  );
+
+  await assert.rejects(
+    () => user.chats.import({
+      source: {
+        type: "adapter",
+        adapter: {
+          name: "failing-source",
+          async import() {
+            throw new Error("credential=must-not-be-reported");
+          },
+        },
+        input: null,
+      },
+    }),
+    (error: unknown) => (
+      error instanceof SourceImportError
+      && error.adapter === "failing-source"
+      && !error.message.includes("must-not-be-reported")
+    ),
+  );
+
+  const controller = new AbortController();
+  controller.abort(new DOMException("Import cancelled.", "AbortError"));
+  let called = false;
+  await assert.rejects(
+    () => user.chats.import({
+      signal: controller.signal,
+      source: {
+        type: "adapter",
+        adapter: {
+          name: "cancelled-source",
+          async import() {
+            called = true;
+            return { source: { type: "files", files: [{ path: "index.ts", content: "" }] } };
+          },
+        },
+        input: null,
+      },
+    }),
+    /Import cancelled/,
+  );
+  assert.equal(called, false);
+
+  await assert.rejects(
+    () => user.chats.import({
+      source: {
+        type: "adapter",
+        adapter: {
+          name: "invalid source name!",
+          async import() {
+            return { source: { type: "files", files: [{ path: "index.ts", content: "" }] } };
+          },
+        },
+        input: null,
+      },
+    }),
+    /adapter name/,
   );
 });
 
