@@ -1,4 +1,5 @@
 import type { LanguageModel } from "ai";
+import type { OutboundEventSink } from "./outbound-events.js";
 import type {
   SandboxAdapter,
   SandboxCommandPolicy,
@@ -54,6 +55,9 @@ export interface VibyConfig<Framework extends FrameworkId = FrameworkId> {
   };
   readonly retention?: {
     readonly deletedChatsMs?: number | null;
+  };
+  readonly events?: {
+    readonly sinks?: readonly OutboundEventSink[];
   };
 }
 

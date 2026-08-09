@@ -13,7 +13,18 @@ import { SkillResolver } from "../src/skills.js";
 import { MESSAGE_PART_TYPES } from "../src/types.js";
 import type { FrameworkId, VersionFile } from "../src/types.js";
 import { sha256 } from "../src/utils.js";
-import { GenerationError, NotFoundError, SourceImportError } from "../src/errors.js";
+import {
+  GenerationError,
+  NotFoundError,
+  OutboundEventDeliveryError,
+  OutboundEventSignatureError,
+  SourceImportError,
+} from "../src/errors.js";
+import {
+  signedOutboundEventSink,
+  verifySignedOutboundEvent,
+  type OutboundEventRequest,
+} from "../src/outbound-events.js";
 import { MemoryRepository } from "./helpers/memory-repository.js";
 
 const usage: LanguageModelUsage = {
@@ -161,6 +172,164 @@ test("persists typed ordered message parts with message, generation, and attempt
     .chats.create({ title: "Other tenant" });
   await assert.rejects(() => otherUserChat.getMessage(assistant.id), NotFoundError);
   await viby.close();
+});
+
+test("delivers resumable durable events as signed provider-neutral envelopes", async () => {
+  const repository = new MemoryRepository();
+  const generator = new FakeGenerator<"farm">();
+  const requests: OutboundEventRequest[] = [];
+  const secret = "a-secure-outbound-event-secret-with-32-bytes";
+  const now = new Date("2026-08-09T12:00:00.000Z");
+  const sink = signedOutboundEventSink({
+    id: "product-events",
+    keyId: "key-2026-08",
+    secret,
+    source: "viby://tests/sdk",
+    now: () => now,
+    send(request) {
+      requests.push(request);
+    },
+  });
+  const viby = createVibyWithDependencies(
+    {
+      framework: "farm",
+      model: "test/mock" as LanguageModel,
+      events: { sinks: [sink] },
+    },
+    { repository, generator, skillResolver: new SkillResolver({}) },
+  );
+  const chat = await viby
+    .forUser({ tenantId: "tenant-a", userId: "user-a" })
+    .chats.create();
+  const generation = await chat.start({ prompt: "Build a dashboard" });
+  assert.equal((await generation.wait({ pollIntervalMs: 10 })).status, "succeeded");
+
+  let cursor = "0";
+  const receipts = [];
+  do {
+    const page = await generation.deliverEvents({
+      sink: "product-events",
+      after: cursor,
+      limit: 2,
+    });
+    receipts.push(...page.deliveries);
+    cursor = page.cursor;
+    if (!page.hasMore) break;
+  } while (true);
+
+  const events = (await generation.events({ limit: 100 })).events;
+  assert.equal(receipts.length, events.length);
+  assert.equal(requests.length, events.length);
+  assert.deepEqual(receipts.map((receipt) => receipt.cursor), events.map((event) => event.cursor));
+  for (const [index, request] of requests.entries()) {
+    const envelope = verifySignedOutboundEvent(request, {
+      secret,
+      keyId: "key-2026-08",
+      now,
+    });
+    assert.equal(envelope.id, `${generation.id}:${events[index]!.cursor}`);
+    assert.equal(envelope.type, `dev.viby.generation.${events[index]!.type}`);
+    assert.equal(envelope.source, "viby://tests/sdk");
+    assert.equal(envelope.data.tenantId, "tenant-a");
+    assert.equal(envelope.data.userId, "user-a");
+    assert.equal(envelope.data.chatId, chat.id);
+    assert.equal(envelope.data.generationId, generation.id);
+    assert.equal(request.body.includes(secret), false);
+  }
+
+  const first = requests[0]!;
+  assert.throws(
+    () => verifySignedOutboundEvent({ ...first, body: `${first.body} ` }, {
+      secret,
+      keyId: "key-2026-08",
+      now,
+    }),
+    OutboundEventSignatureError,
+  );
+  assert.throws(
+    () => verifySignedOutboundEvent(first, {
+      secret,
+      keyId: "key-2026-08",
+      now: new Date(now.getTime() + 5 * 60 * 1_000 + 1),
+    }),
+    /outside the accepted window/,
+  );
+});
+
+test("isolates sink failures and exposes an exact safe resume cursor", async () => {
+  const repository = new MemoryRepository();
+  const generator = new FakeGenerator<"farm">();
+  const delivered: string[] = [];
+  let fail = true;
+  const sink = signedOutboundEventSink({
+    id: "retryable-events",
+    secret: "another-secure-outbound-secret-with-32-bytes",
+    send(request) {
+      if (fail && delivered.length === 1) throw new Error("transport credential must stay private");
+      delivered.push(request.event.id);
+    },
+  });
+  const viby = createVibyWithDependencies(
+    {
+      framework: "farm",
+      model: "test/mock" as LanguageModel,
+      events: { sinks: [sink] },
+    },
+    { repository, generator, skillResolver: new SkillResolver({}) },
+  );
+  const chat = await viby
+    .forUser({ tenantId: "tenant-a", userId: "user-a" })
+    .chats.create();
+  const generation = await chat.start({ prompt: "Build a dashboard" });
+  assert.equal((await generation.wait({ pollIntervalMs: 10 })).status, "succeeded");
+
+  let failure: OutboundEventDeliveryError | undefined;
+  try {
+    await generation.deliverEvents({ sink: "retryable-events", limit: 100 });
+  } catch (error) {
+    if (error instanceof OutboundEventDeliveryError) failure = error;
+    else throw error;
+  }
+  assert.ok(failure);
+  assert.equal(failure.lastDeliveredCursor, "1");
+  assert.equal(failure.eventCursor, "2");
+  assert.equal(failure.message.includes("transport credential"), false);
+  assert.equal((await generation.data()).status, "succeeded");
+
+  fail = false;
+  const retry = await generation.deliverEvents({
+    sink: "retryable-events",
+    after: failure.lastDeliveredCursor,
+    limit: 100,
+  });
+  assert.ok(retry.deliveries.length > 0);
+  assert.equal(retry.deliveries[0]?.eventId, `${generation.id}:2`);
+  await assert.rejects(
+    () => generation.deliverEvents({ sink: "missing" }),
+    /not configured/,
+  );
+});
+
+test("validates signed outbound sink configuration", () => {
+  assert.throws(
+    () => signedOutboundEventSink({ id: "events", secret: "short", send() {} }),
+    /at least 32 bytes/,
+  );
+  const sink = signedOutboundEventSink({
+    id: "duplicate",
+    secret: "secure-outbound-event-secret-at-least-32-bytes",
+    send() {},
+  });
+  const repository = new MemoryRepository();
+  const generator = new FakeGenerator<"farm">();
+  assert.throws(
+    () => createVibyWithDependencies({
+      framework: "farm",
+      model: "test/mock" as LanguageModel,
+      events: { sinks: [sink, sink] },
+    }, { repository, generator, skillResolver: new SkillResolver({}) }),
+    /duplicated/,
+  );
 });
 
 test("imports normalized source files without invoking the model", async () => {
