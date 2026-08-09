@@ -96,6 +96,47 @@ export class SourceImportError extends VibyError {
   }
 }
 
+export class OutboundEventSinkError extends VibyError {
+  readonly sinkId: string;
+  readonly eventId: string;
+
+  constructor(sinkId: string, eventId: string, options?: ErrorOptions) {
+    super("outbound_event_sink_failed", `Outbound event sink ${sinkId} failed to deliver ${eventId}.`, options);
+    this.name = "OutboundEventSinkError";
+    this.sinkId = sinkId;
+    this.eventId = eventId;
+  }
+}
+
+export class OutboundEventDeliveryError extends VibyError {
+  readonly sinkId: string;
+  readonly eventId: string;
+  readonly eventCursor: string;
+  readonly lastDeliveredCursor: string;
+
+  constructor(
+    sinkId: string,
+    eventId: string,
+    eventCursor: string,
+    lastDeliveredCursor: string,
+    options?: ErrorOptions,
+  ) {
+    super("outbound_event_delivery_failed", `Outbound event delivery to ${sinkId} stopped at ${eventId}.`, options);
+    this.name = "OutboundEventDeliveryError";
+    this.sinkId = sinkId;
+    this.eventId = eventId;
+    this.eventCursor = eventCursor;
+    this.lastDeliveredCursor = lastDeliveredCursor;
+  }
+}
+
+export class OutboundEventSignatureError extends VibyError {
+  constructor(message: string, options?: ErrorOptions) {
+    super("invalid_outbound_event_signature", message, options);
+    this.name = "OutboundEventSignatureError";
+  }
+}
+
 export class SandboxUnavailableError extends VibyError {
   constructor(message: string) {
     super("sandbox_unavailable", message);

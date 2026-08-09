@@ -66,6 +66,7 @@ import {
   GenerationStateError,
   GenerationTaskRequiredError,
   NotFoundError,
+  OutboundEventDeliveryError,
 } from "./errors.js";
 import {
   assertIdentifier,
@@ -98,6 +99,10 @@ import {
 } from "./cursors.js";
 import { normalizeChatMetadata } from "./metadata.js";
 import { SandboxRegistry, type SandboxSession } from "./sandbox.js";
+import type {
+  OutboundEventReceipt,
+  OutboundEventSink,
+} from "./outbound-events.js";
 
 const DEFAULT_POLL_INTERVAL_MS = 100;
 const DEFAULT_EVENT_LIMIT = 100;
@@ -106,6 +111,17 @@ const DEFAULT_WORKER_HEARTBEAT_MS = 10_000;
 const DEFAULT_WORKER_POLL_INTERVAL_MS = 500;
 const DEFAULT_DELETED_CHAT_RETENTION_MS = 30 * 24 * 60 * 60 * 1_000;
 const MAX_DELETED_CHAT_RETENTION_MS = 10 * 365 * 24 * 60 * 60 * 1_000;
+
+export interface OutboundEventDeliveryOptions extends GenerationEventOptions {
+  readonly sink: string;
+  readonly signal?: AbortSignal;
+}
+
+export interface OutboundEventDeliveryPage {
+  readonly deliveries: readonly OutboundEventReceipt[];
+  readonly cursor: string;
+  readonly hasMore: boolean;
+}
 
 export interface GenerationWorkerOptions {
   readonly id: string;
@@ -193,6 +209,7 @@ class VibyClient<Framework extends FrameworkId> implements Viby<Framework> {
   readonly #runner: GenerationRunner<Framework>;
   readonly #workers = new Set<GenerationWorker<Framework>>();
   readonly #deletedChatsMs: number | null;
+  readonly #eventSinks: ReadonlyMap<string, OutboundEventSink>;
 
   constructor(
     config: VibyConfig<Framework>,
@@ -202,6 +219,7 @@ class VibyClient<Framework extends FrameworkId> implements Viby<Framework> {
     this.#sandbox = config.sandbox;
     this.#repository = dependencies.repository;
     this.#deletedChatsMs = normalizeChatRetentionConfig(config.retention);
+    this.#eventSinks = normalizeOutboundEventSinks(config.events);
     this.#sandboxes = new SandboxRegistry(this.#repository, config.sandboxPolicy);
     this.#skillResolver = dependencies.skillResolver;
     if (typeof config.model === "string") {
@@ -242,6 +260,7 @@ class VibyClient<Framework extends FrameworkId> implements Viby<Framework> {
       sandbox: this.#sandbox,
       sandboxes: this.#sandboxes,
       deletedChatsMs: this.#deletedChatsMs,
+      eventSinks: this.#eventSinks,
     });
   }
 
@@ -344,6 +363,7 @@ interface ScopedDependencies<Framework extends FrameworkId> {
   readonly sandbox: SandboxAdapter | undefined;
   readonly sandboxes: SandboxRegistry;
   readonly deletedChatsMs: number | null;
+  readonly eventSinks: ReadonlyMap<string, OutboundEventSink>;
 }
 
 export class ScopedViby<Framework extends FrameworkId = FrameworkId> {
@@ -754,6 +774,47 @@ export class Generation<Framework extends FrameworkId = FrameworkId> {
       events,
       nextCursor: events.at(-1)?.cursor ?? null,
     };
+  }
+
+  async deliverEvents(options: OutboundEventDeliveryOptions): Promise<OutboundEventDeliveryPage> {
+    if (!options || typeof options !== "object") {
+      throw new ConfigurationError("Outbound event delivery options must be an object.");
+    }
+    const sinkId = assertIdentifier(options.sink, "Outbound event sink id");
+    const sink = this.#dependencies.eventSinks.get(sinkId);
+    if (!sink) throw new ConfigurationError(`Outbound event sink is not configured: ${sinkId}`);
+    const after = normalizeCursor(options.after);
+    const page = await this.events({
+      after,
+      ...(options.limit === undefined ? {} : { limit: options.limit }),
+    });
+    const deliveries: OutboundEventReceipt[] = [];
+    let cursor = after;
+    for (const event of page.events) {
+      options.signal?.throwIfAborted();
+      try {
+        deliveries.push(await sink.deliver(event, {
+          ...this.#dependencies.scope,
+          chatId: this.chatId,
+          generationId: this.id,
+          ...(options.signal ? { signal: options.signal } : {}),
+        }));
+        cursor = event.cursor;
+      } catch (error) {
+        throw new OutboundEventDeliveryError(
+          sink.id,
+          `${this.id}:${event.cursor}`,
+          event.cursor,
+          cursor,
+          { cause: error },
+        );
+      }
+    }
+    return Object.freeze({
+      deliveries: Object.freeze(deliveries),
+      cursor,
+      hasMore: page.events.length === (options.limit ?? DEFAULT_EVENT_LIMIT),
+    });
   }
 
   async *stream(options: GenerationStreamOptions = {}): AsyncGenerator<GenerationEvent> {
@@ -1807,6 +1868,28 @@ function normalizeChatRetentionConfig(value: VibyConfig["retention"]): number | 
     throw new ConfigurationError("retention must be an object.");
   }
   return normalizeRetentionMs(value.deletedChatsMs, DEFAULT_DELETED_CHAT_RETENTION_MS);
+}
+
+function normalizeOutboundEventSinks(
+  value: VibyConfig["events"],
+): ReadonlyMap<string, OutboundEventSink> {
+  if (value === undefined) return new Map();
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new ConfigurationError("events must be an object.");
+  }
+  if (value.sinks !== undefined && !Array.isArray(value.sinks)) {
+    throw new ConfigurationError("events.sinks must be an array.");
+  }
+  const sinks = new Map<string, OutboundEventSink>();
+  for (const sink of value.sinks ?? []) {
+    if (!sink || typeof sink !== "object" || typeof sink.deliver !== "function") {
+      throw new ConfigurationError("Every outbound event sink must provide id and deliver.");
+    }
+    const id = assertIdentifier(sink.id, "Outbound event sink id");
+    if (sinks.has(id)) throw new ConfigurationError(`Outbound event sink id is duplicated: ${id}`);
+    sinks.set(id, sink);
+  }
+  return sinks;
 }
 
 function normalizeGenerationWorkerOptions(

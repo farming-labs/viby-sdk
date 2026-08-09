@@ -35,6 +35,9 @@ export {
   GenerationStateError,
   GenerationTaskRequiredError,
   NotFoundError,
+  OutboundEventDeliveryError,
+  OutboundEventSignatureError,
+  OutboundEventSinkError,
   SkillResolutionError,
   SourceImportError,
   SandboxCommandDeniedError,
@@ -43,6 +46,20 @@ export {
   SandboxUnavailableError,
   VibyError,
 } from "./errors.js";
+export {
+  SignedOutboundEventSink,
+  signedOutboundEventSink,
+  verifySignedOutboundEvent,
+} from "./outbound-events.js";
+export type {
+  OutboundEventContext,
+  OutboundEventEnvelope,
+  OutboundEventReceipt,
+  OutboundEventRequest,
+  OutboundEventSink,
+  SignedOutboundEventSinkOptions,
+  VerifySignedOutboundEventOptions,
+} from "./outbound-events.js";
 export type {
   AdapterProjectImportInput,
   SourceImportAdapter,
@@ -81,6 +98,8 @@ export type {
   GenerationOutcome,
   GenerationWorkerOptions,
   GenerationWorkerRunOptions,
+  OutboundEventDeliveryOptions,
+  OutboundEventDeliveryPage,
   Viby,
 } from "./client.js";
 export type {

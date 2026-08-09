@@ -458,6 +458,41 @@ for await (const event of generation.stream({ after: lastCursor })) {
 
 Agent trace parts use four lifecycle events: `part.started`, `part.delta`, `part.completed`, and `part.failed`. Started events establish a stable part id, type, and trace position; deltas append live display data; completion carries the typed durable part; and failures carry a redaction-safe error. Completed trace parts retain the same id in the final assistant message. Saving the normal generation cursor is sufficient to resume both lifecycle and trace events.
 
+Send those same durable events to any application-owned transport with signed envelopes:
+
+```ts
+import { signedOutboundEventSink } from "@viby/sdk";
+
+const productEvents = signedOutboundEventSink({
+  id: "product-events",
+  keyId: "events-2026-08",
+  secret: process.env.VIBY_EVENT_SECRET!,
+  send: (request) => fetch(process.env.EVENT_ENDPOINT!, {
+    method: "POST",
+    headers: request.headers,
+    body: request.body,
+    signal: request.signal,
+  }),
+});
+
+const viby = createViby({
+  framework: "farm",
+  model,
+  events: { sinks: [productEvents] },
+});
+
+const page = await generation.deliverEvents({
+  sink: "product-events",
+  after: savedCursor,
+  limit: 100,
+});
+savedCursor = page.cursor;
+```
+
+`deliverEvents` is explicit so the host can run it in its own request, cron, queue, or workflow system and persist one cursor per sink. Delivery is at least once. Event IDs are stable as `<generationId>:<cursor>`, so receivers should deduplicate them. A transport failure throws `OutboundEventDeliveryError` with `lastDeliveredCursor`, allowing an exact retry without changing generation state.
+
+The helper emits a CloudEvents-style JSON envelope and signs `timestamp.eventId.body` with HMAC-SHA256. It includes key ID, timestamp, event ID, and `v1` signature headers. Rotate keys through `keyId`, keep signing secrets server-side, reject timestamps outside your chosen replay window, and use `verifySignedOutboundEvent` for constant-time verification. Neither secrets nor transport responses are persisted.
+
 Tool executions are provider-neutral records owned by their immutable attempt and, after completion, their assistant message:
 
 ```ts

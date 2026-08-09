@@ -39,7 +39,7 @@ The official v2 documentation organizes the API around these resources and endpo
 | Preview and deployment | get preview, create Vercel project, deploy chat | preview belongs behind sandbox capability checks; project creation and deployment require future adapters |
 | Messages | list, get, send sync/async/streaming, resolve task sync/async/streaming, restore message | portable message history, parts, generation modes, tasks, and restore belong in core |
 | MCP servers | list, create, get, update, delete, and OAuth authorization | host-owned connection registry; portable tools may be passed into Viby without Viby owning OAuth |
-| Webhooks | list, create, get, update, and delete | optional outbound-event adapter; not required for in-process SDK use |
+| Webhooks | list, create, get, update, and delete | signed provider-neutral event sinks over the durable cursor; endpoint registry remains app-owned |
 
 ## Chats and generation
 
@@ -125,15 +125,15 @@ Viby separates a portable tool call from the credentialed connection used to ful
 - Typed calls and results, attempt/message ownership, redaction, and external-effect idempotency are shipped in core.
 - The host supplies tool implementations and authorizes each external effect.
 - MCP discovery, OAuth grants, refresh tokens, and connection storage remain host-owned.
-- Webhook delivery may be implemented by an optional event sink; in-process consumers can read durable generation events directly.
+- Signed event sinks ship durable generation events through an app-owned transport with stable IDs, HMAC verification, and exact resume cursors; endpoint CRUD and scheduling remain app-owned.
 - Deployment and Git provider credentials stay in their future adapters and never enter model context by default.
 
 ## Prioritized parity backlog
 
-Capability discovery, the adapter conformance suite, background processes, readiness checks, durable sandbox leases, reconnect-by-ID, generation worker leases with heartbeats, sandbox command policy enforcement, immutable agent workspace change sets, typed durable message parts, and permission-gated agent sandbox actions are shipped.
+Capability discovery, the adapter conformance suite, background processes, readiness checks, durable sandbox leases, reconnect-by-ID, generation worker leases with heartbeats, sandbox command policy enforcement, immutable agent workspace change sets, typed durable message parts, permission-gated agent sandbox actions, source import adapters, file locks, retention-aware deletion, and signed outbound sinks are shipped.
 
 1. Optional sandbox-backed preview sessions and a host-proxy contract.
-2. Attachments, generation-scoped model/skill configuration, file locks, deletion, and outbound event sinks.
+2. Attachments and generation-scoped model/skill configuration.
 3. Explicit Git and deployment adapters after the portable generation workflow is complete.
 
 ## Persistence rules
