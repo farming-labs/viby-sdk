@@ -1018,6 +1018,12 @@ export class MemoryRepository implements Repository {
     );
   }
 
+  async getMessage(scope: UserScope, chatId: string, id: string): Promise<MessageData | null> {
+    return this.messages.find((message) => (
+      message.id === id && message.chatId === chatId && inScope(message, scope)
+    )) ?? null;
+  }
+
   async listMessagePage(
     scope: UserScope,
     chatId: string,

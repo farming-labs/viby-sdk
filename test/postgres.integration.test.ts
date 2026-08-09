@@ -130,6 +130,8 @@ test("persists a durable generation, iteration, events, and download in Postgres
       "usage",
     ]);
     assert.ok(persistedMessages[1]?.parts.every((part) => part.attemptId));
+    const lookedUpMessage = await persistedChat.getMessage(persistedMessages[1]!.id);
+    assert.deepEqual(lookedUpMessage, persistedMessages[1]);
     const [persistedToolCall] = await generation.toolCalls();
     assert.ok(persistedToolCall);
     assert.equal(persistedToolCall.status, "succeeded");

@@ -150,6 +150,15 @@ test("persists typed ordered message parts with message, generation, and attempt
     outputTokens: 20,
     totalTokens: 30,
   });
+  assert.deepEqual(await chat.getMessage(assistant.id), assistant);
+  const otherChat = await viby
+    .forUser({ tenantId: "tenant-a", userId: "user-a" })
+    .chats.create({ title: "Other chat" });
+  await assert.rejects(() => otherChat.getMessage(assistant.id), NotFoundError);
+  const otherUserChat = await viby
+    .forUser({ tenantId: "tenant-b", userId: "user-b" })
+    .chats.create({ title: "Other tenant" });
+  await assert.rejects(() => otherUserChat.getMessage(assistant.id), NotFoundError);
   await viby.close();
 });
 

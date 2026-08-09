@@ -524,6 +524,7 @@ The ZIP is the raw framework-native source project. It contains no deployment ve
 const chat = await userViby.chats.get(chatId);
 const latest = await chat.latestVersion();
 const messages = await chat.listMessages({ limit: 20 });
+const message = await chat.getMessage(messages.items[0]!.id);
 const versions = await chat.listVersions({ limit: 20 });
 
 const nextMessages = messages.nextCursor

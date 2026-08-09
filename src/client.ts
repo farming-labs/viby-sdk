@@ -566,6 +566,16 @@ export class Chat<Framework extends FrameworkId = FrameworkId> {
     };
   }
 
+  async getMessage(id: string): Promise<MessageData> {
+    const message = await this.#dependencies.repository.getMessage(
+      this.#dependencies.scope,
+      this.id,
+      id,
+    );
+    if (!message) throw new NotFoundError("Message");
+    return message;
+  }
+
   startFromVersion(
     input: GenerateInput,
     version: VersionData<Framework>,

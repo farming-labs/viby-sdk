@@ -349,6 +349,7 @@ export interface Repository {
     after: VersionPageCursor | null,
   ): Promise<RepositoryPage<VersionData<Framework>>>;
   listMessages(scope: UserScope, chatId: string): Promise<MessageData[]>;
+  getMessage(scope: UserScope, chatId: string, id: string): Promise<MessageData | null>;
   listMessagePage(
     scope: UserScope,
     chatId: string,
