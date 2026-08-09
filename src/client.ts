@@ -71,7 +71,11 @@ import {
 } from "./utils.js";
 import { createSourceDownload, type DownloadArtifact } from "./download.js";
 import { importProjectFiles } from "./project-import.js";
-import { applySourceChanges, normalizeSourceChanges } from "./source-changes.js";
+import {
+  applySourceChanges,
+  normalizeSourceChanges,
+  preserveLockedFiles,
+} from "./source-changes.js";
 import {
   AgentWorkspace,
   type AgentWorkspaceCommitInput,
@@ -399,7 +403,7 @@ export class ChatCollection<Framework extends FrameworkId = FrameworkId> {
     if (summary.length > 2_000) {
       throw new ConfigurationError("An import summary cannot exceed 2,000 characters.");
     }
-    const files = importProjectFiles(input.source);
+    const files = importProjectFiles(input.source, input.filePolicy);
     const metadata = normalizeChatMetadata(input.metadata);
     const imported = await this.#dependencies.repository.importChat(
       this.#dependencies.scope,
@@ -1259,7 +1263,7 @@ class GenerationRunner<Framework extends FrameworkId> {
 
       const files = output.kind === "changes"
         ? applySourceChanges(previousFiles, output.changes)
-        : output.files;
+        : preserveLockedFiles(previousFiles, output.files);
       const changes = output.kind === "changes" ? output.changes : null;
       const inputTokens = output.usage.inputTokens ?? null;
       const outputTokens = output.usage.outputTokens ?? null;

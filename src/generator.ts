@@ -386,7 +386,7 @@ function renderPreviousFiles(files: readonly VersionFile[]): string {
   let consumed = 0;
   const rendered: string[] = [];
   for (const file of files) {
-    const block = `<project-file path="${file.path}">\n${file.content}\n</project-file>`;
+    const block = `<project-file path="${file.path}" locked="${file.locked}">\n${file.content}\n</project-file>`;
     if (consumed + block.length > MAX_PREVIOUS_SOURCE_CHARS) break;
     rendered.push(block);
     consumed += block.length;
@@ -457,6 +457,7 @@ function validateFiles(
       mediaType: file.mediaType ?? inferMediaType(path),
       size,
       checksum: sha256(file.content),
+      locked: false,
     });
   }
 

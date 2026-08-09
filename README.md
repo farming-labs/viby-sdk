@@ -84,6 +84,7 @@ Create a durable chat and first immutable version directly from UTF-8 source fil
 ```ts
 const imported = await userViby.chats.import({
   title: "Existing Farm app",
+  filePolicy: { locked: ["package.json", "farm.config.ts"] },
   source: {
     type: "files",
     files: [
@@ -98,6 +99,8 @@ const importedVersion = await imported.latestVersion();
 
 Use `{ type: "zip", bytes }` for a ZIP archive. Imports reject unsafe paths, duplicate files, encrypted or oversized archives, symbolic links, binary content, and ZIP bombs before persistence.
 
+`filePolicy.locked` accepts `"all"` or normalized project paths. File-list imports may also set `locked: true` on individual files. A lock becomes immutable version metadata: direct changes, generated changes, and agent workspace tools cannot write, delete, or move the file. Forks, restores, and child snapshots preserve it.
+
 Apply deterministic source changes without invoking the model:
 
 ```ts
@@ -110,7 +113,7 @@ const editedVersion = await importedVersion!.apply({
 });
 ```
 
-`apply` creates a complete immutable child snapshot. It never changes the selected version in place.
+`apply` creates a complete immutable child snapshot. It never changes the selected version in place and rejects changes to locked files before persistence.
 
 The default agent uses the same workspace primitives automatically. Advanced consumers can also open an in-memory workspace over an immutable version and expose its portable tools to a custom model runtime:
 

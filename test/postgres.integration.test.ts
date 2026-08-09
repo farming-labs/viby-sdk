@@ -46,6 +46,7 @@ test("persists a durable generation, iteration, events, and download in Postgres
         mediaType: "text/javascript",
         size: Buffer.byteLength(content),
         checksum: sha256(content),
+        locked: false,
       }];
       await options?.onDelta?.(`version-${number}`);
       if (number === 1) {
@@ -154,10 +155,12 @@ test("persists a durable generation, iteration, events, and download in Postgres
 
     const importedChat = await user.chats.import({
       title: "Imported Postgres project",
+      filePolicy: { locked: ["package.json"] },
       source: {
         type: "zip",
         bytes: zipSync({
           "package.json": strToU8('{"name":"postgres-import"}\n'),
+          "README.md": strToU8("# Imported\n"),
           "src/main.ts": strToU8("export const imported = true;\n"),
         }),
       },
@@ -167,7 +170,13 @@ test("persists a durable generation, iteration, events, and download in Postgres
     assert.equal(importedVersion.origin, "imported");
     assert.equal(importedVersion.generationId, null);
     assert.equal(await importedVersion.generation(), null);
-    assert.equal((await importedVersion.files()).length, 2);
+    assert.equal((await importedVersion.files()).length, 3);
+    assert.equal((await importedVersion.files()).find((file) => file.path === "package.json")?.locked,
+      true);
+    await assert.rejects(
+      () => importedVersion.apply({ changes: [{ type: "delete", path: "package.json" }] }),
+      /locked: package\.json/,
+    );
 
     const lease = await repository.createSandboxLease(scope, {
       id: randomUUID(),
@@ -189,18 +198,20 @@ test("persists a durable generation, iteration, events, and download in Postgres
     const editedVersion = await importedVersion.apply({
       changes: [
         { type: "write", path: "src/main.ts", content: "export const imported = 2;\n" },
-        { type: "move", from: "package.json", to: "fixtures/package.json" },
+        { type: "move", from: "README.md", to: "docs/README.md" },
       ],
     });
     assert.equal(editedVersion.origin, "edited");
     assert.equal(editedVersion.parentVersionId, importedVersion.id);
     assert.equal(editedVersion.number, 2);
     assert.equal((await importedVersion.files()).some((file) => file.path === "package.json"), true);
-    assert.equal((await editedVersion.files()).some((file) => file.path === "fixtures/package.json"), true);
+    assert.equal((await editedVersion.files()).some((file) => file.path === "docs/README.md"), true);
+    assert.equal((await editedVersion.files()).find((file) => file.path === "package.json")?.locked,
+      true);
     assert.deepEqual(await importedVersion.changes(), []);
     assert.deepEqual(await editedVersion.changes(), [
       { type: "write", path: "src/main.ts", content: "export const imported = 2;\n" },
-      { type: "move", from: "package.json", to: "fixtures/package.json" },
+      { type: "move", from: "README.md", to: "docs/README.md" },
     ]);
 
     const forkedChat = await importedVersion.fork({ title: "Postgres fork" });
@@ -209,13 +220,17 @@ test("persists a durable generation, iteration, events, and download in Postgres
     assert.equal(forkedVersion.origin, "forked");
     assert.equal(forkedVersion.parentVersionId, importedVersion.id);
     assert.equal((await forkedVersion.files()).some((file) => file.path === "package.json"), true);
+    assert.equal((await forkedVersion.files()).find((file) => file.path === "package.json")?.locked,
+      true);
 
     const restoredVersion = await importedVersion.restore();
     assert.equal(restoredVersion.origin, "restored");
     assert.equal(restoredVersion.number, 3);
     assert.equal(restoredVersion.parentVersionId, importedVersion.id);
     assert.equal((await restoredVersion.files()).some((file) => file.path === "package.json"), true);
-    assert.equal((await editedVersion.files()).some((file) => file.path === "fixtures/package.json"), true);
+    assert.equal((await restoredVersion.files()).find((file) => file.path === "package.json")?.locked,
+      true);
+    assert.equal((await editedVersion.files()).some((file) => file.path === "docs/README.md"), true);
 
     const updatedChat = await persistedChat.update({
       title: "Updated Postgres integration",
@@ -274,6 +289,7 @@ test("persists a durable generation, iteration, events, and download in Postgres
                 mediaType: "text/javascript",
                 size: Buffer.byteLength(content),
                 checksum: sha256(content),
+                locked: false,
               }],
               usage,
               finishReason: "stop",
@@ -430,6 +446,7 @@ test("persists a durable generation, iteration, events, and download in Postgres
                 mediaType: "text/javascript",
                 size: Buffer.byteLength(content),
                 checksum: sha256(content),
+                locked: false,
               }],
               usage,
               finishReason: "stop",

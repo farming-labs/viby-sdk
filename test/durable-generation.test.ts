@@ -34,6 +34,7 @@ function projectOutput(version: number): GeneratorOutput {
     mediaType: "text/javascript",
     size: Buffer.byteLength(content),
     checksum: sha256(content),
+    locked: false,
   }];
   return {
     kind: "project",

@@ -209,6 +209,7 @@ interface VersionFileRow {
   media_type: string;
   size: number;
   checksum: string;
+  locked: boolean;
 }
 
 interface SandboxLeaseRow {
@@ -310,10 +311,10 @@ export class PostgresRepository implements Repository {
       for (const file of input.files) {
         await sql`
           INSERT INTO viby.version_files (
-            id, tenant_id, user_id, version_id, path, content, media_type, size, checksum
+            id, tenant_id, user_id, version_id, path, content, media_type, size, checksum, locked
           ) VALUES (
             ${createId()}, ${scope.tenantId}, ${scope.userId}, ${input.versionId}, ${file.path},
-            ${file.content}, ${file.mediaType}, ${file.size}, ${file.checksum}
+            ${file.content}, ${file.mediaType}, ${file.size}, ${file.checksum}, ${file.locked}
           )
         `;
       }
@@ -370,10 +371,10 @@ export class PostgresRepository implements Repository {
       for (const file of input.files) {
         await sql`
           INSERT INTO viby.version_files (
-            id, tenant_id, user_id, version_id, path, content, media_type, size, checksum
+            id, tenant_id, user_id, version_id, path, content, media_type, size, checksum, locked
           ) VALUES (
             ${createId()}, ${scope.tenantId}, ${scope.userId}, ${input.id}, ${file.path},
-            ${file.content}, ${file.mediaType}, ${file.size}, ${file.checksum}
+            ${file.content}, ${file.mediaType}, ${file.size}, ${file.checksum}, ${file.locked}
           )
         `;
       }
@@ -413,7 +414,7 @@ export class PostgresRepository implements Repository {
       if (!source) throw new NotFoundError("Source version");
 
       const files = await sql<VersionFileRow[]>`
-        SELECT path, content, media_type, size, checksum
+        SELECT path, content, media_type, size, checksum, locked
         FROM viby.version_files
         WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
           AND version_id = ${source.id}
@@ -442,10 +443,10 @@ export class PostgresRepository implements Repository {
       for (const file of files) {
         await sql`
           INSERT INTO viby.version_files (
-            id, tenant_id, user_id, version_id, path, content, media_type, size, checksum
+            id, tenant_id, user_id, version_id, path, content, media_type, size, checksum, locked
           ) VALUES (
             ${createId()}, ${scope.tenantId}, ${scope.userId}, ${input.versionId}, ${file.path},
-            ${file.content}, ${file.media_type}, ${file.size}, ${file.checksum}
+            ${file.content}, ${file.media_type}, ${file.size}, ${file.checksum}, ${file.locked}
           )
         `;
       }
@@ -478,7 +479,7 @@ export class PostgresRepository implements Repository {
       `;
       if (!source) throw new NotFoundError("Source version");
       const files = await sql<VersionFileRow[]>`
-        SELECT path, content, media_type, size, checksum
+        SELECT path, content, media_type, size, checksum, locked
         FROM viby.version_files
         WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
           AND version_id = ${source.id}
@@ -505,10 +506,10 @@ export class PostgresRepository implements Repository {
       for (const file of files) {
         await sql`
           INSERT INTO viby.version_files (
-            id, tenant_id, user_id, version_id, path, content, media_type, size, checksum
+            id, tenant_id, user_id, version_id, path, content, media_type, size, checksum, locked
           ) VALUES (
             ${createId()}, ${scope.tenantId}, ${scope.userId}, ${input.id}, ${file.path},
-            ${file.content}, ${file.media_type}, ${file.size}, ${file.checksum}
+            ${file.content}, ${file.media_type}, ${file.size}, ${file.checksum}, ${file.locked}
           )
         `;
       }
@@ -1187,10 +1188,10 @@ export class PostgresRepository implements Repository {
       for (const file of input.files) {
         await sql`
           INSERT INTO viby.version_files (
-            id, tenant_id, user_id, version_id, path, content, media_type, size, checksum
+            id, tenant_id, user_id, version_id, path, content, media_type, size, checksum, locked
           ) VALUES (
             ${createId()}, ${scope.tenantId}, ${scope.userId}, ${versionId}, ${file.path},
-            ${file.content}, ${file.mediaType}, ${file.size}, ${file.checksum}
+            ${file.content}, ${file.mediaType}, ${file.size}, ${file.checksum}, ${file.locked}
           )
         `;
       }
@@ -1765,7 +1766,7 @@ export class PostgresRepository implements Repository {
   async getVersionFiles(scope: UserScope, versionId: string): Promise<VersionFile[]> {
     await this.assertReady();
     const rows = await this.#sql<VersionFileRow[]>`
-      SELECT path, content, media_type, size, checksum
+      SELECT path, content, media_type, size, checksum, locked
       FROM viby.version_files
       WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId} AND version_id = ${versionId}
       ORDER BY path
@@ -1776,6 +1777,7 @@ export class PostgresRepository implements Repository {
       mediaType: row.media_type,
       size: row.size,
       checksum: row.checksum,
+      locked: row.locked,
     }));
   }
 
