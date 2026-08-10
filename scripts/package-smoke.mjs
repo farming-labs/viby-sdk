@@ -29,6 +29,8 @@ try {
     "dist/index.js",
     "dist/index.d.ts",
     "dist/cli.js",
+    "dist/mcp.js",
+    "dist/mcp.d.ts",
     "dist/sandbox-e2b.js",
     "dist/sandbox-e2b.d.ts",
     "dist/sandbox-vercel.js",
@@ -81,6 +83,30 @@ try {
         'if (typeof verifySignedOutboundEvent !== "function") throw new Error("verifySignedOutboundEvent export is missing");',
         'if (typeof generationEventStreamResponse !== "function") throw new Error("generationEventStreamResponse export is missing");',
         'if (skillRead("./skills").source !== "file") throw new Error("skillRead export is invalid");',
+      ].join("\n"),
+    ],
+    { cwd: consumer },
+  );
+  await execute(
+    npm,
+    [
+      "install",
+      "--ignore-scripts",
+      "--no-audit",
+      "--no-fund",
+      "--package-lock=false",
+      "@modelcontextprotocol/server@2.0.0",
+    ],
+    { cwd: consumer, maxBuffer: 10 * 1024 * 1024 },
+  );
+  await execute(
+    node,
+    [
+      "--input-type=module",
+      "--eval",
+      [
+        'import { registerVibyMcpTools } from "@viby/sdk/mcp";',
+        'if (typeof registerVibyMcpTools !== "function") throw new Error("MCP tools export is missing");',
       ].join("\n"),
     ],
     { cwd: consumer },
