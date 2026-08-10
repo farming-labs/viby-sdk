@@ -136,6 +136,9 @@ export type {
   Viby,
 } from "./client.js";
 export type {
+  AttachmentContent,
+  AttachmentData,
+  AttachmentInput,
   BuiltInSkillCategory,
   ApplySourceChangesInput,
   AgentRunnerConfig,

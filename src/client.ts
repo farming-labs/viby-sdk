@@ -1,4 +1,5 @@
 import type {
+  AttachmentContent,
   ChatData,
   ChatDeletionData,
   ChatListOptions,
@@ -58,7 +59,11 @@ import type {
   AgentToolCallWriter,
   ProjectGenerator,
 } from "./generator.js";
-import type { GenerationWorkerLease, Repository } from "./repository.js";
+import type {
+  CreateAttachmentRecord,
+  GenerationWorkerLease,
+  Repository,
+} from "./repository.js";
 import { AgentProjectGenerator, normalizeAgentRunnerConfig } from "./agent-runner.js";
 import { PostgresRepository } from "./postgres-repository.js";
 import { SkillResolver } from "./skills.js";
@@ -76,6 +81,7 @@ import {
   assertPrompt,
   createId,
   errorMessage,
+  sha256,
 } from "./utils.js";
 import { createSourceDownload, type DownloadArtifact } from "./download.js";
 import { importProjectFiles } from "./project-import.js";
@@ -137,6 +143,9 @@ const DEFAULT_OUTBOUND_INITIAL_DELAY_MS = 1_000;
 const DEFAULT_OUTBOUND_MAX_DELAY_MS = 60_000;
 const DEFAULT_OUTBOUND_MULTIPLIER = 2;
 const DEFAULT_OUTBOUND_LEASE_MS = 30_000;
+const MAX_GENERATION_ATTACHMENTS = 10;
+const MAX_ATTACHMENT_BYTES = 10_000_000;
+const MAX_GENERATION_ATTACHMENT_BYTES = 25_000_000;
 
 export interface OutboundEventDeliveryOptions extends GenerationEventOptions {
   readonly sink: string;
@@ -762,6 +771,17 @@ export class Chat<Framework extends FrameworkId = FrameworkId> {
     return message;
   }
 
+  async getAttachment(id: string): Promise<AttachmentContent> {
+    await this.#assertActive();
+    const attachment = await this.#dependencies.repository.getAttachment(
+      this.#dependencies.scope,
+      this.id,
+      assertIdentifier(id, "attachment id"),
+    );
+    if (!attachment) throw new NotFoundError("Attachment");
+    return attachment;
+  }
+
   startFromVersion(
     input: GenerateInput,
     version: VersionData<Framework>,
@@ -787,6 +807,7 @@ export class Chat<Framework extends FrameworkId = FrameworkId> {
       this.#dependencies.skills,
       this.#dependencies.models,
     );
+    const attachments = normalizeAttachments(input.attachments);
     const generationId = createId();
     const attemptId = createId();
     await this.#dependencies.repository.createGeneration(this.#dependencies.scope, {
@@ -798,6 +819,7 @@ export class Chat<Framework extends FrameworkId = FrameworkId> {
       modelProvider: selected.model.provider,
       modelId: selected.model.id,
       configuration: selected.configuration,
+      attachments,
     });
     this.#dependencies.runner.schedule(this.#dependencies.scope, generationId, attemptId);
     return new Generation(generationId, this.id, this.#dependencies);
@@ -1400,6 +1422,60 @@ function normalizeSkillGroups(value: SkillGroups | undefined): SkillGroups {
   return groups;
 }
 
+function normalizeAttachments(
+  value: GenerateInput["attachments"],
+): readonly CreateAttachmentRecord[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.length > MAX_GENERATION_ATTACHMENTS) {
+    throw new ConfigurationError(
+      `Generation attachments must be an array with at most ${MAX_GENERATION_ATTACHMENTS} items.`,
+    );
+  }
+  let totalBytes = 0;
+  return value.map((attachment) => {
+    if (!attachment || typeof attachment !== "object") {
+      throw new ConfigurationError("Each generation attachment must be an object.");
+    }
+    const filename = attachment.filename.trim();
+    if (
+      filename.length === 0
+      || filename.length > 255
+      || filename === "."
+      || filename === ".."
+      || /[\\/\u0000-\u001f\u007f]/.test(filename)
+    ) {
+      throw new ConfigurationError(`Attachment filename is invalid: ${attachment.filename}`);
+    }
+    const mediaType = attachment.mediaType.trim().toLowerCase();
+    if (!/^[a-z0-9][a-z0-9!#$&^_.+-]{0,126}\/[a-z0-9][a-z0-9!#$&^_.+-]{0,126}$/.test(mediaType)) {
+      throw new ConfigurationError(`Attachment media type is invalid: ${attachment.mediaType}`);
+    }
+    if (!(attachment.bytes instanceof Uint8Array)) {
+      throw new ConfigurationError(`Attachment ${filename} bytes must be a Uint8Array.`);
+    }
+    if (attachment.bytes.byteLength === 0 || attachment.bytes.byteLength > MAX_ATTACHMENT_BYTES) {
+      throw new ConfigurationError(
+        `Attachment ${filename} must contain 1-${MAX_ATTACHMENT_BYTES} bytes.`,
+      );
+    }
+    totalBytes += attachment.bytes.byteLength;
+    if (totalBytes > MAX_GENERATION_ATTACHMENT_BYTES) {
+      throw new ConfigurationError(
+        `Generation attachments cannot exceed ${MAX_GENERATION_ATTACHMENT_BYTES} total bytes.`,
+      );
+    }
+    const bytes = Uint8Array.from(attachment.bytes);
+    return {
+      id: createId(),
+      filename,
+      mediaType,
+      bytes,
+      size: bytes.byteLength,
+      checksum: sha256(bytes),
+    };
+  });
+}
+
 function normalizeGenerationConfiguration<Framework extends FrameworkId>(
   input: GenerateInput,
   defaults: SkillGroups,
@@ -1628,12 +1704,13 @@ class GenerationRunner<Framework extends FrameworkId> {
         );
       }
 
-      const [messages, previousFiles, tasks] = await Promise.all([
+      const [messages, previousFiles, tasks, attachments] = await Promise.all([
         this.#dependencies.repository.listMessages(scope, generation.chatId),
         generation.baseVersionId
           ? this.#dependencies.repository.getVersionFiles(scope, generation.baseVersionId)
           : Promise.resolve([]),
         this.#dependencies.repository.listGenerationTasks(scope, generationId),
+        this.#dependencies.repository.listGenerationAttachments(scope, generationId),
       ]);
       signal.throwIfAborted();
       if (generation.baseVersionId && this.#dependencies.sandbox) {
@@ -1684,6 +1761,7 @@ class GenerationRunner<Framework extends FrameworkId> {
           previousFiles,
           skills,
           tasks,
+          attachments,
           ...(sandbox ? { sandbox } : {}),
         },
         {

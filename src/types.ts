@@ -164,6 +164,7 @@ export interface GenerateInput {
   readonly instructions?: string;
   readonly skills?: SkillGroups;
   readonly metadata?: ChatMetadata;
+  readonly attachments?: readonly AttachmentInput[];
 }
 
 export type IterateInput = GenerateInput;
@@ -243,7 +244,30 @@ export interface MessageData {
   readonly role: "user" | "assistant";
   readonly content: string;
   readonly parts: readonly MessagePart[];
+  readonly attachments: readonly AttachmentData[];
   readonly createdAt: Date;
+}
+
+export interface AttachmentInput {
+  readonly filename: string;
+  readonly mediaType: string;
+  readonly bytes: Uint8Array;
+}
+
+export interface AttachmentData {
+  readonly id: string;
+  readonly chatId: string;
+  readonly messageId: string;
+  readonly generationId: string;
+  readonly filename: string;
+  readonly mediaType: string;
+  readonly size: number;
+  readonly checksum: string;
+  readonly createdAt: Date;
+}
+
+export interface AttachmentContent extends AttachmentData {
+  readonly bytes: Uint8Array;
 }
 
 export type ToolCallEffect = "read" | "write" | "external";

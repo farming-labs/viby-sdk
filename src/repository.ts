@@ -1,4 +1,5 @@
 import type {
+  AttachmentContent,
   ChatData,
   ChatDeletionData,
   ChatMetadata,
@@ -120,6 +121,16 @@ export interface CreateGenerationRecord {
   readonly modelProvider: string;
   readonly modelId: string;
   readonly configuration?: GenerationConfigurationData;
+  readonly attachments?: readonly CreateAttachmentRecord[];
+}
+
+export interface CreateAttachmentRecord {
+  readonly id: string;
+  readonly filename: string;
+  readonly mediaType: string;
+  readonly bytes: Uint8Array;
+  readonly size: number;
+  readonly checksum: string;
 }
 
 export interface CreatedGeneration {
@@ -434,6 +445,11 @@ export interface Repository {
   ): Promise<RepositoryPage<VersionData<Framework>>>;
   listMessages(scope: UserScope, chatId: string): Promise<MessageData[]>;
   getMessage(scope: UserScope, chatId: string, id: string): Promise<MessageData | null>;
+  getAttachment(scope: UserScope, chatId: string, id: string): Promise<AttachmentContent | null>;
+  listGenerationAttachments(
+    scope: UserScope,
+    generationId: string,
+  ): Promise<AttachmentContent[]>;
   listMessagePage(
     scope: UserScope,
     chatId: string,

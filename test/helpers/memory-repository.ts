@@ -1,4 +1,5 @@
 import type {
+  AttachmentContent,
   ChatData,
   ChatDeletionData,
   ChatMetadata,
@@ -82,6 +83,7 @@ interface MemoryMessageInput {
   readonly content: string;
   readonly parts: readonly MessagePartInput[];
   readonly createdAt: Date;
+  readonly attachments?: CreateGenerationRecord["attachments"];
 }
 
 type MemoryOutboundEventDelivery = OutboundEventDeliveryData & ScopedRecord & {
@@ -95,6 +97,7 @@ export class MemoryRepository implements Repository {
   readonly attempts = new Map<string, GenerationAttemptData & ScopedRecord>();
   readonly versions = new Map<string, VersionData & ScopedRecord>();
   readonly messages: Array<MessageData & ScopedRecord> = [];
+  readonly attachments = new Map<string, AttachmentContent & ScopedRecord>();
   readonly files = new Map<string, VersionFile[]>();
   readonly changes = new Map<string, SourceChange[]>();
   readonly events: Array<GenerationEvent & ScopedRecord> = [];
@@ -373,6 +376,11 @@ export class MemoryRepository implements Repository {
       for (let index = this.messages.length - 1; index >= 0; index -= 1) {
         if (this.messages[index]?.chatId === id) this.messages.splice(index, 1);
       }
+      for (const [attachmentId, attachment] of this.attachments) {
+        if (attachment.chatId === id && inScope(attachment, scope)) {
+          this.attachments.delete(attachmentId);
+        }
+      }
       for (let index = this.events.length - 1; index >= 0; index -= 1) {
         if (generationIds.includes(this.events[index]!.generationId)) this.events.splice(index, 1);
       }
@@ -476,6 +484,7 @@ export class MemoryRepository implements Repository {
       content: input.prompt,
       parts: [{ type: "text", data: { text: input.prompt } }],
       createdAt: now,
+      attachments: input.attachments ?? [],
     });
     this.#append(scope, input.id, input.attemptId, "generation.created", {
       prompt: input.prompt,
@@ -1348,6 +1357,29 @@ export class MemoryRepository implements Repository {
     )) ?? null;
   }
 
+  async getAttachment(
+    scope: UserScope,
+    chatId: string,
+    id: string,
+  ): Promise<AttachmentContent | null> {
+    const attachment = this.attachments.get(id);
+    return attachment && attachment.chatId === chatId && inScope(attachment, scope)
+      ? { ...attachment, bytes: Uint8Array.from(attachment.bytes) }
+      : null;
+  }
+
+  async listGenerationAttachments(
+    scope: UserScope,
+    generationId: string,
+  ): Promise<AttachmentContent[]> {
+    return [...this.attachments.values()]
+      .filter((attachment) => attachment.generationId === generationId && inScope(attachment, scope))
+      .sort((left, right) => (
+        left.createdAt.getTime() - right.createdAt.getTime() || left.id.localeCompare(right.id)
+      ))
+      .map((attachment) => ({ ...attachment, bytes: Uint8Array.from(attachment.bytes) }));
+  }
+
   async listMessagePage(
     scope: UserScope,
     chatId: string,
@@ -1431,6 +1463,14 @@ export class MemoryRepository implements Repository {
   #addMessage(scope: UserScope, input: MemoryMessageInput): void {
     const message = createMemoryMessage(scope, input);
     this.messages.push(message);
+    for (const [index, attachment] of (input.attachments ?? []).entries()) {
+      const data = message.attachments[index]!;
+      this.attachments.set(data.id, {
+        ...data,
+        bytes: Uint8Array.from(attachment.bytes),
+        ...scope,
+      });
+    }
     for (const part of input.parts) {
       if (part.type !== "tool-call") continue;
       const toolCall = this.toolCalls.get(part.data.toolCallId);
@@ -1524,6 +1564,17 @@ function createMemoryMessage(
     data: JSON.parse(JSON.stringify(part.data)) as MessagePart["data"],
     createdAt: input.createdAt,
   } as MessagePart));
+  const attachments = (input.attachments ?? []).map((attachment) => ({
+    id: attachment.id,
+    chatId: input.chatId,
+    messageId: id,
+    generationId: input.generationId,
+    filename: attachment.filename,
+    mediaType: attachment.mediaType,
+    size: attachment.size,
+    checksum: attachment.checksum,
+    createdAt: input.createdAt,
+  }));
   return {
     id,
     chatId: input.chatId,
@@ -1531,6 +1582,7 @@ function createMemoryMessage(
     role: input.role,
     content: input.content,
     parts,
+    attachments,
     createdAt: input.createdAt,
     ...scope,
   };

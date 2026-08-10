@@ -19,6 +19,7 @@ import type {
   GeneratorOutput,
   ProjectGenerator,
 } from "./generator.js";
+import { createMultimodalPrompt } from "./generator.js";
 import type {
   AgentRunnerConfig,
   FrameworkId,
@@ -137,7 +138,7 @@ implements ProjectGenerator<Framework> {
       ],
     });
     const result = await agent.generate({
-      prompt: createAgentPrompt(input),
+      ...createMultimodalPrompt(createAgentPrompt(input), input.attachments),
       ...(options.signal ? { abortSignal: options.signal } : {}),
       timeout: {
         totalMs: this.#config.maxDurationMs,
@@ -565,6 +566,9 @@ function createAgentPrompt<Framework extends FrameworkId>(input: GeneratorInput<
       ? `The workspace contains ${input.previousFiles.length} files. Inspect them with tools.`
       : "The workspace is empty. Create a complete project with tools.",
     tasks ? `Generation task history:\n${tasks}` : "There is no generation task history.",
+    input.attachments?.length
+      ? `${input.attachments.length} immutable attachment(s) are supplied as multimodal file parts.`
+      : "There are no attachments for this request.",
     `Current request:\n${input.prompt}`,
   ].join("\n\n");
 }

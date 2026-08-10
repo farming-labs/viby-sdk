@@ -62,7 +62,7 @@ The official v2 documentation organizes the API around these resources and endpo
 | Per-request system prompt | `systemPrompt` | durable generation-scoped instructions | Shipped |
 | Per-request model options | `modelConfiguration` | stable configured model aliases with persisted provider/model identity | Shipped |
 | Per-request skills | remote, memory, and project skills | durable categorized overrides plus stored resolved snapshots | Shipped |
-| Attachments and image generation | attachment URLs and image option | portable attachment snapshots and multimodal input | Planned |
+| Attachments and image generation | attachment URLs and image option | immutable input snapshots, scoped retrieval, and AI SDK multimodal file parts | Partial — input shipped; generated binary output planned |
 
 Viby does not copy v0's privacy enum, author identity, account URLs, or hosted write-permission field. The embedding application already owns those decisions.
 

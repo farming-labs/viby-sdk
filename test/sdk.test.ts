@@ -14,6 +14,7 @@ import { MESSAGE_PART_TYPES } from "../src/types.js";
 import type { FrameworkId, VersionFile } from "../src/types.js";
 import { sha256 } from "../src/utils.js";
 import {
+  ConfigurationError,
   GenerationError,
   NotFoundError,
   OutboundEventDeliveryError,
@@ -181,6 +182,51 @@ test("persists generation-scoped model, instructions, skills, and metadata acros
   assert.equal(visual.calls[0]?.instructions, queued.configuration.instructions);
   assert.deepEqual(visual.calls[0]?.metadata, queued.configuration.metadata);
   assert.deepEqual(visual.calls[0]?.skills.map((skill) => skill.name), ["request-design"]);
+});
+
+test("snapshots multimodal attachments and loads bytes only through explicit scoped access", async () => {
+  const { viby, generator } = setup();
+  const user = viby.forUser({ tenantId: "tenant-attachments", userId: "user-attachments" });
+  const chat = await user.chats.create({ title: "Attachments" });
+  const sourceBytes = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
+  const expectedBytes = Uint8Array.from(sourceBytes);
+  const generation = await chat.start({
+    prompt: "Match the supplied interface reference",
+    attachments: [{
+      filename: "reference.png",
+      mediaType: "image/png",
+      bytes: sourceBytes,
+    }],
+  });
+  sourceBytes.fill(0);
+  assert.equal((await generation.wait({ pollIntervalMs: 10 })).status, "succeeded");
+
+  const [userMessage] = (await chat.listMessages()).items;
+  assert.equal(userMessage?.role, "user");
+  assert.equal(userMessage?.attachments.length, 1);
+  const attachmentData = userMessage!.attachments[0]!;
+  assert.equal(attachmentData.filename, "reference.png");
+  assert.equal(attachmentData.mediaType, "image/png");
+  assert.equal(attachmentData.size, expectedBytes.byteLength);
+  assert.equal(attachmentData.checksum, sha256(expectedBytes));
+  assert.equal(Object.hasOwn(attachmentData, "bytes"), false);
+
+  const attachment = await chat.getAttachment(attachmentData.id);
+  assert.deepEqual(attachment.bytes, expectedBytes);
+  assert.deepEqual(generator.calls[0]?.attachments?.[0]?.bytes, expectedBytes);
+  attachment.bytes.fill(1);
+  assert.deepEqual((await chat.getAttachment(attachmentData.id)).bytes, expectedBytes);
+
+  const otherChat = await user.chats.create({ title: "Other" });
+  await assert.rejects(() => otherChat.getAttachment(attachmentData.id), NotFoundError);
+  const otherTenant = await viby
+    .forUser({ tenantId: "tenant-other", userId: "user-other" })
+    .chats.create({ title: "Other tenant" });
+  await assert.rejects(() => otherTenant.getAttachment(attachmentData.id), NotFoundError);
+  await assert.rejects(() => chat.start({
+    prompt: "Unsafe attachment",
+    attachments: [{ filename: "../secret.txt", mediaType: "text/plain", bytes: new Uint8Array([1]) }],
+  }), ConfigurationError);
 });
 
 test("persists typed ordered message parts with message, generation, and attempt ownership", async () => {
