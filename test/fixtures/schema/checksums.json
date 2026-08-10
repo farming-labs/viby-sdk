@@ -1,0 +1,16 @@
+{
+  "0001_initial.sql": "1a6c2ced19ba049ceaaad621bbfca4beb254d406f09b3be72f35a03526520613",
+  "0002_durable_generations.sql": "b58d4047cfde50295fc8e8b1eca1cd1103cfbce75ab45dae664e423b6e464f28",
+  "0003_source_versions.sql": "d4b1bf894786d1003e1710c87fb149488c482da22626c96ebfa78bf50f57c614",
+  "0004_chat_metadata.sql": "be966b79a9af6cc2215cdbfd31ee6279483e0ef6bdcde765bbdbea2ab96f61ba",
+  "0005_sandbox_leases.sql": "e3b5cbdc132174c5dd1de031c1c8d20fc2593ceecd0958ed0516c0d50540da3e",
+  "0006_generation_worker_leases.sql": "eb3f5a2c6f0d5a50988142861c9de99197f36c2ee752c5ad4fb465a340225caa",
+  "0007_version_changes.sql": "9ba7f6b8ebed897a6196d7b0d1453a960bfeb8be5f296e1c731de66c131dd01e",
+  "0008_message_parts.sql": "dea8008fbf78fef4eb524ba99e2919fa6fb8881babbc113c664f365139a57d3d",
+  "0009_agent_trace_events.sql": "071dff3218c38772f4ef79268f3243b5c333cac87414b162801bdaa0dc2db851",
+  "0010_tool_calls.sql": "d82a6c5a240cf9f047ca32f2469b6594747cded7a4f441a548f928dc45f17a64",
+  "0011_locked_files.sql": "75a2b3794fe2308cad32feced4eca6e9675d70b79a582f31e5b29789c18b9828",
+  "0012_chat_retention.sql": "75e17e56c79fc8b6d88a4b246af0f54180d33ee9cea028770985dbf9e36001cf",
+  "0013_generation_costs.sql": "bbbe9b7bf99c6eb7ee6b7842b162216d0f1228aaea7b92433b997dc75d402dfa",
+  "0014_outbound_event_deliveries.sql": "4529db3e564d5753833f22eb5fad03fe28a8d0af79c94b6439e92890fbad0c4b"
+}

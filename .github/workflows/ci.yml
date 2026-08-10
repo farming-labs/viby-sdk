@@ -44,6 +44,7 @@ jobs:
       - run: node scripts/check-release-version.mjs
       - run: npm run typecheck
       - run: npm run build
+      - run: npm run test:compatibility
       - run: npm run test:package
       - run: npm pack --dry-run --ignore-scripts
       - run: npm ci --prefix examples/basic
@@ -69,6 +70,7 @@ jobs:
           --health-retries 5
     env:
       TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/viby_test
+      SCHEMA_UPGRADE_ADMIN_URL: postgresql://postgres:postgres@localhost:5432/viby_test
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -77,6 +79,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run test:integration
+      - run: npm run test:schema-upgrade
       - run: npm run build
       - run: node dist/cli.js db status
         env:
