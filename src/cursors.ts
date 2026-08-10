@@ -14,6 +14,11 @@ interface VersionCursor {
   readonly number: number;
 }
 
+interface DesignEvaluationCursor {
+  readonly createdAt: Date;
+  readonly id: string;
+}
+
 export function encodeChatCursor(cursor: ChatCursor): string {
   return encode({ v: 1, k: "chat", at: cursor.updatedAt.toISOString(), id: cursor.id });
 }
@@ -51,6 +56,30 @@ export function decodeVersionCursor(cursor: string | undefined): VersionCursor |
     throw invalidCursor();
   }
   return { number: Number(value.number) };
+}
+
+export function encodeDesignEvaluationCursor(cursor: DesignEvaluationCursor): string {
+  return encode({
+    v: 1,
+    k: "design-evaluation",
+    at: cursor.createdAt.toISOString(),
+    id: cursor.id,
+  });
+}
+
+export function decodeDesignEvaluationCursor(
+  cursor: string | undefined,
+): DesignEvaluationCursor | null {
+  if (!cursor) return null;
+  const value = decode(cursor);
+  if (
+    value.k !== "design-evaluation"
+    || typeof value.at !== "string"
+    || typeof value.id !== "string"
+  ) {
+    throw invalidCursor();
+  }
+  return { createdAt: parseDate(value.at), id: parseId(value.id) };
 }
 
 function encode(value: Record<string, unknown>): string {

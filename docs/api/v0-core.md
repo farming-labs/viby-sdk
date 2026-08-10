@@ -132,9 +132,10 @@ Viby separates a portable tool call from the credentialed connection used to ful
 
 Capability discovery, the adapter conformance suite, background processes, readiness checks, durable sandbox leases, reconnect-by-ID, generation worker leases with heartbeats, sandbox command policy enforcement, immutable agent workspace change sets, typed durable message parts, permission-gated agent sandbox actions, source import adapters, file locks, retention-aware deletion, standard SSE/Web responses, scoped MCP tools, durable signed outbound delivery, OpenTelemetry hooks, and cost attribution are shipped.
 
-1. Attachments and generation-scoped model/skill configuration.
-2. Browser/screenshot tools behind a portable tool contract.
-3. Explicit Git and deployment adapters after the portable generation workflow is complete.
+Generation-scoped model/skill configuration, durable multimodal input snapshots, and immutable design evaluation results are shipped.
+
+1. Browser/screenshot tools behind a portable tool contract.
+2. Explicit Git and deployment adapters after the portable generation workflow is complete.
 
 ## Persistence rules
 
