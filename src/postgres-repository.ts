@@ -4,6 +4,8 @@ import type {
   OutboundEventDeliveryStatus,
 } from "./outbound-events.js";
 import type {
+  AttachmentContent,
+  AttachmentData,
   ChatData,
   ChatDeletionData,
   ChatMetadata,
@@ -217,6 +219,19 @@ interface MessagePartRow {
   position: number;
   type: MessagePartType;
   data: MessagePart["data"];
+  created_at: Date;
+}
+
+interface AttachmentRow {
+  id: string;
+  chat_id: string;
+  message_id: string;
+  generation_id: string;
+  filename: string;
+  media_type: string;
+  size: number;
+  checksum: string;
+  content?: Uint8Array;
   created_at: Date;
 }
 
@@ -761,6 +776,7 @@ export class PostgresRepository implements Repository {
         role: "user",
         content: input.prompt,
         parts: [{ type: "text", data: { text: input.prompt } }],
+        attachments: input.attachments ?? [],
       });
       await sql`
         INSERT INTO viby.generation_events (
@@ -1994,6 +2010,39 @@ export class PostgresRepository implements Repository {
     return (await this.#messagesWithParts(scope, rows))[0] ?? null;
   }
 
+  async getAttachment(
+    scope: UserScope,
+    chatId: string,
+    id: string,
+  ): Promise<AttachmentContent | null> {
+    await this.assertReady();
+    const [row] = await this.#sql<AttachmentRow[]>`
+      SELECT id, chat_id, message_id, generation_id, filename, media_type,
+        size, checksum, content, created_at
+      FROM viby.attachments
+      WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+        AND chat_id = ${chatId} AND id = ${id}
+      LIMIT 1
+    `;
+    return row ? mapAttachmentContent(row) : null;
+  }
+
+  async listGenerationAttachments(
+    scope: UserScope,
+    generationId: string,
+  ): Promise<AttachmentContent[]> {
+    await this.assertReady();
+    const rows = await this.#sql<AttachmentRow[]>`
+      SELECT id, chat_id, message_id, generation_id, filename, media_type,
+        size, checksum, content, created_at
+      FROM viby.attachments
+      WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+        AND generation_id = ${generationId}
+      ORDER BY created_at, id
+    `;
+    return rows.map(mapAttachmentContent);
+  }
+
   async listMessagePage(
     scope: UserScope,
     chatId: string,
@@ -2038,13 +2087,31 @@ export class PostgresRepository implements Repository {
         AND message_id = ANY(${this.#sql.array(messageIds)}::uuid[])
       ORDER BY message_id, position
     `;
+    const attachmentRows = await this.#sql<AttachmentRow[]>`
+      SELECT id, chat_id, message_id, generation_id, filename, media_type,
+        size, checksum, created_at
+      FROM viby.attachments
+      WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+        AND message_id = ANY(${this.#sql.array(messageIds)}::uuid[])
+      ORDER BY message_id, created_at, id
+    `;
     const parts = new Map<string, MessagePart[]>();
     for (const row of partRows) {
       const current = parts.get(row.message_id) ?? [];
       current.push(mapMessagePart(row));
       parts.set(row.message_id, current);
     }
-    return rows.map((row) => mapMessage(row, parts.get(row.id) ?? []));
+    const attachments = new Map<string, AttachmentData[]>();
+    for (const row of attachmentRows) {
+      const current = attachments.get(row.message_id) ?? [];
+      current.push(mapAttachment(row));
+      attachments.set(row.message_id, current);
+    }
+    return rows.map((row) => mapMessage(
+      row,
+      parts.get(row.id) ?? [],
+      attachments.get(row.id) ?? [],
+    ));
   }
 
   async getVersionFiles(scope: UserScope, versionId: string): Promise<VersionFile[]> {
@@ -2269,7 +2336,11 @@ function mapVersion<Framework extends FrameworkId>(row: VersionRow): VersionData
   };
 }
 
-function mapMessage(row: MessageRow, parts: readonly MessagePart[]): MessageData {
+function mapMessage(
+  row: MessageRow,
+  parts: readonly MessagePart[],
+  attachments: readonly AttachmentData[],
+): MessageData {
   return {
     id: row.id,
     chatId: row.chat_id,
@@ -2277,8 +2348,28 @@ function mapMessage(row: MessageRow, parts: readonly MessagePart[]): MessageData
     role: row.role,
     content: row.content,
     parts,
+    attachments,
     createdAt: row.created_at,
   };
+}
+
+function mapAttachment(row: AttachmentRow): AttachmentData {
+  return {
+    id: row.id,
+    chatId: row.chat_id,
+    messageId: row.message_id,
+    generationId: row.generation_id,
+    filename: row.filename,
+    mediaType: row.media_type,
+    size: row.size,
+    checksum: row.checksum,
+    createdAt: row.created_at,
+  };
+}
+
+function mapAttachmentContent(row: AttachmentRow): AttachmentContent {
+  if (!row.content) throw new Error(`Attachment ${row.id} content was not selected.`);
+  return { ...mapAttachment(row), bytes: Uint8Array.from(row.content) };
 }
 
 function mapMessagePart(row: MessagePartRow): MessagePart {
@@ -2304,6 +2395,7 @@ async function insertMessage(
     readonly role: "user" | "assistant";
     readonly content: string;
     readonly parts: readonly MessagePartInput[];
+    readonly attachments?: CreateGenerationRecord["attachments"];
   },
 ): Promise<void> {
   const messageId = createId();
@@ -2324,6 +2416,19 @@ async function insertMessage(
         ${part.id ?? createId()}, ${scope.tenantId}, ${scope.userId}, ${messageId},
         ${input.generationId}, ${input.attemptId}, ${position}, ${part.type},
         ${sql.json(JSON.parse(JSON.stringify(part.data)))}
+      )
+    `;
+  }
+  for (const attachment of input.attachments ?? []) {
+    await sql`
+      INSERT INTO viby.attachments (
+        id, tenant_id, user_id, chat_id, message_id, generation_id,
+        filename, media_type, size, checksum, content
+      ) VALUES (
+        ${attachment.id}, ${scope.tenantId}, ${scope.userId}, ${input.chatId},
+        ${messageId}, ${input.generationId}, ${attachment.filename},
+        ${attachment.mediaType}, ${attachment.size}, ${attachment.checksum},
+        ${Buffer.from(attachment.bytes)}
       )
     `;
   }

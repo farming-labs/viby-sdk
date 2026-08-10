@@ -100,6 +100,11 @@ test("persists a durable generation, iteration, events, and download in Postgres
       instructions: "Use a compact product layout.",
       skills: { design: [] },
       metadata: { test: "postgres-generation-config" },
+      attachments: [{
+        filename: "reference.txt",
+        mediaType: "text/plain",
+        bytes: new TextEncoder().encode("durable reference"),
+      }],
     });
     const outcome = await generation.wait({ pollIntervalMs: 10 });
     assert.equal(outcome.status, "succeeded");
@@ -113,6 +118,8 @@ test("persists a durable generation, iteration, events, and download in Postgres
     });
     assert.equal(calls[0]?.instructions, "Use a compact product layout.");
     assert.deepEqual(calls[0]?.metadata, { test: "postgres-generation-config" });
+    assert.equal(calls[0]?.attachments?.[0]?.filename, "reference.txt");
+    assert.equal(new TextDecoder().decode(calls[0]?.attachments?.[0]?.bytes), "durable reference");
     assert.deepEqual((await generation.attempts())[0]?.cost, {
       amountMicros: 240,
       currency: "USD",
@@ -213,6 +220,11 @@ test("persists a durable generation, iteration, events, and download in Postgres
     });
     assert.equal((await persistedChat.listMessages()).items.length, 4);
     const persistedMessages = (await persistedChat.listMessages()).items;
+    assert.equal(persistedMessages[0]?.attachments[0]?.filename, "reference.txt");
+    const persistedAttachment = await persistedChat.getAttachment(
+      persistedMessages[0]!.attachments[0]!.id,
+    );
+    assert.equal(new TextDecoder().decode(persistedAttachment.bytes), "durable reference");
     assert.deepEqual(persistedMessages[0]?.parts.map((part) => part.type), ["text"]);
     assert.deepEqual(persistedMessages[1]?.parts.map((part) => part.type), [
       "search",

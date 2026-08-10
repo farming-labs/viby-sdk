@@ -60,6 +60,7 @@ Preview URLs exist only when the configured adapter exposes port URLs and the ho
 | Telemetry | provider-neutral hooks plus an OpenTelemetry-compatible tracer/meter adapter |
 | Cost attribution | host-defined currency/credit calculator, immutable attempt cost, cumulative generation cost, and usage parts |
 | Generation configuration | durable per-request model aliases, host instructions, categorized skill overlays, and JSON metadata |
+| Multimodal input | immutable attachment bytes, lightweight message metadata, scoped retrieval, and standard AI SDK file parts |
 
 Authentication, OAuth connection registries, event scheduling, and transport infrastructure remain host-owned. Viby stores delivery state but does not run a hidden queue or scheduler.
 
@@ -80,7 +81,7 @@ Authentication, OAuth connection registries, event scheduling, and transport inf
 
 - Git repository push, branch, commit, and pull-request adapters;
 - deployment adapters, provider connections, and managed preview hosting;
-- attachments, multimodal source snapshots, screenshots, and browser automation;
+- screenshot capture and browser automation;
 - a public custom storage adapter (Postgres is currently the required persistence implementation);
 - a public custom generation-engine injection point beyond the AI SDK model contract;
 - managed authentication, billing, Postgres, workers, queues, secrets, or a Viby API key.

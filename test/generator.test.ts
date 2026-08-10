@@ -2,7 +2,29 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { simulateReadableStream } from "ai";
 import { MockLanguageModelV4 } from "ai/test";
-import { AiProjectGenerator } from "../src/generator.js";
+import { AiProjectGenerator, createMultimodalPrompt } from "../src/generator.js";
+
+test("builds provider-neutral AI SDK file parts from immutable attachment bytes", () => {
+  const bytes = new Uint8Array([1, 2, 3]);
+  const request = createMultimodalPrompt("Use this reference", [{
+    id: "attachment-id",
+    chatId: "chat-id",
+    messageId: "message-id",
+    generationId: "generation-id",
+    filename: "reference.png",
+    mediaType: "image/png",
+    size: bytes.byteLength,
+    checksum: "0".repeat(64),
+    bytes,
+    createdAt: new Date("2026-08-10T00:00:00.000Z"),
+  }]);
+  assert.ok("messages" in request);
+  if (!("messages" in request)) throw new Error("Expected multimodal messages");
+  assert.deepEqual(request.messages[0]?.content, [
+    { type: "text", text: "Use this reference" },
+    { type: "file", data: bytes, filename: "reference.png", mediaType: "image/png" },
+  ]);
+});
 
 function createMockModel(project: unknown) {
   return new MockLanguageModelV4({

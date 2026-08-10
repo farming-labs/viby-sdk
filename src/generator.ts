@@ -8,6 +8,7 @@ import {
 import { z } from "zod";
 import type {
   FrameworkId,
+  AttachmentContent,
   GenerationTaskData,
   GenerationTaskRequest,
   MessageData,
@@ -87,6 +88,7 @@ export interface GeneratorInput<Framework extends FrameworkId = FrameworkId> {
   readonly previousFiles: readonly VersionFile[];
   readonly skills: readonly ResolvedSkill[];
   readonly tasks: readonly GenerationTaskData[];
+  readonly attachments?: readonly AttachmentContent[];
   readonly sandbox?: SandboxSession;
 }
 
@@ -187,7 +189,7 @@ implements ProjectGenerator<Framework> {
     const result = await generateText({
       model: this.#model,
       system: createSystemPrompt(input.framework, input.skills, input.instructions ?? null),
-      prompt: createGenerationPrompt(input),
+      ...createMultimodalPrompt(createGenerationPrompt(input), input.attachments),
       output: Output.object({
         name: "viby_generation",
         description: "A complete source project, immutable source changes, or a typed blocking task.",
@@ -206,7 +208,7 @@ implements ProjectGenerator<Framework> {
     const result = streamText({
       model: this.#model,
       system: createSystemPrompt(input.framework, input.skills, input.instructions ?? null),
-      prompt: createGenerationPrompt(input),
+      ...createMultimodalPrompt(createGenerationPrompt(input), input.attachments),
       output: Output.object({
         name: "viby_generation",
         description: "A complete source project, immutable source changes, or a typed blocking task.",
@@ -273,11 +275,35 @@ function createGenerationPrompt<Framework extends FrameworkId>(input: GeneratorI
     taskContext
       ? `Resolved and pending generation tasks:\n${taskContext}`
       : "There are no prior generation tasks.",
+    input.attachments?.length
+      ? `${input.attachments.length} immutable attachment(s) are supplied as multimodal file parts with this request.`
+      : "There are no attachments for this request.",
     `Current request:\n${input.prompt}`,
     input.previousFiles.length > 0
       ? "Produce the smallest complete set of typed source changes that satisfies the request while preserving relevant existing behavior."
       : "Produce a complete source tree that satisfies the request.",
   ].join("\n\n");
+}
+
+export function createMultimodalPrompt(
+  prompt: string,
+  attachments: readonly AttachmentContent[] | undefined,
+) {
+  if (!attachments || attachments.length === 0) return { prompt };
+  return {
+    messages: [{
+      role: "user" as const,
+      content: [
+        { type: "text" as const, text: prompt },
+        ...attachments.map((attachment) => ({
+          type: "file" as const,
+          data: attachment.bytes,
+          filename: attachment.filename,
+          mediaType: attachment.mediaType,
+        })),
+      ],
+    }],
+  };
 }
 
 function renderTasks(tasks: readonly GenerationTaskData[]): string {
