@@ -8,6 +8,7 @@ This inventory describes the current `@viby/sdk` source on `main`. “Shipped”
 | --- | --- | --- |
 | Framework-neutral project target | one `framework` string, including custom values | host selects; skills and prompts teach framework behavior |
 | Model selection | any AI SDK `LanguageModel` | host configures and owns provider credentials |
+| Generation engine | public provider-neutral engine plus conformance suite | host may replace the AI SDK shortcut with any agent, model runtime, or orchestrator |
 | Categorized skills | skills.sh slugs and `skillRead(...)` directories | host selects; Viby resolves and snapshots exact content |
 | Durable database | `DATABASE_URL`, explicit `viby db migrate` | host provisions Postgres; Viby owns its schema and migrations |
 | Tenant isolation | `viby.forUser({ tenantId, userId })` | host authenticates; every Viby query enforces both IDs |
@@ -85,7 +86,6 @@ Authentication, OAuth connection registries, event scheduling, and transport inf
 - deployment adapters, provider connections, and managed preview hosting;
 - screenshot capture and browser automation;
 - a public custom storage adapter (Postgres is currently the required persistence implementation);
-- a public custom generation-engine injection point beyond the AI SDK model contract;
 - managed authentication, billing, Postgres, workers, queues, secrets, or a Viby API key.
 
 These are absent contracts, not runtime stubs. Future provider features should enter through portable core interfaces and explicit adapters without weakening the framework-, runtime-, model-, or vendor-neutral boundary.

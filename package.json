@@ -66,6 +66,10 @@
       "types": "./dist/sandbox-conformance.d.ts",
       "import": "./dist/sandbox-conformance.js"
     },
+    "./generation/conformance": {
+      "types": "./dist/generation-engine-conformance.d.ts",
+      "import": "./dist/generation-engine-conformance.js"
+    },
     "./mcp": {
       "types": "./dist/mcp.d.ts",
       "import": "./dist/mcp.js"
