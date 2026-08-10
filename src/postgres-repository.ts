@@ -27,6 +27,7 @@ import type {
   VersionData,
   VersionFile,
 } from "./types.js";
+import type { GenerationCostData } from "./telemetry.js";
 import type {
   CreateSandboxLeaseRecord,
   SandboxLeaseData,
@@ -94,6 +95,8 @@ interface GenerationRow {
   input_tokens: number | null;
   output_tokens: number | null;
   total_tokens: number | null;
+  estimated_cost_micros: string | number | null;
+  cost_currency: string | null;
   error: string | null;
   created_at: Date;
   started_at: Date | null;
@@ -111,6 +114,8 @@ interface GenerationAttemptRow {
   input_tokens: number | null;
   output_tokens: number | null;
   total_tokens: number | null;
+  estimated_cost_micros: string | number | null;
+  cost_currency: string | null;
   finish_reason: string | null;
   error: string | null;
   created_at: Date;
@@ -257,7 +262,12 @@ export class PostgresRepository implements Repository {
         AND to_regclass('viby.sandbox_leases') IS NOT NULL
         AND to_regclass('viby.version_changes') IS NOT NULL
         AND to_regclass('viby.message_parts') IS NOT NULL
-        AND to_regclass('viby.tool_calls') IS NOT NULL AS ready
+        AND to_regclass('viby.tool_calls') IS NOT NULL
+        AND EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_schema = 'viby' AND table_name = 'generations'
+            AND column_name = 'estimated_cost_micros'
+        ) AS ready
     `;
     if (!row?.ready) throw new DatabaseNotReadyError();
     this.#ready = true;
@@ -1303,6 +1313,8 @@ export class PostgresRepository implements Repository {
         UPDATE viby.generation_attempts SET
           status = 'succeeded', input_tokens = ${input.inputTokens},
           output_tokens = ${input.outputTokens}, total_tokens = ${input.totalTokens},
+          estimated_cost_micros = ${input.cost?.amountMicros ?? null},
+          cost_currency = ${input.cost?.currency ?? null},
           finish_reason = ${input.finishReason}, completed_at = now()
         WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId} AND id = ${input.attemptId}
       `;
@@ -1310,6 +1322,11 @@ export class PostgresRepository implements Repository {
         UPDATE viby.generations SET
           status = 'succeeded', input_tokens = ${input.inputTokens},
           output_tokens = ${input.outputTokens}, total_tokens = ${input.totalTokens},
+          estimated_cost_micros = CASE
+            WHEN ${input.cost?.amountMicros ?? null}::bigint IS NULL THEN estimated_cost_micros
+            ELSE COALESCE(estimated_cost_micros, 0) + ${input.cost?.amountMicros ?? null}::bigint
+          END,
+          cost_currency = COALESCE(cost_currency, ${input.cost?.currency ?? null}),
           finish_reason = ${input.finishReason}, error = NULL, completed_at = now()
         WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId} AND id = ${input.generationId}
       `;
@@ -1393,6 +1410,8 @@ export class PostgresRepository implements Repository {
         UPDATE viby.generation_attempts SET
           status = 'waiting', input_tokens = ${input.inputTokens},
           output_tokens = ${input.outputTokens}, total_tokens = ${input.totalTokens},
+          estimated_cost_micros = ${input.cost?.amountMicros ?? null},
+          cost_currency = ${input.cost?.currency ?? null},
           finish_reason = ${input.finishReason}, completed_at = now()
         WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId} AND id = ${input.attemptId}
       `;
@@ -1400,6 +1419,11 @@ export class PostgresRepository implements Repository {
         UPDATE viby.generations SET
           status = 'waiting', input_tokens = ${input.inputTokens},
           output_tokens = ${input.outputTokens}, total_tokens = ${input.totalTokens},
+          estimated_cost_micros = CASE
+            WHEN ${input.cost?.amountMicros ?? null}::bigint IS NULL THEN estimated_cost_micros
+            ELSE COALESCE(estimated_cost_micros, 0) + ${input.cost?.amountMicros ?? null}::bigint
+          END,
+          cost_currency = COALESCE(cost_currency, ${input.cost?.currency ?? null}),
           finish_reason = ${input.finishReason}, error = NULL
         WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId} AND id = ${input.generationId}
       `;
@@ -1961,6 +1985,7 @@ function mapGeneration(row: GenerationRow): GenerationData {
     inputTokens: row.input_tokens,
     outputTokens: row.output_tokens,
     totalTokens: row.total_tokens,
+    cost: mapCost(row.estimated_cost_micros, row.cost_currency),
     error: row.error,
     createdAt: row.created_at,
     startedAt: row.started_at,
@@ -1980,6 +2005,7 @@ function mapAttempt(row: GenerationAttemptRow): GenerationAttemptData {
     inputTokens: row.input_tokens,
     outputTokens: row.output_tokens,
     totalTokens: row.total_tokens,
+    cost: mapCost(row.estimated_cost_micros, row.cost_currency),
     finishReason: row.finish_reason,
     error: row.error,
     createdAt: row.created_at,
@@ -1989,6 +2015,18 @@ function mapAttempt(row: GenerationAttemptRow): GenerationAttemptData {
     heartbeatAt: row.heartbeat_at,
     leaseExpiresAt: row.lease_expires_at,
   };
+}
+
+function mapCost(
+  amount: string | number | null,
+  currency: string | null,
+): GenerationCostData | null {
+  if (amount === null || currency === null) return null;
+  const amountMicros = Number(amount);
+  if (!Number.isSafeInteger(amountMicros) || amountMicros < 0) {
+    throw new Error("Stored generation cost is outside the JavaScript safe integer range.");
+  }
+  return { amountMicros, currency };
 }
 
 function mapEvent(row: GenerationEventRow): GenerationEvent {

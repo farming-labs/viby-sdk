@@ -24,6 +24,7 @@ import type {
   ToolCallData,
   ToolCallEffect,
 } from "./types.js";
+import type { GenerationCostData } from "./telemetry.js";
 import type {
   CreateSandboxLeaseRecord,
   SandboxLeaseData,
@@ -142,6 +143,7 @@ export interface CompleteGenerationRecord<Framework extends FrameworkId = Framew
   readonly outputTokens: number | null;
   readonly totalTokens: number | null;
   readonly finishReason: string;
+  readonly cost: GenerationCostData | null;
 }
 
 export interface PauseGenerationRecord {
@@ -155,6 +157,7 @@ export interface PauseGenerationRecord {
   readonly outputTokens: number | null;
   readonly totalTokens: number | null;
   readonly finishReason: string;
+  readonly cost: GenerationCostData | null;
 }
 
 export interface ResolveGenerationTaskRecord {

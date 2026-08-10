@@ -55,6 +55,7 @@ import type {
 import { createId } from "../../src/utils.js";
 import { ConfigurationError, GenerationStateError, NotFoundError } from "../../src/errors.js";
 import { normalizeAndRedactToolPayload } from "../../src/redaction.js";
+import type { GenerationCostData } from "../../src/telemetry.js";
 
 interface ScopedRecord {
   tenantId: string;
@@ -417,6 +418,7 @@ export class MemoryRepository implements Repository {
       inputTokens: null,
       outputTokens: null,
       totalTokens: null,
+      cost: null,
       error: null,
       createdAt: now,
       startedAt: null,
@@ -434,6 +436,7 @@ export class MemoryRepository implements Repository {
       inputTokens: null,
       outputTokens: null,
       totalTokens: null,
+      cost: null,
       finishReason: null,
       error: null,
       createdAt: now,
@@ -616,6 +619,7 @@ export class MemoryRepository implements Repository {
       inputTokens: null,
       outputTokens: null,
       totalTokens: null,
+      cost: null,
       finishReason: null,
       error: null,
       createdAt: new Date(),
@@ -836,6 +840,7 @@ export class MemoryRepository implements Repository {
       inputTokens: input.inputTokens,
       outputTokens: input.outputTokens,
       totalTokens: input.totalTokens,
+      cost: input.cost,
       finishReason: input.finishReason,
       completedAt,
     });
@@ -845,6 +850,7 @@ export class MemoryRepository implements Repository {
       inputTokens: input.inputTokens,
       outputTokens: input.outputTokens,
       totalTokens: input.totalTokens,
+      cost: addCost(generation.cost, input.cost),
       error: null,
       completedAt,
     });
@@ -899,6 +905,7 @@ export class MemoryRepository implements Repository {
       inputTokens: input.inputTokens,
       outputTokens: input.outputTokens,
       totalTokens: input.totalTokens,
+      cost: input.cost,
       finishReason: input.finishReason,
       completedAt: now,
     });
@@ -908,6 +915,7 @@ export class MemoryRepository implements Repository {
       inputTokens: input.inputTokens,
       outputTokens: input.outputTokens,
       totalTokens: input.totalTokens,
+      cost: addCost(generation.cost, input.cost),
       error: null,
     });
     this.#addMessage(scope, {
@@ -967,6 +975,7 @@ export class MemoryRepository implements Repository {
       inputTokens: null,
       outputTokens: null,
       totalTokens: null,
+      cost: null,
       finishReason: null,
       error: null,
       createdAt: now,
@@ -1351,4 +1360,19 @@ function compareMessages(left: MessageData, right: MessageData): number {
 
 function createPage<Item>(items: Item[], limit: number): RepositoryPage<Item> {
   return { items: items.slice(0, limit), hasMore: items.length > limit };
+}
+
+function addCost(
+  previous: GenerationCostData | null,
+  current: GenerationCostData | null,
+): GenerationCostData | null {
+  if (!current) return previous;
+  if (!previous) return current;
+  if (previous.currency !== current.currency) {
+    throw new ConfigurationError("Generation cost currency cannot change between attempts.");
+  }
+  return {
+    amountMicros: previous.amountMicros + current.amountMicros,
+    currency: current.currency,
+  };
 }

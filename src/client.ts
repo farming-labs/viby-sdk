@@ -107,6 +107,17 @@ import {
   generationEventStreamResponse,
   type GenerationEventStreamResponseOptions,
 } from "./http.js";
+import {
+  normalizeCostAmount,
+  normalizeCostCurrency,
+  type GenerationCostConfig,
+  type GenerationCostData,
+  type GenerationCostInput,
+  type TelemetryAttribute,
+  type TelemetryAttributes,
+  type TelemetrySpan,
+  type VibyTelemetry,
+} from "./telemetry.js";
 
 const DEFAULT_POLL_INTERVAL_MS = 100;
 const DEFAULT_EVENT_LIMIT = 100;
@@ -245,6 +256,8 @@ class VibyClient<Framework extends FrameworkId> implements Viby<Framework> {
       sandbox: this.#sandbox,
       sandboxes: this.#sandboxes,
       agent: normalizeAgentRunnerConfig(config.agent),
+      telemetry: normalizeTelemetry(config.telemetry),
+      cost: normalizeCostConfig(config.cost),
     });
   }
 
@@ -1165,6 +1178,13 @@ interface RunnerDependencies<Framework extends FrameworkId> {
   readonly sandbox: SandboxAdapter | undefined;
   readonly sandboxes: SandboxRegistry;
   readonly agent: ReturnType<typeof normalizeAgentRunnerConfig>;
+  readonly telemetry: VibyTelemetry | undefined;
+  readonly cost: NormalizedGenerationCostConfig | undefined;
+}
+
+interface NormalizedGenerationCostConfig {
+  readonly currency: string;
+  readonly calculate: GenerationCostConfig["calculate"];
 }
 
 class GenerationRunner<Framework extends FrameworkId> {
@@ -1281,6 +1301,15 @@ class GenerationRunner<Framework extends FrameworkId> {
     cancelOnAbort: boolean,
   ): Promise<void> {
     const { scope, generationId, attemptId, leaseToken } = lease;
+    const telemetryStartedAt = performance.now();
+    let telemetrySpan: TelemetrySpan | undefined;
+    let telemetryAttributes: TelemetryAttributes = {
+      "viby.tenant.id": scope.tenantId,
+      "viby.user.id": scope.userId,
+      "viby.generation.id": generationId,
+      "viby.attempt.id": attemptId,
+    };
+    let telemetryOutcome = "failed";
     let sandbox: SandboxSession | undefined;
     const trace = new DurableAgentTrace(async (type, data) => {
       signal.throwIfAborted();
@@ -1307,6 +1336,24 @@ class GenerationRunner<Framework extends FrameworkId> {
       if (!generation) throw new NotFoundError("Generation");
       const chat = await this.#dependencies.repository.getChat<Framework>(scope, generation.chatId);
       if (!chat) throw new NotFoundError("Chat");
+      telemetryAttributes = {
+        ...telemetryAttributes,
+        "viby.chat.id": chat.id,
+        "viby.framework": chat.framework,
+        "gen_ai.provider.name": generation.modelProvider,
+        "gen_ai.request.model": generation.modelId,
+      };
+      telemetrySpan = safeStartSpan(this.#dependencies.telemetry, {
+        name: "viby.generation.attempt",
+        attributes: telemetryAttributes,
+      });
+      safeRecordMetric(this.#dependencies.telemetry, {
+        name: "viby.generation.attempts",
+        kind: "counter",
+        value: 1,
+        unit: "{attempt}",
+        attributes: metricAttributes(telemetryAttributes, "started"),
+      });
 
       let skills = await this.#dependencies.repository.getGenerationSkills(scope, generationId);
       if (skills === null) {
@@ -1399,6 +1446,17 @@ class GenerationRunner<Framework extends FrameworkId> {
         const inputTokens = output.usage.inputTokens ?? null;
         const outputTokens = output.usage.outputTokens ?? null;
         const totalTokens = output.usage.totalTokens ?? null;
+        const cost = await calculateGenerationCost(this.#dependencies.cost, {
+          ...scope,
+          chatId: chat.id,
+          generationId,
+          attemptId,
+          modelProvider: generation.modelProvider,
+          modelId: generation.modelId,
+          inputTokens,
+          outputTokens,
+          totalTokens,
+        }, this.#dependencies.telemetry, telemetrySpan, telemetryAttributes);
         await this.#dependencies.repository.pauseGeneration(scope, {
           generationId,
           attemptId,
@@ -1409,13 +1467,26 @@ class GenerationRunner<Framework extends FrameworkId> {
             ...trace.completedParts(),
             { type: "status", data: { message: output.task.message, state: "waiting" } },
             { type: "text", data: { text: output.task.message } },
-            usageMessagePart(inputTokens, outputTokens, totalTokens),
+            usageMessagePart(inputTokens, outputTokens, totalTokens, cost),
           ],
           inputTokens,
           outputTokens,
           totalTokens,
           finishReason: output.finishReason,
+          cost,
         });
+        telemetryOutcome = "waiting";
+        recordGenerationUsage(
+          this.#dependencies.telemetry,
+          telemetrySpan,
+          telemetryAttributes,
+          telemetryOutcome,
+          inputTokens,
+          outputTokens,
+          totalTokens,
+          cost,
+        );
+        safeSetSpanStatus(telemetrySpan, "ok");
         return;
       }
 
@@ -1426,6 +1497,17 @@ class GenerationRunner<Framework extends FrameworkId> {
       const inputTokens = output.usage.inputTokens ?? null;
       const outputTokens = output.usage.outputTokens ?? null;
       const totalTokens = output.usage.totalTokens ?? null;
+      const cost = await calculateGenerationCost(this.#dependencies.cost, {
+        ...scope,
+        chatId: chat.id,
+        generationId,
+        attemptId,
+        modelProvider: generation.modelProvider,
+        modelId: generation.modelId,
+        inputTokens,
+        outputTokens,
+        totalTokens,
+      }, this.#dependencies.telemetry, telemetrySpan, telemetryAttributes);
       await this.#dependencies.repository.completeGeneration(scope, {
         generationId,
         attemptId,
@@ -1440,14 +1522,30 @@ class GenerationRunner<Framework extends FrameworkId> {
         assistantParts: [
           ...mergeTraceAndFileEditParts(trace.completedParts(), files, changes),
           { type: "text", data: { text: output.summary } },
-          usageMessagePart(inputTokens, outputTokens, totalTokens),
+          usageMessagePart(inputTokens, outputTokens, totalTokens, cost),
         ],
         inputTokens,
         outputTokens,
         totalTokens,
         finishReason: output.finishReason,
+        cost,
       });
+      telemetryOutcome = "succeeded";
+      recordGenerationUsage(
+        this.#dependencies.telemetry,
+        telemetrySpan,
+        telemetryAttributes,
+        telemetryOutcome,
+        inputTokens,
+        outputTokens,
+        totalTokens,
+        cost,
+      );
+      safeSetSpanStatus(telemetrySpan, "ok");
     } catch (error) {
+      telemetryOutcome = signal.aborted || isAbortError(error) ? "cancelled" : "failed";
+      safeRecordException(telemetrySpan, error);
+      safeSetSpanStatus(telemetrySpan, "error", errorMessage(error));
       await trace.failOpen({
         message: errorMessage(error),
         code: "generation_failed",
@@ -1472,6 +1570,14 @@ class GenerationRunner<Framework extends FrameworkId> {
       ).catch(() => undefined);
     } finally {
       await sandbox?.stop().catch(() => undefined);
+      safeRecordMetric(this.#dependencies.telemetry, {
+        name: "viby.generation.duration",
+        kind: "histogram",
+        value: Math.max(0, performance.now() - telemetryStartedAt),
+        unit: "ms",
+        attributes: metricAttributes(telemetryAttributes, telemetryOutcome),
+      });
+      safeEndSpan(telemetrySpan);
     }
   }
 }
@@ -1711,11 +1817,156 @@ function usageMessagePart(
   inputTokens: number | null,
   outputTokens: number | null,
   totalTokens: number | null,
+  cost: GenerationCostData | null,
 ): MessagePartInput<"usage"> {
   return {
     type: "usage",
-    data: { inputTokens, outputTokens, totalTokens },
+    data: {
+      inputTokens,
+      outputTokens,
+      totalTokens,
+      ...(cost ? { cost } : {}),
+    },
   };
+}
+
+async function calculateGenerationCost(
+  config: NormalizedGenerationCostConfig | undefined,
+  input: GenerationCostInput,
+  telemetry: VibyTelemetry | undefined,
+  span: TelemetrySpan | undefined,
+  attributes: TelemetryAttributes,
+): Promise<GenerationCostData | null> {
+  if (!config) return null;
+  try {
+    const amountMicros = normalizeCostAmount(await config.calculate(input));
+    return amountMicros === null ? null : { amountMicros, currency: config.currency };
+  } catch (error) {
+    safeRecordException(span, error);
+    safeRecordMetric(telemetry, {
+      name: "viby.generation.cost_attribution_errors",
+      kind: "counter",
+      value: 1,
+      unit: "{error}",
+      attributes: metricAttributes(attributes, "failed"),
+    });
+    return null;
+  }
+}
+
+function recordGenerationUsage(
+  telemetry: VibyTelemetry | undefined,
+  span: TelemetrySpan | undefined,
+  attributes: TelemetryAttributes,
+  outcome: string,
+  inputTokens: number | null,
+  outputTokens: number | null,
+  totalTokens: number | null,
+  cost: GenerationCostData | null,
+): void {
+  const spanAttributes: Record<string, TelemetryAttribute> = {
+    "viby.generation.outcome": outcome,
+  };
+  const values = [
+    ["input", inputTokens],
+    ["output", outputTokens],
+    ["total", totalTokens],
+  ] as const;
+  for (const [type, value] of values) {
+    if (value === null) continue;
+    spanAttributes[`gen_ai.usage.${type}_tokens`] = value;
+    safeRecordMetric(telemetry, {
+      name: "viby.generation.tokens",
+      kind: "counter",
+      value,
+      unit: "{token}",
+      attributes: {
+        ...metricAttributes(attributes, outcome),
+        "viby.token.type": type,
+      },
+    });
+  }
+  if (cost) {
+    spanAttributes["viby.cost.amount_micros"] = cost.amountMicros;
+    spanAttributes["viby.cost.currency"] = cost.currency;
+    safeRecordMetric(telemetry, {
+      name: "viby.generation.cost",
+      kind: "counter",
+      value: cost.amountMicros,
+      unit: "{micro-unit}",
+      attributes: {
+        ...metricAttributes(attributes, outcome),
+        "viby.cost.currency": cost.currency,
+      },
+    });
+  }
+  try {
+    span?.setAttributes(spanAttributes);
+  } catch {
+    // Telemetry is fail-open and cannot change the generation result.
+  }
+}
+
+function metricAttributes(
+  attributes: TelemetryAttributes,
+  outcome: string,
+): TelemetryAttributes {
+  return {
+    "viby.framework": String(attributes["viby.framework"] ?? "unknown"),
+    "gen_ai.provider.name": String(attributes["gen_ai.provider.name"] ?? "unknown"),
+    "gen_ai.request.model": String(attributes["gen_ai.request.model"] ?? "unknown"),
+    "viby.generation.outcome": outcome,
+  };
+}
+
+function safeStartSpan(
+  telemetry: VibyTelemetry | undefined,
+  input: { readonly name: string; readonly attributes: TelemetryAttributes },
+): TelemetrySpan | undefined {
+  try {
+    return telemetry?.startSpan(input);
+  } catch {
+    return undefined;
+  }
+}
+
+function safeRecordMetric(
+  telemetry: VibyTelemetry | undefined,
+  input: Parameters<VibyTelemetry["recordMetric"]>[0],
+): void {
+  try {
+    telemetry?.recordMetric(input);
+  } catch {
+    // Telemetry is fail-open and cannot change the generation result.
+  }
+}
+
+function safeRecordException(span: TelemetrySpan | undefined, error: unknown): void {
+  try {
+    span?.recordException(error);
+  } catch {
+    // Telemetry is fail-open and cannot change the generation result.
+  }
+}
+
+function safeSetSpanStatus(
+  span: TelemetrySpan | undefined,
+  status: "ok" | "error",
+  message?: string,
+): void {
+  try {
+    span?.setStatus(status, message);
+  } catch {
+    // Telemetry is fail-open and cannot change the generation result.
+  }
+}
+
+function safeEndSpan(span: TelemetrySpan | undefined): void {
+  try {
+    span?.end();
+  } catch {
+    // Telemetry is fail-open and cannot change the generation result.
+  }
 }
 
 interface ActiveRun {
@@ -1898,6 +2149,32 @@ function normalizeOutboundEventSinks(
     sinks.set(id, sink);
   }
   return sinks;
+}
+
+function normalizeTelemetry(value: VibyTelemetry | undefined): VibyTelemetry | undefined {
+  if (value === undefined) return undefined;
+  if (
+    !value
+    || typeof value !== "object"
+    || typeof value.startSpan !== "function"
+    || typeof value.recordMetric !== "function"
+  ) {
+    throw new ConfigurationError("telemetry must provide startSpan and recordMetric functions.");
+  }
+  return value;
+}
+
+function normalizeCostConfig(
+  value: GenerationCostConfig | undefined,
+): NormalizedGenerationCostConfig | undefined {
+  if (value === undefined) return undefined;
+  if (!value || typeof value !== "object" || typeof value.calculate !== "function") {
+    throw new ConfigurationError("cost must provide currency and calculate values.");
+  }
+  return {
+    currency: normalizeCostCurrency(value.currency),
+    calculate: value.calculate,
+  };
 }
 
 function normalizeGenerationWorkerOptions(
