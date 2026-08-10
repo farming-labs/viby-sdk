@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="A complete Viby SDK reference application." />
+    <title>Viby Studio</title>
+    <link rel="stylesheet" href="/app.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar" id="sidebar">
+        <div class="brand-row">
+          <div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></div>
+          <span class="brand-name">Viby</span>
+          <span class="brand-edition">Studio</span>
+          <button class="icon-button sidebar-close" id="sidebar-close" aria-label="Close sidebar">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" /></svg>
+          </button>
+        </div>
+
+        <button class="new-project" id="new-project">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
+          New project
+          <kbd>⌘ N</kbd>
+        </button>
+
+        <nav class="project-nav" aria-label="Projects">
+          <div class="nav-heading"><span>Recent</span><span id="project-count">0</span></div>
+          <div class="project-list" id="project-list">
+            <div class="sidebar-skeleton" aria-label="Loading recent projects">
+              <span></span><span></span><span></span>
+            </div>
+          </div>
+        </nav>
+
+        <div class="sidebar-footer">
+          <div class="runtime-status">
+            <span class="status-pulse" aria-hidden="true"></span>
+            <div><strong>Runtime ready</strong><small>Durable workspace</small></div>
+          </div>
+          <button class="icon-button" aria-label="Settings">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1.1V21h-4v-.09A1.7 1.7 0 0 0 8.5 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1 1.7 1.7 0 0 0-1.1-.4H3v-4h.09A1.7 1.7 0 0 0 4.6 8.5a1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.83-2.83.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6 1.7 1.7 0 0 0 .4-1.1V3h4v.09A1.7 1.7 0 0 0 15.5 4.6a1.7 1.7 0 0 0 1.88-.34l.06-.06 2.83 2.83-.06.06A1.7 1.7 0 0 0 19.4 9c.12.38.33.72.6 1 .3.3.7.45 1.1.45H21v4h-.09a1.7 1.7 0 0 0-1.51.55Z"/></svg>
+          </button>
+        </div>
+      </aside>
+
+      <main class="workspace">
+        <header class="topbar">
+          <div class="topbar-context">
+            <button class="icon-button menu-button" id="menu-button" aria-label="Open sidebar">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16" /></svg>
+            </button>
+            <span class="crumb-muted">Projects</span><span class="crumb-separator">/</span>
+            <strong id="project-title">Untitled</strong>
+          </div>
+          <div class="topbar-actions">
+            <span class="framework-chip" id="framework-chip">framework neutral</span>
+            <span class="save-state" id="save-state"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4 4L19 6" /></svg> Saved</span>
+            <button class="secondary-button" id="download-button" disabled>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0 5-5m-5 5-5-5M5 20h14" /></svg>
+              Download
+            </button>
+          </div>
+        </header>
+
+        <div class="workbench">
+          <section class="conversation-panel" aria-label="Project conversation">
+            <div class="conversation-scroll" id="conversation-scroll">
+              <div class="empty-state" id="empty-state">
+                <div class="empty-symbol" aria-hidden="true"><span></span><span></span><span></span></div>
+                <p class="eyebrow">New durable project</p>
+                <h1>What should we make?</h1>
+                <p class="empty-copy">Describe the product, the people using it, and what a successful first version needs to do.</p>
+                <div class="suggestion-list" aria-label="Prompt suggestions">
+                  <button data-prompt="Build a focused analytics workspace for an independent software studio. Include revenue trends, project health, recent client activity, filters, and complete loading and empty states.">
+                    <span>Analytics workspace</span><small>Metrics, charts, activity</small>
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14m-5-5 5 5-5 5" /></svg>
+                  </button>
+                  <button data-prompt="Create an editorial project tracker for a small publishing team with assignments, deadlines, status filters, a calm reading-focused interface, and responsive mobile navigation.">
+                    <span>Editorial tracker</span><small>Workflow, filters, team state</small>
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14m-5-5 5 5-5 5" /></svg>
+                  </button>
+                  <button data-prompt="Design a polished customer support console with a compact inbox, conversation detail, customer context, keyboard shortcuts, loading states, and useful empty states.">
+                    <span>Support console</span><small>Inbox, detail, shortcuts</small>
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14m-5-5 5 5-5 5" /></svg>
+                  </button>
+                </div>
+              </div>
+              <div class="message-list" id="message-list" aria-live="polite"></div>
+            </div>
+
+            <div class="composer-wrap">
+              <div class="error-banner" id="error-banner" role="alert" hidden>
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 9v4m0 4h.01M10.3 3.7 2.8 17a2 2 0 0 0 1.7 3h15a2 2 0 0 0 1.7-3L13.7 3.7a2 2 0 0 0-3.4 0Z" /></svg>
+                <span id="error-copy"></span><button id="error-close">Dismiss</button>
+              </div>
+              <form class="composer" id="composer">
+                <label for="prompt" id="composer-label">Describe your project</label>
+                <textarea id="prompt" rows="3" maxlength="12000" placeholder="A calm operations dashboard for…" required></textarea>
+                <div class="composer-toolbar">
+                  <div class="composer-tools">
+                    <button type="button" class="icon-button" aria-label="Attach project context (coming later)" title="Attach project context (coming later)" disabled>
+                      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m21.4 11.6-8.9 8.9a6 6 0 0 1-8.5-8.5l9.6-9.6a4 4 0 0 1 5.7 5.7l-9.6 9.6a2 2 0 1 1-2.8-2.8l8.9-8.9" /></svg>
+                    </button>
+                    <span class="composer-hint">⌘ ↵ to build</span>
+                  </div>
+                  <button class="submit-button" id="submit-button" type="submit">
+                    <span id="submit-label">Build</span>
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14m-5-5 5 5-5 5" /></svg>
+                  </button>
+                </div>
+              </form>
+            </div>
+          </section>
+
+          <section class="preview-panel" aria-label="Project preview">
+            <div class="preview-toolbar">
+              <div class="preview-tabs" role="tablist" aria-label="Workspace view">
+                <button class="active" role="tab" aria-selected="true" data-view="preview">Preview</button>
+                <button role="tab" aria-selected="false" data-view="activity">Activity</button>
+              </div>
+              <div class="preview-actions">
+                <span class="preview-state" id="preview-state"><span></span> No preview</span>
+                <button class="icon-button" id="refresh-preview" aria-label="Refresh preview" disabled>
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6v5h-5M4 18v-5h5M6.1 9A7 7 0 0 1 18.5 6.5L20 11M4 13l1.5 4.5A7 7 0 0 0 17.9 15" /></svg>
+                </button>
+                <a class="icon-button disabled" id="open-preview" aria-label="Open preview in new tab" target="_blank" rel="noreferrer">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 5h5v5M10 14 19 5M19 14v5H5V5h5" /></svg>
+                </a>
+              </div>
+            </div>
+
+            <div class="preview-surface" id="preview-surface">
+              <div class="preview-empty" id="preview-empty">
+                <div class="preview-window" aria-hidden="true">
+                  <div><i></i><i></i><i></i></div><span></span><span></span><span></span>
+                </div>
+                <h2>Your preview will appear here</h2>
+                <p>Start with a prompt. Viby will generate source, open an isolated sandbox, and stream the result into this workspace.</p>
+              </div>
+              <div class="preview-loading" id="preview-loading" hidden>
+                <div class="matrix-loader" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+                <strong id="preview-loading-title">Preparing workspace</strong>
+                <span id="preview-loading-copy">Materializing generated files…</span>
+              </div>
+              <iframe id="preview-frame" title="Generated project preview" hidden></iframe>
+              <div class="activity-view" id="activity-view" hidden>
+                <div class="activity-header"><span>Generation trace</span><span id="event-count">0 events</span></div>
+                <ol id="event-list"></ol>
+              </div>
+            </div>
+
+            <footer class="preview-footer">
+              <div><span class="footer-dot"></span><span id="footer-status">Ready for a prompt</span></div>
+              <div><span id="version-label">No version</span><span class="separator-dot">•</span><span id="latency-label">Durable events</span></div>
+            </footer>
+          </section>
+        </div>
+      </main>
+      <div class="sidebar-scrim" id="sidebar-scrim"></div>
+    </div>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>
