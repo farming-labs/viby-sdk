@@ -90,6 +90,10 @@
       "types": "./dist/persistence-conformance.d.ts",
       "import": "./dist/persistence-conformance.js"
     },
+    "./browser/conformance": {
+      "types": "./dist/browser-conformance.d.ts",
+      "import": "./dist/browser-conformance.js"
+    },
     "./mcp": {
       "types": "./dist/mcp.d.ts",
       "import": "./dist/mcp.js"

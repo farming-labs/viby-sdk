@@ -116,7 +116,7 @@ v0 v2 makes its VM an implicit property of every chat. Viby keeps execution opti
 | Preview access token | short-lived hosted token | provider or app proxy policy, never a Viby API key | Adapter |
 | Long-running process | persistent VM services | provider-neutral background process handle | Shipped |
 | Reconnect after host restart | chat VM identity | durable sandbox lease and adapter reconnect | Shipped |
-| Screenshot/browser inspection | hosted agent tools | portable host-supplied browser tool | Planned |
+| Screenshot/browser inspection | hosted agent tools | provider-neutral navigation, readiness, screenshots, DOM inspection, console errors, and accessibility checks | Shipped |
 | Agent sandbox tools | implicit hosted VM tools | common tools selected strictly from discovered adapter capabilities | Shipped |
 
 ## Tools, MCP, webhooks, and integrations
@@ -138,7 +138,7 @@ Generation-scoped model/skill configuration, durable multimodal input snapshots 
 
 Persistence is also provider-neutral: `DATABASE_URL` selects the built-in PostgreSQL implementation, while `persistence` accepts a host-owned durable adapter verified by the reusable conformance suite. Custom adapters retain responsibility for their own transactions, migrations, credentials, and binary-store integration.
 
-1. Browser/screenshot tools behind a portable tool contract.
+1. A practical browser-driver adapter and visual evaluation workflow on top of the shipped portable contract.
 2. Explicit Git and deployment adapters after the portable generation workflow is complete.
 
 ## Persistence rules
