@@ -156,6 +156,7 @@ export type {
   GenerationAttemptData,
   GenerationAttemptReason,
   GenerationAttemptStatus,
+  GenerationConfigurationData,
   GenerationData,
   GenerationEvent,
   GenerationEventDataMap,

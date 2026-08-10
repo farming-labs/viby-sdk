@@ -9,7 +9,7 @@ import type {
   GeneratorOutput,
   ProjectGenerator,
 } from "../src/generator.js";
-import { SkillResolver } from "../src/skills.js";
+import { SkillResolver, skillRead } from "../src/skills.js";
 import { MESSAGE_PART_TYPES } from "../src/types.js";
 import type { FrameworkId, VersionFile } from "../src/types.js";
 import { sha256 } from "../src/utils.js";
@@ -124,6 +124,63 @@ test("creates a tenant-scoped chat, generation, immutable version, and source ZI
 
   await viby.close();
   assert.equal(repository.closed, true);
+});
+
+test("persists generation-scoped model, instructions, skills, and metadata across workers", async () => {
+  const repository = new MemoryRepository();
+  const unusedDefault = new FakeGenerator<"farm">();
+  const visual = new FakeGenerator<"farm">();
+  const config = {
+    framework: "farm" as const,
+    model: "test/default" as LanguageModel,
+    models: { visual: "other/visual" as LanguageModel },
+    skills: { core: [] },
+    generation: { execution: "worker" as const },
+  };
+  const creator = createVibyWithDependencies(config, {
+    repository,
+    generator: unusedDefault,
+    generators: { visual: new FakeGenerator<"farm">() },
+    skillResolver: new SkillResolver({}),
+  });
+  const chat = await creator
+    .forUser({ tenantId: "tenant-config", userId: "user-config" })
+    .chats.create({ title: "Scoped config" });
+  const generation = await chat.start({
+    prompt: "Build a polished product page",
+    model: "visual",
+    instructions: "Use the supplied design direction without changing frameworks.",
+    skills: { design: [skillRead("test/fixtures/skills/request-design")] },
+    metadata: { experiment: "visual-a", priority: 2 },
+  });
+
+  const queued = await generation.data();
+  assert.equal(queued.status, "queued");
+  assert.equal(queued.modelProvider, "other");
+  assert.equal(queued.modelId, "other/visual");
+  assert.deepEqual(queued.configuration, {
+    model: "visual",
+    instructions: "Use the supplied design direction without changing frameworks.",
+    skills: {
+      core: [],
+      design: [{ source: "file", path: "test/fixtures/skills/request-design" }],
+    },
+    metadata: { experiment: "visual-a", priority: 2 },
+  });
+
+  const restarted = createVibyWithDependencies(config, {
+    repository,
+    generator: new FakeGenerator<"farm">(),
+    generators: { visual },
+    skillResolver: new SkillResolver({}),
+  });
+  assert.equal(await restarted.worker({ id: "configuration-worker" }).runOnce(), true);
+  assert.equal((await generation.wait({ pollIntervalMs: 10 })).status, "succeeded");
+  assert.equal(unusedDefault.calls.length, 0);
+  assert.equal(visual.calls.length, 1);
+  assert.equal(visual.calls[0]?.instructions, queued.configuration.instructions);
+  assert.deepEqual(visual.calls[0]?.metadata, queued.configuration.metadata);
+  assert.deepEqual(visual.calls[0]?.skills.map((skill) => skill.name), ["request-design"]);
 });
 
 test("persists typed ordered message parts with message, generation, and attempt ownership", async () => {

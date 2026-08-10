@@ -6,6 +6,7 @@ import type {
   GenerationAttemptData,
   GenerationAttemptReason,
   GenerationData,
+  GenerationConfigurationData,
   GenerationEvent,
   GenerationEventDataMap,
   GenerationEventType,
@@ -118,6 +119,7 @@ export interface CreateGenerationRecord {
   readonly prompt: string;
   readonly modelProvider: string;
   readonly modelId: string;
+  readonly configuration?: GenerationConfigurationData;
 }
 
 export interface CreatedGeneration {
@@ -220,6 +222,10 @@ export interface ClaimGenerationAttemptRecord<Framework extends FrameworkId = Fr
   readonly framework: Framework;
   readonly modelProvider: string;
   readonly modelId: string;
+  readonly models?: readonly {
+    readonly provider: string;
+    readonly id: string;
+  }[];
   readonly attemptId?: string;
 }
 

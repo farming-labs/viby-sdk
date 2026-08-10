@@ -81,6 +81,8 @@ const generatedResponseSchema = z.object({
 export interface GeneratorInput<Framework extends FrameworkId = FrameworkId> {
   readonly framework: Framework;
   readonly prompt: string;
+  readonly instructions?: string | null;
+  readonly metadata?: Readonly<Record<string, JsonValue>>;
   readonly messages: readonly MessageData[];
   readonly previousFiles: readonly VersionFile[];
   readonly skills: readonly ResolvedSkill[];
@@ -184,7 +186,7 @@ implements ProjectGenerator<Framework> {
 
     const result = await generateText({
       model: this.#model,
-      system: createSystemPrompt(input.framework, input.skills),
+      system: createSystemPrompt(input.framework, input.skills, input.instructions ?? null),
       prompt: createGenerationPrompt(input),
       output: Output.object({
         name: "viby_generation",
@@ -203,7 +205,7 @@ implements ProjectGenerator<Framework> {
   ): Promise<GeneratorOutput> {
     const result = streamText({
       model: this.#model,
-      system: createSystemPrompt(input.framework, input.skills),
+      system: createSystemPrompt(input.framework, input.skills, input.instructions ?? null),
       prompt: createGenerationPrompt(input),
       output: Output.object({
         name: "viby_generation",
@@ -230,7 +232,11 @@ implements ProjectGenerator<Framework> {
   }
 }
 
-function createSystemPrompt(framework: FrameworkId, skills: readonly ResolvedSkill[]): string {
+function createSystemPrompt(
+  framework: FrameworkId,
+  skills: readonly ResolvedSkill[],
+  instructions: string | null,
+): string {
   const skillContext = skills.length === 0
     ? "No additional skills were selected for this generation."
     : skills.map(renderSkill).join("\n\n");
@@ -247,6 +253,7 @@ function createSystemPrompt(framework: FrameworkId, skills: readonly ResolvedSki
     "For a project outcome, set project and leave changes and task null. For a changes outcome, set changes and leave project and task null. For a task outcome, set task and leave project and changes null. Every schema field is required even when an outcome does not use it.",
     "\nResolved skills:\n",
     skillContext,
+    instructions ? `\nGeneration-specific host instructions:\n${instructions}` : "",
   ].join("\n");
 }
 

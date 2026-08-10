@@ -73,6 +73,7 @@ test("upgrades a historical v0.2 schema without losing tenant data", {
       "0012_chat_retention",
       "0013_generation_costs",
       "0014_outbound_event_deliveries",
+      "0015_generation_configuration",
     ]);
     assert.equal((await getMigrationStatus(databaseUrl.toString())).every((entry) => entry.applied), true);
     assert.deepEqual(await migrateDatabase(databaseUrl.toString()), []);
@@ -91,6 +92,7 @@ test("upgrades a historical v0.2 schema without losing tenant data", {
         deliveries: string | null;
         costColumn: boolean;
         lockedColumn: boolean;
+        configurationColumn: boolean;
       }[]>`
         SELECT
           to_regclass('viby.outbound_event_deliveries')::text AS deliveries,
@@ -103,11 +105,17 @@ test("upgrades a historical v0.2 schema without losing tenant data", {
             SELECT 1 FROM information_schema.columns
             WHERE table_schema = 'viby' AND table_name = 'version_files'
               AND column_name = 'locked'
-          ) AS "lockedColumn"
+          ) AS "lockedColumn",
+          EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'viby' AND table_name = 'generations'
+              AND column_name = 'configuration'
+          ) AS "configurationColumn"
       `;
       assert.equal(row?.deliveries, "viby.outbound_event_deliveries");
       assert.equal(row?.costColumn, true);
       assert.equal(row?.lockedColumn, true);
+      assert.equal(row?.configurationColumn, true);
     } finally {
       await inspection.end({ timeout: 5 });
     }

@@ -62,12 +62,12 @@ export class SkillResolver {
     this.#rootDirectory = rootDirectory;
   }
 
-  async resolveForPrompt(prompt: string): Promise<ResolvedSkill[]> {
-    const categories = selectCategories(prompt, Object.keys(this.#groups));
+  async resolveForPrompt(prompt: string, groups: SkillGroups = this.#groups): Promise<ResolvedSkill[]> {
+    const categories = selectCategories(prompt, Object.keys(groups));
     const selected: Array<{ category: string; reference: SkillReference }> = [];
 
     for (const category of categories) {
-      for (const reference of this.#groups[category] ?? []) {
+      for (const reference of groups[category] ?? []) {
         selected.push({ category, reference });
       }
     }
