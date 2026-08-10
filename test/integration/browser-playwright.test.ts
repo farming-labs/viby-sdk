@@ -5,6 +5,9 @@ import { verifyBrowserAdapter } from "../../src/browser-conformance.js";
 import { BrowserError } from "../../src/errors.js";
 import { playwrightBrowser } from "../../src/browser-playwright.js";
 import { openSandboxPreview } from "../../src/browser-preview.js";
+import { createViby } from "../../src/client.js";
+import { accessibilityGate, consoleErrorGate } from "../../src/visual-evaluation.js";
+import { MemoryRepository } from "../helpers/memory-repository.js";
 import {
   SandboxSession,
   sandboxCapabilities,
@@ -77,6 +80,34 @@ test("runs the Playwright adapter against a real Chromium page and sandbox previ
       assert.equal(accessibility.passed, false);
       assert.equal(accessibility.issues[0]?.id, "image-alt");
       await assert.rejects(() => browser.navigate("/redirect"), BrowserError);
+
+      const viby = createViby({
+        framework: "farm",
+        persistence: new MemoryRepository(),
+        browser: adapter,
+        engine: {
+          identity: { provider: "fixture", model: "unused" },
+          async generate() { throw new Error("Generation is not used by this fixture."); },
+        },
+      });
+      try {
+        const imported = await viby.forUser({ tenantId: "tenant", userId: "user" }).chats.import({
+          source: { type: "files", files: [{ path: "index.html", content: html }] },
+        });
+        const version = await imported.latestVersion();
+        assert.ok(version);
+        const visual = await version.evaluateVisual({
+          evaluator: "playwright-integration@1",
+          preview: { type: "sandbox", sandbox, port: 3000 },
+          pages: [{ id: "home", path: "/", readiness: { selector: "main" } }],
+          gates: [consoleErrorGate(), accessibilityGate()],
+        });
+        assert.equal(visual.evaluation.status, "failed");
+        assert.equal(visual.artifacts[0]?.mediaType, "image/png");
+        assert.ok((await version.getVisualArtifact(visual.artifacts[0]!.id)).bytes.byteLength > 0);
+      } finally {
+        await viby.close();
+      }
     } finally {
       await browser.close();
       await sandbox.stop();

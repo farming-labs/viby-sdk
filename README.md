@@ -531,6 +531,48 @@ const browser = await openSandboxPreview(browserAdapter, sandbox, {
 
 `openSandboxPreview` first waits for the sandbox port, then opens an isolated browser context and navigates to the resolved URL. Playwright collects both `console.error` messages and uncaught page exceptions, returns in-memory PNG/JPEG bytes, and maps axe violations into the core accessibility vocabulary. Install both optional peers in hosts that use this adapter: `playwright` and `@axe-core/playwright`.
 
+### Run durable visual evaluations
+
+Configure the browser once, then evaluate any immutable version against either a URL or a sandbox preview. The workflow captures each route, stores its screenshot in the configured artifact store, and records artifact evidence on the existing design-evaluation history:
+
+```ts
+import {
+  accessibilityGate,
+  consoleErrorGate,
+  createViby,
+} from "@viby/sdk";
+import { playwrightBrowser } from "@viby/sdk/browser/playwright";
+
+const viby = createViby({
+  framework: "farm",
+  model,
+  browser: playwrightBrowser(),
+  artifactStore,
+});
+
+const result = await version.evaluateVisual({
+  evaluator: "product-quality@1",
+  preview: { type: "sandbox", sandbox, port: 3000 },
+  pages: [
+    { id: "home", path: "/", readiness: { selector: "main" } },
+    { id: "settings", path: "/settings" },
+  ],
+  gates: [
+    consoleErrorGate({ maxErrors: 0 }),
+    accessibilityGate({ impacts: ["serious", "critical"] }),
+    {
+      id: "design-review",
+      label: "Design review",
+      async evaluate({ version, captures, signal }) {
+        return productDesignAgent.evaluate({ version, captures, signal });
+      },
+    },
+  ],
+});
+```
+
+Quality gates are ordinary callbacks. They can use deterministic rules, a visual regression service, any model runtime, or a custom agent; Viby does not select a design model. `version.visualArtifacts()` lists durable screenshot metadata and `version.getVisualArtifact(id)` explicitly loads verified bytes. Preview hosting remains host-owned.
+
 ## Run and stream asynchronously
 
 `chat.start` persists a queued generation and its first attempt before model execution begins, then immediately returns an addressable generation handle:

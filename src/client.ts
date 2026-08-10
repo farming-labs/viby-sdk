@@ -49,8 +49,16 @@ import type {
   UpdateChatInput,
   VersionData,
   VersionFile,
+  VisualArtifactContent,
+  VisualArtifactData,
   VibyConfig,
 } from "./types.js";
+import type { BrowserAdapter } from "./browser.js";
+import {
+  runVisualEvaluation,
+  type VisualEvaluationInput,
+  type VisualEvaluationResult,
+} from "./visual-evaluation.js";
 import type {
   SandboxAdapter,
   SandboxLeaseData,
@@ -369,6 +377,7 @@ class VibyClient<Framework extends FrameworkId> implements Viby<Framework> {
   readonly #models: GenerationModelRegistry<Framework>;
   readonly #skills: SkillGroups;
   readonly #sandbox: SandboxAdapter | undefined;
+  readonly #browser: BrowserAdapter | undefined;
   readonly #registry = new GenerationRunRegistry();
   readonly #sandboxes: SandboxRegistry;
   readonly #runner: GenerationRunner<Framework>;
@@ -382,6 +391,7 @@ class VibyClient<Framework extends FrameworkId> implements Viby<Framework> {
   ) {
     this.framework = config.framework;
     this.#sandbox = config.sandbox;
+    this.#browser = config.browser;
     this.#repository = dependencies.repository;
     this.#deletedChatsMs = normalizeChatRetentionConfig(config.retention);
     this.#eventSinks = normalizeOutboundEventSinks(config.events);
@@ -418,6 +428,7 @@ class VibyClient<Framework extends FrameworkId> implements Viby<Framework> {
       models: this.#models,
       skills: this.#skills,
       sandbox: this.#sandbox,
+      browser: this.#browser,
       sandboxes: this.#sandboxes,
       deletedChatsMs: this.#deletedChatsMs,
       eventSinks: this.#eventSinks,
@@ -521,6 +532,7 @@ interface ScopedDependencies<Framework extends FrameworkId> {
   readonly models: GenerationModelRegistry<Framework>;
   readonly skills: SkillGroups;
   readonly sandbox: SandboxAdapter | undefined;
+  readonly browser: BrowserAdapter | undefined;
   readonly sandboxes: SandboxRegistry;
   readonly deletedChatsMs: number | null;
   readonly eventSinks: ReadonlyMap<string, OutboundEventSink>;
@@ -1455,6 +1467,43 @@ export class Version<Framework extends FrameworkId = FrameworkId> {
     };
   }
 
+  async evaluateVisual(
+    input: VisualEvaluationInput<Framework>,
+  ): Promise<VisualEvaluationResult> {
+    if (!this.#dependencies.browser) {
+      throw new ConfigurationError(
+        "A browser adapter must be configured to run visual evaluations.",
+      );
+    }
+    await assertActiveChat(this.#dependencies, this.chatId);
+    return runVisualEvaluation(input, {
+      browser: this.#dependencies.browser,
+      repository: this.#dependencies.repository,
+      scope: this.#dependencies.scope,
+      version: this.#data,
+      record: (evaluation) => this.recordDesignEvaluation(evaluation),
+    });
+  }
+
+  async visualArtifacts(): Promise<VisualArtifactData[]> {
+    await assertActiveChat(this.#dependencies, this.chatId);
+    return this.#dependencies.repository.listVisualArtifacts(
+      this.#dependencies.scope,
+      this.id,
+    );
+  }
+
+  async getVisualArtifact(id: string): Promise<VisualArtifactContent> {
+    await assertActiveChat(this.#dependencies, this.chatId);
+    const artifact = await this.#dependencies.repository.getVisualArtifact(
+      this.#dependencies.scope,
+      this.id,
+      assertIdentifier(id, "visual artifact id"),
+    );
+    if (!artifact) throw new NotFoundError("Visual artifact");
+    return artifact;
+  }
+
   async #validateDesignEvaluationEvidence(
     evidence: readonly DesignEvaluationEvidence[],
   ): Promise<void> {
@@ -1477,6 +1526,17 @@ export class Version<Framework extends FrameworkId = FrameworkId> {
         id,
       );
       if (!attachment) throw new NotFoundError("Design evaluation attachment");
+    }));
+    const artifactIds = new Set(evidence.flatMap((item) => (
+      item.type === "artifact" ? [item.artifactId] : []
+    )));
+    await Promise.all([...artifactIds].map(async (id) => {
+      const artifact = await this.#dependencies.repository.getVisualArtifact(
+        this.#dependencies.scope,
+        this.id,
+        id,
+      );
+      if (!artifact) throw new NotFoundError("Design evaluation artifact");
     }));
   }
 

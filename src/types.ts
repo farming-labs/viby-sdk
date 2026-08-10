@@ -1,6 +1,7 @@
 import type { LanguageModel } from "ai";
 import type { GenerationEngine } from "./generation-engine.js";
 import type { ArtifactReference, ArtifactStore } from "./artifact-store.js";
+import type { BrowserAdapter } from "./browser.js";
 import type { PersistenceAdapter } from "./persistence.js";
 import type { OutboundEventSink } from "./outbound-events.js";
 import type {
@@ -57,6 +58,8 @@ interface VibyBaseConfig<Framework extends FrameworkId = FrameworkId> {
   readonly persistence?: PersistenceAdapter;
   /** External byte storage for attachments and generated binary artifacts. */
   readonly artifactStore?: ArtifactStore;
+  /** Provider-neutral browser used by preview inspection and visual evaluation workflows. */
+  readonly browser?: BrowserAdapter;
   readonly skills?: SkillGroups;
   readonly sandbox?: SandboxAdapter;
   readonly sandboxPolicy?: SandboxCommandPolicy;
@@ -318,6 +321,27 @@ export interface GeneratedArtifactData {
 }
 
 export interface GeneratedArtifactContent extends GeneratedArtifactData {
+  readonly bytes: Uint8Array;
+}
+
+export interface VisualArtifactData {
+  readonly id: string;
+  readonly chatId: string;
+  readonly versionId: string;
+  readonly pageId: string;
+  readonly path: string;
+  readonly url: string;
+  readonly filename: string;
+  readonly mediaType: "image/png" | "image/jpeg";
+  readonly width: number;
+  readonly height: number;
+  readonly size: number;
+  readonly checksum: string;
+  readonly artifact: ArtifactReference;
+  readonly createdAt: Date;
+}
+
+export interface VisualArtifactContent extends VisualArtifactData {
   readonly bytes: Uint8Array;
 }
 
@@ -686,6 +710,11 @@ export type DesignEvaluationEvidence =
   | {
       readonly type: "attachment";
       readonly attachmentId: string;
+      readonly description?: string;
+    }
+  | {
+      readonly type: "artifact";
+      readonly artifactId: string;
       readonly description?: string;
     }
   | {

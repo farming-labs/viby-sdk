@@ -32,6 +32,8 @@ import type {
   JsonValue,
   ToolCallData,
   ToolCallEffect,
+  VisualArtifactContent,
+  VisualArtifactData,
 } from "./types.js";
 import type { GenerationCostData } from "./telemetry.js";
 import type {
@@ -165,6 +167,22 @@ export interface CreateGeneratedArtifactRecord {
   readonly kind: GeneratedArtifactKind;
   readonly filename: string;
   readonly mediaType: string;
+  readonly bytes: Uint8Array;
+  readonly size: number;
+  readonly checksum: string;
+}
+
+export interface CreateVisualArtifactRecord {
+  readonly id: string;
+  readonly chatId: string;
+  readonly versionId: string;
+  readonly pageId: string;
+  readonly path: string;
+  readonly url: string;
+  readonly filename: string;
+  readonly mediaType: "image/png" | "image/jpeg";
+  readonly width: number;
+  readonly height: number;
   readonly bytes: Uint8Array;
   readonly size: number;
   readonly checksum: string;
@@ -513,6 +531,16 @@ export interface Repository {
     generationId: string,
     id: string,
   ): Promise<GeneratedArtifactContent | null>;
+  createVisualArtifact(
+    scope: UserScope,
+    input: CreateVisualArtifactRecord,
+  ): Promise<VisualArtifactData>;
+  listVisualArtifacts(scope: UserScope, versionId: string): Promise<VisualArtifactData[]>;
+  getVisualArtifact(
+    scope: UserScope,
+    versionId: string,
+    id: string,
+  ): Promise<VisualArtifactContent | null>;
   listMessagePage(
     scope: UserScope,
     chatId: string,

@@ -19,6 +19,7 @@ export interface PersistenceConformanceReport {
     | "event-cursors"
     | "source-history"
     | "generated-artifacts"
+    | "visual-artifacts"
     | "design-evaluations"
     | "tenant-isolation"
     | "retention-purge"
@@ -133,6 +134,34 @@ export async function verifyPersistenceAdapter(
     );
     checks.push("generated-artifacts");
 
+    const screenshot = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
+    const visualArtifactId = crypto.randomUUID();
+    await persistence.createVisualArtifact(scope, {
+      id: visualArtifactId,
+      chatId: outcome.version.chatId,
+      versionId: outcome.version.id,
+      pageId: "home",
+      path: "/",
+      url: "https://preview.example.test/",
+      filename: "home.png",
+      mediaType: "image/png",
+      width: 1280,
+      height: 720,
+      bytes: screenshot,
+      size: screenshot.byteLength,
+      checksum: sha256(screenshot),
+    });
+    assertConformance(
+      (await persistence.getVisualArtifact(scope, outcome.version.id, visualArtifactId))?.checksum
+        === sha256(screenshot),
+      "Visual artifact content did not roundtrip.",
+    );
+    assertConformance(
+      (await persistence.listVisualArtifacts(scope, outcome.version.id))[0]?.id === visualArtifactId,
+      "Visual artifact metadata was not durable.",
+    );
+    checks.push("visual-artifacts");
+
     const evaluation = await outcome.version.recordDesignEvaluation({
       evaluator: "persistence-conformance@1",
       status: "passed",
@@ -146,6 +175,7 @@ export async function verifyPersistenceAdapter(
         summary: "Source persisted.",
         evidence: [{ type: "version-file", path: "src/index.ts" }],
       }],
+      evidence: [{ type: "artifact", artifactId: visualArtifactId }],
     });
     assertConformance(
       (await outcome.version.getDesignEvaluation(evaluation.id)).id === evaluation.id,

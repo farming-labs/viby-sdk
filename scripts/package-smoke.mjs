@@ -65,12 +65,15 @@ try {
     "dist/browser-preview.d.ts",
     "dist/browser-playwright.js",
     "dist/browser-playwright.d.ts",
+    "dist/visual-evaluation.js",
+    "dist/visual-evaluation.d.ts",
     "migrations/0001_initial.sql",
     "migrations/0002_durable_generations.sql",
     "migrations/0013_generation_costs.sql",
     "migrations/0014_outbound_event_deliveries.sql",
     "migrations/0018_artifact_storage.sql",
     "migrations/0019_generated_artifacts.sql",
+    "migrations/0020_visual_artifacts.sql",
   ]) {
     assert.ok(paths.has(path), `packed package is missing ${path}`);
   }
@@ -98,7 +101,7 @@ try {
       "--input-type=module",
       "--eval",
       [
-        'import { createViby, BrowserSession, DownloadArtifact, SandboxSession, SourceImportError, generationEventStreamResponse, openBrowserSession, openTelemetry, signedOutboundEventSink, verifySignedOutboundEvent, skillRead } from "@viby/sdk";',
+        'import { accessibilityGate, consoleErrorGate, createViby, BrowserSession, DownloadArtifact, SandboxSession, SourceImportError, generationEventStreamResponse, openBrowserSession, openTelemetry, signedOutboundEventSink, verifySignedOutboundEvent, skillRead } from "@viby/sdk";',
         'if (typeof createViby !== "function") throw new Error("createViby export is missing");',
         'if (typeof BrowserSession !== "function") throw new Error("BrowserSession export is missing");',
         'if (typeof openBrowserSession !== "function") throw new Error("openBrowserSession export is missing");',
@@ -109,6 +112,8 @@ try {
         'if (typeof verifySignedOutboundEvent !== "function") throw new Error("verifySignedOutboundEvent export is missing");',
         'if (typeof generationEventStreamResponse !== "function") throw new Error("generationEventStreamResponse export is missing");',
         'if (typeof openTelemetry !== "function") throw new Error("openTelemetry export is missing");',
+        'if (typeof consoleErrorGate !== "function") throw new Error("consoleErrorGate export is missing");',
+        'if (typeof accessibilityGate !== "function") throw new Error("accessibilityGate export is missing");',
         'if (skillRead("./skills").source !== "file") throw new Error("skillRead export is invalid");',
       ].join("\n"),
     ],

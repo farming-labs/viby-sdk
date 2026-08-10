@@ -45,6 +45,8 @@ import type {
   UserScope,
   VersionData,
   VersionFile,
+  VisualArtifactContent,
+  VisualArtifactData,
 } from "./types.js";
 import type { GenerationCostData } from "./telemetry.js";
 import type {
@@ -63,6 +65,7 @@ import type {
   CreatedGeneration,
   CreateGenerationRecord,
   CreateGeneratedArtifactRecord,
+  CreateVisualArtifactRecord,
   CreateToolCallRecord,
   DeleteChatRecord,
   CreatedToolCall,
@@ -299,11 +302,29 @@ interface StoredGeneratedArtifactInput extends Omit<CreateGeneratedArtifactRecor
   readonly artifactKey: string;
 }
 
+interface VisualArtifactRow {
+  id: string;
+  chat_id: string;
+  version_id: string;
+  page_id: string;
+  path: string;
+  url: string;
+  filename: string;
+  media_type: "image/png" | "image/jpeg";
+  width: number;
+  height: number;
+  size: number;
+  checksum: string;
+  artifact_store: string;
+  artifact_key: string;
+  created_at: Date;
+}
+
 interface StoredArtifactLocation {
   readonly id: string;
   readonly artifact_store: string;
   readonly artifact_key: string;
-  readonly kind: "attachment" | "generated";
+  readonly kind: "attachment" | "generated" | "visual";
 }
 
 interface ToolCallRow {
@@ -379,6 +400,7 @@ export class PostgresRepository implements Repository {
         AND to_regclass('viby.tool_calls') IS NOT NULL
         AND to_regclass('viby.outbound_event_deliveries') IS NOT NULL
         AND to_regclass('viby.generated_artifacts') IS NOT NULL
+        AND to_regclass('viby.visual_artifacts') IS NOT NULL
         AND EXISTS (
           SELECT 1 FROM information_schema.columns
           WHERE table_schema = 'viby' AND table_name = 'attachments'
@@ -765,6 +787,11 @@ export class PostgresRepository implements Repository {
         UNION ALL
         SELECT id, artifact_store, artifact_key, 'generated'::text AS kind
         FROM viby.generated_artifacts
+        WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+          AND chat_id = ANY(${sql.array(ids)}::uuid[])
+        UNION ALL
+        SELECT id, artifact_store, artifact_key, 'visual'::text AS kind
+        FROM viby.visual_artifacts
         WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
           AND chat_id = ANY(${sql.array(ids)}::uuid[])
       `;
@@ -2321,6 +2348,96 @@ export class PostgresRepository implements Repository {
     return { ...mapGeneratedArtifact(row), bytes: Uint8Array.from(bytes) };
   }
 
+  async createVisualArtifact(
+    scope: UserScope,
+    input: CreateVisualArtifactRecord,
+  ): Promise<VisualArtifactData> {
+    await this.assertReady();
+    if (!this.#artifactStore) {
+      throw new ConfigurationError("artifactStore is required to persist visual evaluation captures.");
+    }
+    const artifactKey = `visual/${input.versionId}/${input.id}-${input.checksum}`;
+    await this.#artifactStore.put({
+      key: artifactKey,
+      bytes: Uint8Array.from(input.bytes),
+      mediaType: input.mediaType,
+      checksum: input.checksum,
+    }, visualArtifactContext(scope, input.id));
+    try {
+      const [row] = await this.#sql<VisualArtifactRow[]>`
+        INSERT INTO viby.visual_artifacts (
+          id, tenant_id, user_id, chat_id, version_id, page_id, path, url,
+          filename, media_type, width, height, size, checksum, artifact_store, artifact_key
+        )
+        SELECT ${input.id}, ${scope.tenantId}, ${scope.userId}, version.chat_id, version.id,
+          ${input.pageId}, ${input.path}, ${input.url}, ${input.filename}, ${input.mediaType},
+          ${input.width}, ${input.height}, ${input.size}, ${input.checksum},
+          ${this.#artifactStore.id}, ${artifactKey}
+        FROM viby.versions AS version
+        JOIN viby.chats AS chat ON chat.id = version.chat_id
+        WHERE version.tenant_id = ${scope.tenantId} AND version.user_id = ${scope.userId}
+          AND version.id = ${input.versionId} AND version.chat_id = ${input.chatId}
+          AND chat.deleted_at IS NULL
+        RETURNING id, chat_id, version_id, page_id, path, url, filename, media_type,
+          width, height, size, checksum, artifact_store, artifact_key, created_at
+      `;
+      if (!row) throw new NotFoundError("Version");
+      return mapVisualArtifact(row);
+    } catch (error) {
+      await this.#artifactStore.delete(artifactKey, visualArtifactContext(scope, input.id))
+        .catch(() => undefined);
+      throw error;
+    }
+  }
+
+  async listVisualArtifacts(scope: UserScope, versionId: string): Promise<VisualArtifactData[]> {
+    await this.assertReady();
+    const rows = await this.#sql<VisualArtifactRow[]>`
+      SELECT artifact.id, artifact.chat_id, artifact.version_id, artifact.page_id, artifact.path,
+        artifact.url, artifact.filename, artifact.media_type, artifact.width, artifact.height,
+        artifact.size, artifact.checksum, artifact.artifact_store, artifact.artifact_key,
+        artifact.created_at
+      FROM viby.visual_artifacts AS artifact
+      JOIN viby.chats AS chat ON chat.id = artifact.chat_id
+      WHERE artifact.tenant_id = ${scope.tenantId} AND artifact.user_id = ${scope.userId}
+        AND artifact.version_id = ${versionId} AND chat.deleted_at IS NULL
+      ORDER BY artifact.created_at, artifact.id
+    `;
+    return rows.map(mapVisualArtifact);
+  }
+
+  async getVisualArtifact(
+    scope: UserScope,
+    versionId: string,
+    id: string,
+  ): Promise<VisualArtifactContent | null> {
+    await this.assertReady();
+    const [row] = await this.#sql<VisualArtifactRow[]>`
+      SELECT artifact.id, artifact.chat_id, artifact.version_id, artifact.page_id, artifact.path,
+        artifact.url, artifact.filename, artifact.media_type, artifact.width, artifact.height,
+        artifact.size, artifact.checksum, artifact.artifact_store, artifact.artifact_key,
+        artifact.created_at
+      FROM viby.visual_artifacts AS artifact
+      JOIN viby.chats AS chat ON chat.id = artifact.chat_id
+      WHERE artifact.tenant_id = ${scope.tenantId} AND artifact.user_id = ${scope.userId}
+        AND artifact.version_id = ${versionId} AND artifact.id = ${id}
+        AND chat.deleted_at IS NULL
+      LIMIT 1
+    `;
+    if (!row) return null;
+    if (!this.#artifactStore || this.#artifactStore.id !== row.artifact_store) {
+      throw new ConfigurationError(
+        `Artifact store ${row.artifact_store} is required to read visual artifact ${row.id}.`,
+      );
+    }
+    const bytes = await this.#artifactStore.get(row.artifact_key, visualArtifactContext(scope, row.id));
+    if (!bytes) throw new NotFoundError("Visual artifact content");
+    if (bytes.byteLength !== row.size || sha256(bytes) !== row.checksum) {
+      throw new Error(`Visual artifact ${row.id} failed its persisted size or checksum validation.`);
+    }
+    return { ...mapVisualArtifact(row), bytes: Uint8Array.from(bytes) };
+  }
+
   async listMessagePage(
     scope: UserScope,
     chatId: string,
@@ -2603,7 +2720,9 @@ export class PostgresRepository implements Repository {
       row.artifact_key,
       row.kind === "attachment"
         ? attachmentContext(scope, row.id)
-        : generatedArtifactContext(scope, row.id),
+        : row.kind === "generated"
+          ? generatedArtifactContext(scope, row.id)
+          : visualArtifactContext(scope, row.id),
     );
   }
 }
@@ -2614,6 +2733,10 @@ function attachmentContext(scope: UserScope, ownerId: string): ArtifactStoreCont
 
 function generatedArtifactContext(scope: UserScope, ownerId: string): ArtifactStoreContext {
   return { ...scope, kind: "generated", ownerId };
+}
+
+function visualArtifactContext(scope: UserScope, ownerId: string): ArtifactStoreContext {
+  return { ...scope, kind: "screenshot", ownerId };
 }
 
 function mapChat<Framework extends FrameworkId>(row: ChatRow): ChatData<Framework> {
@@ -2815,6 +2938,25 @@ function mapGeneratedArtifact(row: GeneratedArtifactRow): GeneratedArtifactData 
     kind: row.kind,
     filename: row.filename,
     mediaType: row.media_type,
+    size: row.size,
+    checksum: row.checksum,
+    artifact: { store: row.artifact_store, key: row.artifact_key },
+    createdAt: row.created_at,
+  };
+}
+
+function mapVisualArtifact(row: VisualArtifactRow): VisualArtifactData {
+  return {
+    id: row.id,
+    chatId: row.chat_id,
+    versionId: row.version_id,
+    pageId: row.page_id,
+    path: row.path,
+    url: row.url,
+    filename: row.filename,
+    mediaType: row.media_type,
+    width: row.width,
+    height: row.height,
     size: row.size,
     checksum: row.checksum,
     artifact: { store: row.artifact_store, key: row.artifact_key },
