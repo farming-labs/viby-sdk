@@ -12,6 +12,7 @@ import { AgentProjectGenerator } from "../src/agent-runner.js";
 import { fileSystemArtifactStore } from "../src/artifact-filesystem.js";
 import type { GeneratorInput, GeneratorOutput, ProjectGenerator } from "../src/generator.js";
 import { migrateDatabase } from "../src/migrations.js";
+import { verifyPersistenceAdapter } from "../src/persistence-conformance.js";
 import { PostgresRepository } from "../src/postgres-repository.js";
 import { SkillResolver } from "../src/skills.js";
 import type { VersionFile } from "../src/types.js";
@@ -681,5 +682,24 @@ test("retains, restores, and purges deleted chats in Postgres", {
     assert.deepEqual(await repository.getVersionFiles(user.scope, version.id), []);
   } finally {
     await viby.close();
+  }
+});
+
+test("passes the persistence adapter conformance suite in Postgres", {
+  skip: databaseUrl ? false : "TEST_DATABASE_URL is not configured",
+}, async () => {
+  assert.ok(databaseUrl);
+  await migrateDatabase(databaseUrl);
+  const artifactDirectory = await mkdtemp(join(tmpdir(), "viby-postgres-conformance-"));
+  try {
+    const report = await verifyPersistenceAdapter({
+      create: () => new PostgresRepository(
+        databaseUrl,
+        fileSystemArtifactStore({ directory: artifactDirectory }),
+      ),
+    });
+    assert.equal(report.checks.at(-1), "close");
+  } finally {
+    await rm(artifactDirectory, { recursive: true, force: true });
   }
 });

@@ -1,0 +1,40 @@
+/**
+ * Provider-neutral durable state boundary used by Viby.
+ *
+ * An adapter owns transactional behavior, tenant isolation, durable cursors,
+ * and binary artifact references. PostgreSQL remains the built-in default.
+ */
+export type {
+  Repository as PersistenceAdapter,
+  AppendGenerationEventRecord,
+  ChatPageCursor,
+  ClaimGenerationAttemptRecord,
+  ClaimOutboundEventDeliveryRecord,
+  CompleteGenerationRecord,
+  CompleteToolCallRecord,
+  CreateAttachmentRecord,
+  CreateAttemptRecord,
+  CreatedGeneration,
+  CreatedToolCall,
+  CreateDesignEvaluationRecord,
+  CreateGeneratedArtifactRecord,
+  CreateGenerationRecord,
+  CreateSourceVersionRecord,
+  CreateToolCallRecord,
+  DeleteChatRecord,
+  DesignEvaluationPageCursor,
+  FailOutboundEventDeliveryRecord,
+  FailToolCallRecord,
+  ForkVersionRecord,
+  GenerationWorkerLease,
+  ImportedChat,
+  ImportChatRecord,
+  MessagePageCursor,
+  OutboundEventDeliveryClaim,
+  PauseGenerationRecord,
+  RepositoryPage as PersistencePage,
+  ResolveGenerationTaskRecord,
+  RestoreVersionRecord,
+  UpdateChatRecord,
+  VersionPageCursor,
+} from "./repository.js";

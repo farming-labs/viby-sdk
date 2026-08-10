@@ -51,6 +51,12 @@ try {
     "dist/artifact-filesystem.d.ts",
     "dist/artifact-store-conformance.js",
     "dist/artifact-store-conformance.d.ts",
+    "dist/persistence-postgres.js",
+    "dist/persistence-postgres.d.ts",
+    "dist/persistence-conformance.js",
+    "dist/persistence-conformance.d.ts",
+    "dist/persistence.js",
+    "dist/persistence.d.ts",
     "migrations/0001_initial.sql",
     "migrations/0002_durable_generations.sql",
     "migrations/0013_generation_costs.sql",
@@ -94,6 +100,20 @@ try {
         'if (typeof generationEventStreamResponse !== "function") throw new Error("generationEventStreamResponse export is missing");',
         'if (typeof openTelemetry !== "function") throw new Error("openTelemetry export is missing");',
         'if (skillRead("./skills").source !== "file") throw new Error("skillRead export is invalid");',
+      ].join("\n"),
+    ],
+    { cwd: consumer },
+  );
+  await execute(
+    node,
+    [
+      "--input-type=module",
+      "--eval",
+      [
+        'import { postgresPersistence } from "@viby/sdk/persistence/postgres";',
+        'import { verifyPersistenceAdapter } from "@viby/sdk/persistence/conformance";',
+        'if (typeof postgresPersistence !== "function") throw new Error("Postgres persistence export is missing");',
+        'if (typeof verifyPersistenceAdapter !== "function") throw new Error("persistence conformance export is missing");',
       ].join("\n"),
     ],
     { cwd: consumer },

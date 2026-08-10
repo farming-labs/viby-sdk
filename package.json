@@ -78,6 +78,18 @@
       "types": "./dist/artifact-store-conformance.d.ts",
       "import": "./dist/artifact-store-conformance.js"
     },
+    "./persistence": {
+      "types": "./dist/persistence.d.ts",
+      "import": "./dist/persistence.js"
+    },
+    "./persistence/postgres": {
+      "types": "./dist/persistence-postgres.d.ts",
+      "import": "./dist/persistence-postgres.js"
+    },
+    "./persistence/conformance": {
+      "types": "./dist/persistence-conformance.d.ts",
+      "import": "./dist/persistence-conformance.js"
+    },
     "./mcp": {
       "types": "./dist/mcp.d.ts",
       "import": "./dist/mcp.js"
