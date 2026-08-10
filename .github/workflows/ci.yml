@@ -45,13 +45,13 @@ jobs:
       - run: npm run typecheck
       - run: npm run build
       - run: npm run test:compatibility
+      - run: npm ci --prefix examples/reference
+      - run: npm run typecheck --prefix examples/reference
       - run: npm run test:reference
       - run: npm run test:package
       - run: npm pack --dry-run --ignore-scripts
       - run: npm ci --prefix examples/basic
       - run: npm run typecheck --prefix examples/basic
-      - run: npm ci --prefix examples/reference
-      - run: npm run typecheck --prefix examples/reference
 
   postgres:
     name: PostgreSQL integration
