@@ -94,6 +94,10 @@
       "types": "./dist/browser-conformance.d.ts",
       "import": "./dist/browser-conformance.js"
     },
+    "./browser/playwright": {
+      "types": "./dist/browser-playwright.d.ts",
+      "import": "./dist/browser-playwright.js"
+    },
     "./mcp": {
       "types": "./dist/mcp.d.ts",
       "import": "./dist/mcp.js"
@@ -111,6 +115,7 @@
     "test:integration": "node --import tsx --test test/postgres.integration.test.ts",
     "test:schema-upgrade": "node --import tsx --test test/schema-upgrade.integration.test.ts",
     "test:docker": "node --import tsx --test test/integration/sandbox-docker.test.ts",
+    "test:playwright": "node --import tsx --test test/integration/browser-playwright.test.ts",
     "test:package": "node scripts/package-smoke.mjs",
     "test:reference": "node --import tsx --test test/e2e/reference-app.test.mjs",
     "test:quality": "node --import tsx --test test/quality/*.test.ts",
@@ -143,14 +148,19 @@
     "zod": "^4.4.3"
   },
   "peerDependencies": {
+    "@axe-core/playwright": "^4.12.1",
     "@cloudflare/sandbox": "^0.12.5",
     "@daytona/sdk": "^0.203.0",
     "@modelcontextprotocol/server": "^2.0.0",
     "@vercel/sandbox": "^3.0.0",
     "e2b": "^2.38.2",
-    "modal": "^0.9.0"
+    "modal": "^0.9.0",
+    "playwright": "^1.62.1"
   },
   "peerDependenciesMeta": {
+    "@axe-core/playwright": {
+      "optional": true
+    },
     "@cloudflare/sandbox": {
       "optional": true
     },
@@ -168,9 +178,13 @@
     },
     "modal": {
       "optional": true
+    },
+    "playwright": {
+      "optional": true
     }
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.12.1",
     "@cloudflare/sandbox": "^0.12.5",
     "@daytona/sdk": "^0.203.0",
     "@modelcontextprotocol/client": "^2.0.0",
@@ -180,6 +194,7 @@
     "bumpp": "^10.4.1",
     "e2b": "^2.38.2",
     "modal": "^0.9.0",
+    "playwright": "^1.62.1",
     "tsx": "^4.23.7",
     "typescript": "^7.0.2"
   }

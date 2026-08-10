@@ -14,6 +14,7 @@ export { AgentWorkspace } from "./agent-workspace.js";
 export { AgentProjectGenerator } from "./agent-runner.js";
 export { defineGenerationEngine } from "./generation-engine.js";
 export { BrowserSession, openBrowserSession } from "./browser.js";
+export { openSandboxPreview } from "./browser-preview.js";
 export type { PersistenceAdapter } from "./persistence.js";
 export type {
   ArtifactKind,
@@ -128,6 +129,7 @@ export type {
   BrowserViewport,
   BrowserWaitUntil,
 } from "./browser.js";
+export type { OpenSandboxPreviewInput } from "./browser-preview.js";
 export {
   SignedOutboundEventSink,
   signedOutboundEventSink,

@@ -110,6 +110,20 @@ test("keeps navigation on the preview origin unless explicitly allowed", async (
   await external.close();
 });
 
+test("rejects a provider-reported cross-origin redirect", async () => {
+  const instance = new FakeBrowserInstance();
+  instance.navigate = async () => ({
+    url: "https://external.example/redirected",
+    title: "External",
+    status: 200,
+  });
+  const session = await openBrowserSession(fakeAdapter(instance), {
+    baseUrl: "https://preview.example/",
+  });
+  await assert.rejects(() => session.navigate("/redirect"), BrowserError);
+  await session.close();
+});
+
 test("wraps provider failures in a portable browser error", async () => {
   const adapter = fakeAdapter();
   adapter.open = async () => { throw new Error("provider unavailable"); };

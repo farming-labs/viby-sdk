@@ -164,25 +164,31 @@ export class BrowserSession {
   async navigate(input: BrowserNavigationInput | string): Promise<BrowserNavigationResult> {
     this.#assertOpen();
     const normalized = normalizeNavigationInput(input, this.baseUrl, this.#allowExternalNavigation);
-    return validateNavigation(await browserOperation(this.provider, "navigate", () => (
+    const result = validateNavigation(await browserOperation(this.provider, "navigate", () => (
       this.#instance.navigate(normalized)
     )));
+    this.#assertAllowedResultUrl(result.url, "navigation redirected outside the session origin");
+    return result;
   }
 
   async screenshot(options: BrowserScreenshotOptions = {}): Promise<BrowserScreenshot> {
     this.#assertOpen();
     const normalized = normalizeScreenshotOptions(options);
-    return validateScreenshot(await browserOperation(this.provider, "capture a screenshot", () => (
+    const result = validateScreenshot(await browserOperation(this.provider, "capture a screenshot", () => (
       this.#instance.screenshot(normalized)
     )), normalized.format ?? "png");
+    this.#assertAllowedResultUrl(result.url, "screenshot resolved outside the session origin");
+    return result;
   }
 
   async inspect(options: BrowserDomInspectionOptions = {}): Promise<BrowserDomSnapshot> {
     this.#assertOpen();
     const normalized = normalizeInspectionOptions(options);
-    return validateDomSnapshot(await browserOperation(this.provider, "inspect the DOM", () => (
+    const result = validateDomSnapshot(await browserOperation(this.provider, "inspect the DOM", () => (
       this.#instance.inspect(normalized)
     )), normalized.maxChars ?? MAX_DOM_CHARS);
+    this.#assertAllowedResultUrl(result.url, "DOM inspection resolved outside the session origin");
+    return result;
   }
 
   async consoleErrors(options: { readonly signal?: AbortSignal } = {}): Promise<readonly BrowserConsoleError[]> {
@@ -199,11 +205,13 @@ export class BrowserSession {
   async accessibility(options: BrowserAccessibilityOptions = {}): Promise<BrowserAccessibilityReport> {
     this.#assertOpen();
     const normalized = normalizeAccessibilityOptions(options);
-    return validateAccessibilityReport(await browserOperation(
+    const result = validateAccessibilityReport(await browserOperation(
       this.provider,
       "run accessibility checks",
       () => this.#instance.accessibility(normalized),
     ));
+    this.#assertAllowedResultUrl(result.url, "accessibility checks resolved outside the session origin");
+    return result;
   }
 
   async waitForReady(options: BrowserReadinessOptions = {}): Promise<BrowserReadinessResult> {
@@ -213,9 +221,11 @@ export class BrowserSession {
       this.baseUrl,
       this.#allowExternalNavigation,
     );
-    return validateReadiness(await browserOperation(this.provider, "wait for readiness", () => (
+    const result = validateReadiness(await browserOperation(this.provider, "wait for readiness", () => (
       this.#instance.waitForReady(normalized)
     )));
+    this.#assertAllowedResultUrl(result.url, "readiness resolved outside the session origin");
+    return result;
   }
 
   close(options: { readonly signal?: AbortSignal } = {}): Promise<void> {
@@ -228,6 +238,12 @@ export class BrowserSession {
 
   #assertOpen(): void {
     if (this.closed) throw new BrowserError(this.provider, "use the browser", "The session is closed.");
+  }
+
+  #assertAllowedResultUrl(value: string, operation: string): void {
+    if (!this.#allowExternalNavigation && new URL(value).origin !== new URL(this.baseUrl).origin) {
+      throw new BrowserError(this.provider, operation, "External navigation is disabled.");
+    }
   }
 }
 

@@ -61,6 +61,7 @@ Preview URLs exist only when the configured adapter exposes port URLs and the ho
 | Inspection | bounded DOM HTML/text snapshots and normalized console errors |
 | Quality | provider-neutral accessibility issue/report vocabulary and readiness checks |
 | Conformance | reusable lifecycle suite against a caller-owned reachable page |
+| Included adapter | Playwright Chromium/Firefox/WebKit with axe-core accessibility scans and sandbox preview composition |
 
 ## Integration, delivery, and observability
 

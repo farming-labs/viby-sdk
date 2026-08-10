@@ -138,7 +138,7 @@ Generation-scoped model/skill configuration, durable multimodal input snapshots 
 
 Persistence is also provider-neutral: `DATABASE_URL` selects the built-in PostgreSQL implementation, while `persistence` accepts a host-owned durable adapter verified by the reusable conformance suite. Custom adapters retain responsibility for their own transactions, migrations, credentials, and binary-store integration.
 
-1. A practical browser-driver adapter and visual evaluation workflow on top of the shipped portable contract.
+1. Visual evaluation workflows on top of the shipped Playwright browser adapter.
 2. Explicit Git and deployment adapters after the portable generation workflow is complete.
 
 ## Persistence rules
