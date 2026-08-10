@@ -1,4 +1,5 @@
 import type { LanguageModel } from "ai";
+import type { GenerationEngine } from "./generation-engine.js";
 import type { OutboundEventSink } from "./outbound-events.js";
 import type {
   SandboxAdapter,
@@ -48,10 +49,8 @@ export type SkillGroups = {
   readonly [Category in BuiltInSkillCategory]?: readonly SkillReference[];
 };
 
-export interface VibyConfig<Framework extends FrameworkId = FrameworkId> {
+interface VibyBaseConfig<Framework extends FrameworkId = FrameworkId> {
   readonly framework: Framework;
-  readonly model: LanguageModel;
-  readonly models?: Readonly<Record<string, LanguageModel>>;
   readonly skills?: SkillGroups;
   readonly sandbox?: SandboxAdapter;
   readonly sandboxPolicy?: SandboxCommandPolicy;
@@ -68,6 +67,24 @@ export interface VibyConfig<Framework extends FrameworkId = FrameworkId> {
   readonly telemetry?: VibyTelemetry;
   readonly cost?: GenerationCostConfig;
 }
+
+export type VibyConfig<Framework extends FrameworkId = FrameworkId> =
+  VibyBaseConfig<Framework> & (
+    | {
+        /** Convenient AI SDK shortcut. */
+        readonly model: LanguageModel;
+        readonly models?: Readonly<Record<string, LanguageModel>>;
+        readonly engine?: never;
+        readonly engines?: never;
+      }
+    | {
+        /** Advanced provider-neutral agent, model-runtime, or orchestration boundary. */
+        readonly engine: GenerationEngine<Framework>;
+        readonly engines?: Readonly<Record<string, GenerationEngine<Framework>>>;
+        readonly model?: never;
+        readonly models?: never;
+      }
+  );
 
 export interface AgentRunnerConfig {
   readonly maxSteps?: number;

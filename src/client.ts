@@ -1,3 +1,4 @@
+import type { LanguageModel } from "ai";
 import type {
   AttachmentContent,
   ChatData,
@@ -62,6 +63,10 @@ import type {
   AgentToolCallWriter,
   ProjectGenerator,
 } from "./generator.js";
+import {
+  normalizeGenerationEngineIdentity,
+  type GenerationEngine,
+} from "./generation-engine.js";
 import type {
   CreateAttachmentRecord,
   GenerationWorkerLease,
@@ -220,7 +225,7 @@ export type GenerationOutcome<Framework extends FrameworkId = FrameworkId> =
 
 interface ClientDependencies<Framework extends FrameworkId> {
   readonly repository: Repository;
-  readonly generator: ProjectGenerator<Framework>;
+  readonly generator?: ProjectGenerator<Framework>;
   readonly generators?: Readonly<Record<string, ProjectGenerator<Framework>>>;
   readonly skillResolver: SkillResolver;
 }
@@ -236,12 +241,28 @@ class GenerationModelRegistry<Framework extends FrameworkId> {
   readonly #bindings = new Map<string, GenerationModelBinding<Framework>>();
 
   constructor(config: VibyConfig<Framework>, dependencies: ClientDependencies<Framework>) {
-    this.#add("default", config.model, dependencies.generator);
+    if (config.engine) {
+      this.#addEngine("default", config.engine);
+      for (const [alias, engine] of Object.entries(config.engines ?? {})) {
+        if (alias === "default") {
+          throw new ConfigurationError("engines.default is reserved for the top-level engine.");
+        }
+        this.#addEngine(alias, engine);
+      }
+      return;
+    }
+
+    const defaultGenerator = dependencies.generator ?? new AgentProjectGenerator(config.model, config.agent);
+    this.#addModel("default", config.model, defaultGenerator);
     for (const [alias, model] of Object.entries(config.models ?? {})) {
       if (alias === "default") {
         throw new ConfigurationError("models.default is reserved for the top-level model.");
       }
-      this.#add(alias, model, dependencies.generators?.[alias] ?? dependencies.generator);
+      this.#addModel(
+        alias,
+        model,
+        dependencies.generators?.[alias] ?? new AgentProjectGenerator(model, config.agent),
+      );
     }
   }
 
@@ -274,13 +295,30 @@ class GenerationModelRegistry<Framework extends FrameworkId> {
     return binding;
   }
 
-  #add(alias: string, model: VibyConfig<Framework>["model"], generator: ProjectGenerator<Framework>): void {
+  #addModel(alias: string, model: LanguageModel, generator: ProjectGenerator<Framework>): void {
     const normalized = assertModelAlias(alias);
     if (this.#bindings.has(normalized)) {
       throw new ConfigurationError(`Generation model alias is duplicated: ${normalized}`);
     }
     const identity = languageModelIdentity(model);
     this.#bindings.set(normalized, { alias: normalized, ...identity, generator });
+  }
+
+  #addEngine(alias: string, engine: GenerationEngine<Framework>): void {
+    const normalized = assertModelAlias(alias);
+    if (this.#bindings.has(normalized)) {
+      throw new ConfigurationError(`Generation engine alias is duplicated: ${normalized}`);
+    }
+    const identity = normalizeGenerationEngineIdentity(engine?.identity);
+    if (typeof engine?.generate !== "function") {
+      throw new ConfigurationError("A generation engine must implement generate(input, options).");
+    }
+    this.#bindings.set(normalized, {
+      alias: normalized,
+      provider: identity.provider,
+      id: identity.model,
+      generator: engine,
+    });
   }
 }
 
@@ -296,10 +334,12 @@ export function createViby<const Framework extends FrameworkId>(
 
   return createVibyWithDependencies(config, {
     repository: new PostgresRepository(databaseUrl),
-    generator: new AgentProjectGenerator(config.model, config.agent),
-    generators: Object.fromEntries(Object.entries(config.models ?? {}).map(([alias, model]) => (
-      [alias, new AgentProjectGenerator(model, config.agent)]
-    ))),
+    ...(!config.engine ? {
+      generator: new AgentProjectGenerator(config.model, config.agent),
+      generators: Object.fromEntries(Object.entries(config.models ?? {}).map(([alias, model]) => (
+        [alias, new AgentProjectGenerator(model, config.agent)]
+      ))),
+    } : {}),
     skillResolver: new SkillResolver(config.skills),
   });
 }
@@ -1458,7 +1498,7 @@ function normalizeVersionSummary(value: string | undefined, fallback: string): s
   return summary;
 }
 
-function languageModelIdentity(model: VibyConfig["model"]): { provider: string; id: string } {
+function languageModelIdentity(model: LanguageModel): { provider: string; id: string } {
   if (typeof model === "string") {
     return { provider: model.split("/", 1)[0] || "gateway", id: model };
   }

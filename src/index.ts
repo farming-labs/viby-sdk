@@ -12,6 +12,26 @@ export { skillRead } from "./skills.js";
 export { DownloadArtifact } from "./download.js";
 export { AgentWorkspace } from "./agent-workspace.js";
 export { AgentProjectGenerator } from "./agent-runner.js";
+export { defineGenerationEngine } from "./generation-engine.js";
+export type {
+  DefineGenerationEngineInput,
+  GenerationEngine,
+  GenerationEngineIdentity,
+} from "./generation-engine.js";
+export type {
+  AgentTraceError,
+  AgentTracePart,
+  AgentTraceWriter,
+  AgentToolCall,
+  AgentToolCallInput,
+  AgentToolCallWriter,
+  GeneratorChangesOutput,
+  GeneratorInput,
+  GeneratorOptions,
+  GeneratorOutput,
+  GeneratorProjectOutput,
+  GeneratorTaskOutput,
+} from "./generator.js";
 export { MESSAGE_PART_TYPES } from "./types.js";
 export { openTelemetry } from "./telemetry.js";
 export type {

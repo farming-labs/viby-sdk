@@ -66,6 +66,8 @@ The official v2 documentation organizes the API around these resources and endpo
 
 Viby does not copy v0's privacy enum, author identity, account URLs, or hosted write-permission field. The embedding application already owns those decisions.
 
+The top-level `model` remains the convenient AI SDK path. Products with their own agent, model runtime, or orchestration system can instead provide a public `GenerationEngine`; durable attempts and worker routing use its stable provider/model identity, and the reusable conformance suite verifies portable outputs and cancellation.
+
 ## Messages and agent trace
 
 v0 v2 messages contain ordered parts such as text, thinking, file reads, file edits, searches, shell commands, tool calls, and agent actions. Viby persists a provider-neutral discriminated union for the durable result narrative plus resumable part lifecycle events for rendering live trace progress.

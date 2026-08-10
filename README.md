@@ -55,6 +55,24 @@ export const viby = createViby({
 
 The model provider reads its own credential from your environment. Viby does not receive or store it. The default generator is a bounded AI SDK tool-loop agent: it reads and changes source through `AgentWorkspace`, emits durable tool and trace records, and returns either an immutable project result or a typed blocking task.
 
+Advanced consumers can replace the AI SDK shortcut with a provider-neutral generation engine. The engine may call a custom model runtime, run an agent, or delegate to an orchestration service while Viby continues to own durable attempts, events, tasks, usage, and immutable source versions:
+
+```ts
+import { createViby, defineGenerationEngine } from "@viby/sdk";
+
+const engine = defineGenerationEngine({
+  identity: { provider: "company-runtime", model: "frontend-agent-v1" },
+  async generate(input, { signal, trace, toolCalls } = {}) {
+    signal?.throwIfAborted();
+    return companyAgent.generate({ input, signal, trace, toolCalls });
+  },
+});
+
+export const viby = createViby({ framework: "farm", engine });
+```
+
+Use `engines` for request-selectable aliases just as the AI SDK shortcut uses `models`. Generation engine authors can run `verifyGenerationEngine` from `@viby/sdk/generation/conformance` against caller-owned deterministic scenarios. The suite validates identity, portable outputs, and cancellation without assuming a provider or orchestration design.
+
 Remote skill strings use the stable skills.sh `owner/repository/slug` form. Local skills can point at a directory containing `SKILL.md` or at the file itself. Remote skills are resolved through the authenticated skills.sh API when Vercel OIDC is available, with public GitHub repositories as the portable fallback. Set `GITHUB_TOKEN` only when you need higher GitHub API limits.
 
 ## Generate and iterate

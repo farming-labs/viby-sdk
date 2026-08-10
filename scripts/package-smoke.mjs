@@ -45,6 +45,8 @@ try {
     "dist/sandbox-cloudflare.d.ts",
     "dist/sandbox-conformance.js",
     "dist/sandbox-conformance.d.ts",
+    "dist/generation-engine-conformance.js",
+    "dist/generation-engine-conformance.d.ts",
     "migrations/0001_initial.sql",
     "migrations/0002_durable_generations.sql",
     "migrations/0013_generation_costs.sql",
@@ -86,6 +88,18 @@ try {
         'if (typeof generationEventStreamResponse !== "function") throw new Error("generationEventStreamResponse export is missing");',
         'if (typeof openTelemetry !== "function") throw new Error("openTelemetry export is missing");',
         'if (skillRead("./skills").source !== "file") throw new Error("skillRead export is invalid");',
+      ].join("\n"),
+    ],
+    { cwd: consumer },
+  );
+  await execute(
+    node,
+    [
+      "--input-type=module",
+      "--eval",
+      [
+        'import { verifyGenerationEngine } from "@viby/sdk/generation/conformance";',
+        'if (typeof verifyGenerationEngine !== "function") throw new Error("generation conformance export is missing");',
       ].join("\n"),
     ],
     { cwd: consumer },
