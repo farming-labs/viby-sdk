@@ -37,6 +37,7 @@ import type {
   MessagePartType,
   JsonValue,
   PageOptions,
+  ProjectArtifactContent,
   PurgeDeletedChatsInput,
   ResolveGenerationTaskInput,
   RecordDesignEvaluationInput,
@@ -48,6 +49,8 @@ import type {
   UserScope,
   UpdateChatInput,
   VersionData,
+  VersionArtifact,
+  VersionEntry,
   VersionFile,
   VisualArtifactContent,
   VisualArtifactData,
@@ -61,6 +64,7 @@ import {
 } from "./visual-evaluation.js";
 import type {
   SandboxAdapter,
+  SandboxFile,
   SandboxLeaseData,
   SandboxOpenOptions,
   SandboxReconnectOptions,
@@ -111,9 +115,9 @@ import {
   type AdapterProjectImportInput,
 } from "./source-import.js";
 import {
-  applySourceChanges,
+  applyVersionEntryChanges,
+  mergeGeneratedFilesWithArtifacts,
   normalizeSourceChanges,
-  preserveLockedFiles,
 } from "./source-changes.js";
 import {
   AgentWorkspace,
@@ -619,7 +623,7 @@ export class ChatCollection<Framework extends FrameworkId = FrameworkId> {
     if (summary.length > 2_000) {
       throw new ConfigurationError("An import summary cannot exceed 2,000 characters.");
     }
-    const files = importProjectFiles(adapterResult?.source ?? input.source as ImportProjectSource, input.filePolicy);
+    const entries = importProjectFiles(adapterResult?.source ?? input.source as ImportProjectSource, input.filePolicy);
     const metadata = normalizeChatMetadata(input.metadata);
     const imported = await this.#dependencies.repository.importChat(
       this.#dependencies.scope,
@@ -630,7 +634,8 @@ export class ChatCollection<Framework extends FrameworkId = FrameworkId> {
         metadata,
         summary,
         framework: this.#dependencies.framework,
-        files,
+        files: entries.files,
+        artifacts: entries.artifacts,
       },
     );
     return new Chat(imported.chat, this.#dependencies);
@@ -1305,7 +1310,8 @@ export class Version<Framework extends FrameworkId = FrameworkId> {
   async apply(input: ApplySourceChangesInput): Promise<Version<Framework>> {
     if (!input) throw new ConfigurationError("A source change set is required.");
     const changes = normalizeSourceChanges(input.changes);
-    const files = applySourceChanges(await this.files(), changes);
+    const entries = applyVersionEntryChanges(await this.entries(), changes);
+    const { files, artifacts } = splitVersionEntries(entries);
     const title = normalizeVersionTitle(input.title ?? this.title);
     const summary = input.summary?.trim()
       || `Applied ${changes.length} source change${changes.length === 1 ? "" : "s"}.`;
@@ -1323,6 +1329,7 @@ export class Version<Framework extends FrameworkId = FrameworkId> {
         title,
         summary,
         files,
+        artifacts,
         changes,
       },
     );
@@ -1382,6 +1389,22 @@ export class Version<Framework extends FrameworkId = FrameworkId> {
     return this.#dependencies.repository.getVersionFiles(this.#dependencies.scope, this.id);
   }
 
+  async entries(): Promise<VersionEntry[]> {
+    await assertActiveChat(this.#dependencies, this.chatId);
+    return this.#dependencies.repository.getVersionEntries(this.#dependencies.scope, this.id);
+  }
+
+  async projectArtifact(id: string): Promise<ProjectArtifactContent> {
+    await assertActiveChat(this.#dependencies, this.chatId);
+    const artifact = await this.#dependencies.repository.getProjectArtifact(
+      this.#dependencies.scope,
+      this.id,
+      assertIdentifier(id, "Project artifact id"),
+    );
+    if (!artifact) throw new NotFoundError("Project artifact");
+    return artifact;
+  }
+
   async changes(): Promise<SourceChange[]> {
     await assertActiveChat(this.#dependencies, this.chatId);
     return this.#dependencies.repository.getVersionChanges(this.#dependencies.scope, this.id);
@@ -1389,7 +1412,7 @@ export class Version<Framework extends FrameworkId = FrameworkId> {
 
   async workspace(): Promise<AgentWorkspace<Version<Framework>>> {
     return new AgentWorkspace(
-      await this.files(),
+      await this.entries(),
       (changes, input: AgentWorkspaceCommitInput) => this.apply({ ...input, changes }),
     );
   }
@@ -1399,7 +1422,12 @@ export class Version<Framework extends FrameworkId = FrameworkId> {
       this.#dependencies.sandbox,
       this.#dependencies.scope,
       this.#data,
-      await this.files(),
+      await materializeVersionEntries(
+        this.#dependencies.repository,
+        this.#dependencies.scope,
+        this.id,
+        await this.entries(),
+      ),
       options,
     );
   }
@@ -1541,8 +1569,42 @@ export class Version<Framework extends FrameworkId = FrameworkId> {
   }
 
   async download(): Promise<DownloadArtifact> {
-    return createSourceDownload(this.title, await this.files());
+    return createSourceDownload(
+      this.title,
+      await materializeVersionEntries(
+        this.#dependencies.repository,
+        this.#dependencies.scope,
+        this.id,
+        await this.entries(),
+      ),
+    );
   }
+}
+
+function splitVersionEntries(entries: readonly VersionEntry[]): {
+  files: VersionFile[];
+  artifacts: VersionArtifact[];
+} {
+  return {
+    files: entries
+      .filter((entry) => entry.type === "text")
+      .map(({ type: _type, ...file }) => file),
+    artifacts: entries.filter((entry): entry is VersionArtifact => entry.type === "artifact"),
+  };
+}
+
+async function materializeVersionEntries(
+  repository: Repository,
+  scope: UserScope,
+  versionId: string,
+  entries: readonly VersionEntry[],
+): Promise<SandboxFile[]> {
+  return Promise.all(entries.map(async (entry) => {
+    if (entry.type !== "artifact") return { path: entry.path, content: entry.content };
+    const artifact = await repository.getProjectArtifact(scope, versionId, entry.artifactId);
+    if (!artifact) throw new NotFoundError("Project artifact");
+    return { path: entry.path, content: artifact.bytes };
+  }));
 }
 
 async function assertActiveChat<Framework extends FrameworkId>(
@@ -1996,14 +2058,17 @@ class GenerationRunner<Framework extends FrameworkId> {
         );
       }
 
-      const [messages, previousFiles, tasks, attachments] = await Promise.all([
+      const [messages, previousEntries, tasks, attachments] = await Promise.all([
         this.#dependencies.repository.listMessages(scope, generation.chatId),
         generation.baseVersionId
-          ? this.#dependencies.repository.getVersionFiles(scope, generation.baseVersionId)
+          ? this.#dependencies.repository.getVersionEntries(scope, generation.baseVersionId)
           : Promise.resolve([]),
         this.#dependencies.repository.listGenerationTasks(scope, generationId),
         this.#dependencies.repository.listGenerationAttachments(scope, generationId),
       ]);
+      const previousFiles = previousEntries
+        .filter((entry) => entry.type === "text")
+        .map(({ type: _type, ...file }) => file);
       signal.throwIfAborted();
       if (generation.baseVersionId && this.#dependencies.sandbox) {
         sandbox = await this.#dependencies.sandboxes.open(
@@ -2014,7 +2079,12 @@ class GenerationRunner<Framework extends FrameworkId> {
             chatId: generation.chatId,
             framework: chat.framework,
           },
-          previousFiles,
+          await materializeVersionEntries(
+            this.#dependencies.repository,
+            scope,
+            generation.baseVersionId,
+            previousEntries,
+          ),
           {
             timeoutMs: this.#dependencies.agent.maxDurationMs,
             ports: this.#dependencies.agent.sandboxPorts,
@@ -2051,6 +2121,7 @@ class GenerationRunner<Framework extends FrameworkId> {
           metadata: generation.configuration.metadata,
           messages: messages.filter((message) => message.generationId !== generationId),
           previousFiles,
+          previousEntries,
           skills,
           tasks,
           attachments,
@@ -2125,9 +2196,10 @@ class GenerationRunner<Framework extends FrameworkId> {
         return;
       }
 
-      const files = output.kind === "changes"
-        ? applySourceChanges(previousFiles, output.changes)
-        : preserveLockedFiles(previousFiles, output.files);
+      const entries = output.kind === "changes"
+        ? applyVersionEntryChanges(previousEntries, output.changes)
+        : mergeGeneratedFilesWithArtifacts(previousEntries, output.files);
+      const { files, artifacts: projectArtifacts } = splitVersionEntries(entries);
       const changes = output.kind === "changes" ? output.changes : null;
       const inputTokens = output.usage.inputTokens ?? null;
       const outputTokens = output.usage.outputTokens ?? null;
@@ -2152,6 +2224,7 @@ class GenerationRunner<Framework extends FrameworkId> {
         title: output.title,
         summary: output.summary,
         files,
+        projectArtifacts,
         changes,
         assistantMessage: output.summary,
         assistantParts: [

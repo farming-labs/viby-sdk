@@ -1,6 +1,10 @@
 import { strToU8, zipSync } from "fflate";
-import type { VersionFile } from "./types.js";
 import { slugify } from "./utils.js";
+
+export interface DownloadFile {
+  readonly path: string;
+  readonly content: string | Uint8Array;
+}
 
 export class DownloadArtifact {
   readonly filename: string;
@@ -23,11 +27,13 @@ export class DownloadArtifact {
 
 export function createSourceDownload(
   title: string,
-  files: readonly VersionFile[],
+  files: readonly DownloadFile[],
 ): DownloadArtifact {
   const archiveInput: Record<string, Uint8Array> = {};
   for (const file of files) {
-    archiveInput[file.path] = strToU8(file.content);
+    archiveInput[file.path] = typeof file.content === "string"
+      ? strToU8(file.content)
+      : Uint8Array.from(file.content);
   }
   const bytes = zipSync(archiveInput, { level: 6 });
   return new DownloadArtifact(`${slugify(title)}.zip`, bytes);

@@ -732,7 +732,7 @@ test("imports normalized source files without invoking the model", async () => {
   );
 });
 
-test("imports UTF-8 ZIP source and rejects unsafe or binary archives", async () => {
+test("imports text and binary ZIP source while rejecting unsafe archives", async () => {
   const { viby } = setup();
   const user = viby.forUser({ tenantId: "tenant-a", userId: "user-a" });
   const chat = await user.chats.import({
@@ -767,11 +767,15 @@ test("imports UTF-8 ZIP source and rejects unsafe or binary archives", async () 
     }),
     /duplicate path/,
   );
-  await assert.rejects(
-    () => user.chats.import({
-      source: { type: "zip", bytes: zipSync({ "image.png": new Uint8Array([0xff, 0xfe]) }) },
-    }),
-    /not UTF-8 source text/,
+  const binaryChat = await user.chats.import({
+    source: { type: "zip", bytes: zipSync({ "image.png": new Uint8Array([0xff, 0xfe]) }) },
+  });
+  const binaryVersion = (await binaryChat.latestVersion())!;
+  const [binaryEntry] = await binaryVersion.entries();
+  assert.equal(binaryEntry?.type, "artifact");
+  assert.deepEqual(
+    (await binaryVersion.projectArtifact((binaryEntry as { artifactId: string }).artifactId)).bytes,
+    new Uint8Array([0xff, 0xfe]),
   );
   await assert.rejects(
     () => user.chats.import({

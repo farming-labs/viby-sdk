@@ -21,6 +21,7 @@ import type {
   ToolCallData,
   ToolCallEffect,
   VersionFile,
+  VersionEntry,
   GeneratedArtifactKind,
 } from "./types.js";
 import { normalizeProjectPath, sha256 } from "./utils.js";
@@ -88,6 +89,8 @@ export interface GeneratorInput<Framework extends FrameworkId = FrameworkId> {
   readonly metadata?: Readonly<Record<string, JsonValue>>;
   readonly messages: readonly MessageData[];
   readonly previousFiles: readonly VersionFile[];
+  /** Full immutable project tree, including artifact-backed binary paths. */
+  readonly previousEntries?: readonly VersionEntry[];
   readonly skills: readonly ResolvedSkill[];
   readonly tasks: readonly GenerationTaskData[];
   readonly attachments?: readonly AttachmentContent[];

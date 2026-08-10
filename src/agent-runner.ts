@@ -114,7 +114,8 @@ implements ProjectGenerator<Framework> {
     input: GeneratorInput<Framework>,
     options: GeneratorOptions = {},
   ): Promise<GeneratorOutput> {
-    const workspace = new AgentWorkspace(input.previousFiles, async () => undefined);
+    const previousEntries = input.previousEntries ?? input.previousFiles;
+    const workspace = new AgentWorkspace(previousEntries, async () => undefined);
     const budget = new AgentExecutionBudget(this.#config);
     const approval = new AgentApprovalState();
     const tools = createAgentTools(workspace, input, options, budget, this.#config, approval);
@@ -178,7 +179,7 @@ implements ProjectGenerator<Framework> {
     if (changes.length === 0) {
       throw new ConfigurationError("The agent completed without changing the workspace.");
     }
-    if (input.previousFiles.length === 0) {
+    if (previousEntries.length === 0) {
       return {
         kind: "project",
         title: output.title,
@@ -567,8 +568,8 @@ function createAgentPrompt<Framework extends FrameworkId>(input: GeneratorInput<
   })).join("\n");
   return [
     history ? `Conversation so far:\n${history}` : "This is the first generation in the chat.",
-    input.previousFiles.length > 0
-      ? `The workspace contains ${input.previousFiles.length} files. Inspect them with tools.`
+    (input.previousEntries ?? input.previousFiles).length > 0
+      ? `The workspace contains ${(input.previousEntries ?? input.previousFiles).length} entries. Inspect them with tools.`
       : "The workspace is empty. Create a complete project with tools.",
     tasks ? `Generation task history:\n${tasks}` : "There is no generation task history.",
     input.attachments?.length
