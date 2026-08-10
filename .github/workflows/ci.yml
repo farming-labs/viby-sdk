@@ -113,3 +113,17 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run test:docker
+
+  playwright:
+    name: Playwright browser integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:playwright

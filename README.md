@@ -510,6 +510,27 @@ await browser.close();
 
 Navigation remains on the preview origin by default. Adapter authors can run `verifyBrowserAdapter` from `@viby/sdk/browser/conformance` against a caller-owned reachable fixture. Browser sessions are optional and host-owned; the SDK does not create a managed preview URL.
 
+The first included implementation uses Playwright plus axe-core while keeping those types in its provider-specific entry point:
+
+```ts
+import { playwrightBrowser } from "@viby/sdk/browser/playwright";
+import { openSandboxPreview } from "@viby/sdk";
+
+const browserAdapter = playwrightBrowser({
+  browserName: "chromium",
+  context: { reducedMotion: "reduce", colorScheme: "light" },
+  accessibilityTags: ["wcag2a", "wcag2aa", "wcag21aa", "wcag22aa"],
+});
+
+const browser = await openSandboxPreview(browserAdapter, sandbox, {
+  port: 3000,
+  path: "/",
+  context: { tenantId, userId, chatId: chat.id, versionId: version.id },
+});
+```
+
+`openSandboxPreview` first waits for the sandbox port, then opens an isolated browser context and navigates to the resolved URL. Playwright collects both `console.error` messages and uncaught page exceptions, returns in-memory PNG/JPEG bytes, and maps axe violations into the core accessibility vocabulary. Install both optional peers in hosts that use this adapter: `playwright` and `@axe-core/playwright`.
+
 ## Run and stream asynchronously
 
 `chat.start` persists a queued generation and its first attempt before model execution begins, then immediately returns an addressable generation handle:
