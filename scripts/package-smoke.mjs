@@ -47,10 +47,15 @@ try {
     "dist/sandbox-conformance.d.ts",
     "dist/generation-engine-conformance.js",
     "dist/generation-engine-conformance.d.ts",
+    "dist/artifact-filesystem.js",
+    "dist/artifact-filesystem.d.ts",
+    "dist/artifact-store-conformance.js",
+    "dist/artifact-store-conformance.d.ts",
     "migrations/0001_initial.sql",
     "migrations/0002_durable_generations.sql",
     "migrations/0013_generation_costs.sql",
     "migrations/0014_outbound_event_deliveries.sql",
+    "migrations/0018_artifact_storage.sql",
   ]) {
     assert.ok(paths.has(path), `packed package is missing ${path}`);
   }
@@ -88,6 +93,20 @@ try {
         'if (typeof generationEventStreamResponse !== "function") throw new Error("generationEventStreamResponse export is missing");',
         'if (typeof openTelemetry !== "function") throw new Error("openTelemetry export is missing");',
         'if (skillRead("./skills").source !== "file") throw new Error("skillRead export is invalid");',
+      ].join("\n"),
+    ],
+    { cwd: consumer },
+  );
+  await execute(
+    node,
+    [
+      "--input-type=module",
+      "--eval",
+      [
+        'import { fileSystemArtifactStore } from "@viby/sdk/artifact/filesystem";',
+        'import { verifyArtifactStore } from "@viby/sdk/artifact/conformance";',
+        'if (typeof fileSystemArtifactStore !== "function") throw new Error("filesystem artifact store export is missing");',
+        'if (typeof verifyArtifactStore !== "function") throw new Error("artifact conformance export is missing");',
       ].join("\n"),
     ],
     { cwd: consumer },

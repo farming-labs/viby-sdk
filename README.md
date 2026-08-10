@@ -55,6 +55,20 @@ export const viby = createViby({
 
 The model provider reads its own credential from your environment. Viby does not receive or store it. The default generator is a bounded AI SDK tool-loop agent: it reads and changes source through `AgentWorkspace`, emits durable tool and trace records, and returns either an immutable project result or a typed blocking task.
 
+Binary attachments use a separate provider-neutral artifact store so PostgreSQL retains only queryable ownership, media metadata, checksums, and opaque storage references. The filesystem adapter is a reference implementation for development or hosts with a durable mounted volume:
+
+```ts
+import { fileSystemArtifactStore } from "@viby/sdk/artifact/filesystem";
+
+const viby = createViby({
+  framework: "farm",
+  model,
+  artifactStore: fileSystemArtifactStore({ directory: "/var/lib/viby/artifacts" }),
+});
+```
+
+Configure `artifactStore` before accepting attachment bytes. Custom stores implement ordinary `put`, `get`, and idempotent `delete` methods and retain their own credentials. Adapter authors can verify byte roundtrips and defensive reads with `verifyArtifactStore` from `@viby/sdk/artifact/conformance`. Existing attachment bytes from older schemas remain readable through the explicit `postgres-legacy` migration marker; all new binary writes go to the configured store.
+
 Advanced consumers can replace the AI SDK shortcut with a provider-neutral generation engine. The engine may call a custom model runtime, run an agent, or delegate to an orchestration service while Viby continues to own durable attempts, events, tasks, usage, and immutable source versions:
 
 ```ts

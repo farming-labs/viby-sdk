@@ -11,6 +11,7 @@ This inventory describes the current `@viby/sdk` source on `main`. “Shipped”
 | Generation engine | public provider-neutral engine plus conformance suite | host may replace the AI SDK shortcut with any agent, model runtime, or orchestrator |
 | Categorized skills | skills.sh slugs and `skillRead(...)` directories | host selects; Viby resolves and snapshots exact content |
 | Durable database | `DATABASE_URL`, explicit `viby db migrate` | host provisions Postgres; Viby owns its schema and migrations |
+| Binary artifact storage | provider-neutral `ArtifactStore`, conformance suite, and filesystem reference adapter | host selects storage and owns its credentials; PostgreSQL keeps metadata and opaque references |
 | Tenant isolation | `viby.forUser({ tenantId, userId })` | host authenticates; every Viby query enforces both IDs |
 | Viby API key | none | no managed Viby control plane is required |
 
@@ -61,7 +62,7 @@ Preview URLs exist only when the configured adapter exposes port URLs and the ho
 | Telemetry | provider-neutral hooks plus an OpenTelemetry-compatible tracer/meter adapter |
 | Cost attribution | host-defined currency/credit calculator, immutable attempt cost, cumulative generation cost, and usage parts |
 | Generation configuration | durable per-request model aliases, host instructions, categorized skill overlays, and JSON metadata |
-| Multimodal input | immutable attachment bytes, lightweight message metadata, scoped retrieval, and standard AI SDK file parts |
+| Multimodal input | immutable attachment bytes in an external artifact store, lightweight PostgreSQL metadata, scoped retrieval, and standard AI SDK file parts |
 | Design evaluation | immutable version-bound rubric results, criterion scores, validated evidence references, metadata, and cursor pagination |
 
 Authentication, OAuth connection registries, event scheduling, and transport infrastructure remain host-owned. Viby stores delivery state but does not run a hidden queue or scheduler.

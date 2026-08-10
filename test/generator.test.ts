@@ -15,6 +15,7 @@ test("builds provider-neutral AI SDK file parts from immutable attachment bytes"
     mediaType: "image/png",
     size: bytes.byteLength,
     checksum: "0".repeat(64),
+    artifact: { store: "fixture", key: "attachments/attachment-id" },
     bytes,
     createdAt: new Date("2026-08-10T00:00:00.000Z"),
   }]);

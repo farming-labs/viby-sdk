@@ -1,11 +1,15 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
 import type { LanguageModel, LanguageModelUsage } from "ai";
 import { MockLanguageModelV4 } from "ai/test";
 import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
 import { createVibyWithDependencies } from "../src/client.js";
 import { AgentProjectGenerator } from "../src/agent-runner.js";
+import { fileSystemArtifactStore } from "../src/artifact-filesystem.js";
 import type { GeneratorInput, GeneratorOutput, ProjectGenerator } from "../src/generator.js";
 import { migrateDatabase } from "../src/migrations.js";
 import { PostgresRepository } from "../src/postgres-repository.js";
@@ -33,7 +37,9 @@ test("persists a durable generation, iteration, events, and download in Postgres
   assert.ok(databaseUrl);
   await migrateDatabase(databaseUrl);
 
-  const repository = new PostgresRepository(databaseUrl);
+  const artifactDirectory = await mkdtemp(join(tmpdir(), "viby-postgres-artifacts-"));
+  const artifactStore = fileSystemArtifactStore({ directory: artifactDirectory });
+  const repository = new PostgresRepository(databaseUrl, artifactStore);
   const calls: Array<GeneratorInput<"farm">> = [];
   const generator: ProjectGenerator<"farm"> = {
     async generate(input, options): Promise<GeneratorOutput> {
@@ -614,6 +620,7 @@ test("persists a durable generation, iteration, events, and download in Postgres
     }
   } finally {
     await viby.close();
+    await rm(artifactDirectory, { recursive: true, force: true });
   }
 });
 
