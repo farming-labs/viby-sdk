@@ -103,6 +103,10 @@ import type {
   OutboundEventReceipt,
   OutboundEventSink,
 } from "./outbound-events.js";
+import {
+  generationEventStreamResponse,
+  type GenerationEventStreamResponseOptions,
+} from "./http.js";
 
 const DEFAULT_POLL_INTERVAL_MS = 100;
 const DEFAULT_EVENT_LIMIT = 100;
@@ -844,6 +848,10 @@ export class Generation<Framework extends FrameworkId = FrameworkId> {
       }
       await waitForPoll(pollIntervalMs, options.signal);
     }
+  }
+
+  toEventStreamResponse(options: GenerationEventStreamResponseOptions = {}): Response {
+    return generationEventStreamResponse(this, options);
   }
 
   async wait(options: GenerationWaitOptions = {}): Promise<GenerationOutcome<Framework>> {
