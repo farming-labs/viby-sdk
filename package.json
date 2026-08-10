@@ -66,6 +66,10 @@
       "types": "./dist/sandbox-conformance.d.ts",
       "import": "./dist/sandbox-conformance.js"
     },
+    "./mcp": {
+      "types": "./dist/mcp.d.ts",
+      "import": "./dist/mcp.js"
+    },
     "./package.json": "./package.json"
   },
   "bin": {
@@ -109,6 +113,7 @@
   "peerDependencies": {
     "@cloudflare/sandbox": "^0.12.5",
     "@daytona/sdk": "^0.203.0",
+    "@modelcontextprotocol/server": "^2.0.0",
     "@vercel/sandbox": "^3.0.0",
     "e2b": "^2.38.2",
     "modal": "^0.9.0"
@@ -118,6 +123,9 @@
       "optional": true
     },
     "@daytona/sdk": {
+      "optional": true
+    },
+    "@modelcontextprotocol/server": {
       "optional": true
     },
     "@vercel/sandbox": {
@@ -133,6 +141,8 @@
   "devDependencies": {
     "@cloudflare/sandbox": "^0.12.5",
     "@daytona/sdk": "^0.203.0",
+    "@modelcontextprotocol/client": "^2.0.0",
+    "@modelcontextprotocol/server": "^2.0.0",
     "@types/node": "^26.1.2",
     "@vercel/sandbox": "^3.0.0",
     "bumpp": "^10.4.1",
