@@ -7,5 +7,6 @@
       "@viby/sdk/mcp": ["../../../src/mcp.ts"]
     }
   },
-  "include": ["./v0.2.4.ts"]
+  "include": ["./v0.2.4.ts"],
+  "exclude": []
 }
