@@ -26,3 +26,29 @@ CREATE INDEX generated_artifacts_scope_generation_idx
 
 CREATE INDEX generated_artifacts_artifact_location_idx
   ON viby.generated_artifacts (artifact_store, artifact_key);
+
+ALTER TABLE viby.generation_events
+  DROP CONSTRAINT IF EXISTS generation_events_type_check;
+
+ALTER TABLE viby.generation_events
+  ADD CONSTRAINT generation_events_type_check CHECK (type IN (
+    'generation.created',
+    'attempt.queued',
+    'attempt.started',
+    'output.delta',
+    'part.started',
+    'part.delta',
+    'part.completed',
+    'part.failed',
+    'artifact.created',
+    'attempt.waiting',
+    'task.created',
+    'task.resolved',
+    'attempt.interrupted',
+    'attempt.succeeded',
+    'attempt.failed',
+    'attempt.cancelled',
+    'generation.succeeded',
+    'generation.failed',
+    'generation.cancelled'
+  ));
