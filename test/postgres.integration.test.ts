@@ -119,6 +119,71 @@ test("persists a durable generation, iteration, events, and download in Postgres
       "attempt.succeeded",
       "generation.succeeded",
     ]);
+    const outboundEvent = events[0]!;
+    const firstDeliveryClaim = await repository.claimOutboundEventDelivery(scope, {
+      generationId: generation.id,
+      eventCursor: outboundEvent.cursor,
+      sinkId: "postgres-test-sink",
+      leaseToken: randomUUID(),
+      leaseMs: 30_000,
+      maxAttempts: 2,
+    });
+    assert.ok(firstDeliveryClaim);
+    assert.equal(firstDeliveryClaim.delivery.attemptCount, 1);
+    const retryableDelivery = await repository.failOutboundEventDelivery(scope, {
+      generationId: generation.id,
+      eventCursor: outboundEvent.cursor,
+      sinkId: "postgres-test-sink",
+      leaseToken: firstDeliveryClaim.leaseToken,
+      error: "temporary failure",
+      retryDelayMs: 0,
+    });
+    assert.equal(retryableDelivery.status, "pending");
+    const secondDeliveryClaim = await repository.claimOutboundEventDelivery(scope, {
+      generationId: generation.id,
+      eventCursor: outboundEvent.cursor,
+      sinkId: "postgres-test-sink",
+      leaseToken: randomUUID(),
+      leaseMs: 30_000,
+      maxAttempts: 2,
+    });
+    assert.ok(secondDeliveryClaim);
+    const deadLetter = await repository.failOutboundEventDelivery(scope, {
+      generationId: generation.id,
+      eventCursor: outboundEvent.cursor,
+      sinkId: "postgres-test-sink",
+      leaseToken: secondDeliveryClaim.leaseToken,
+      error: "terminal failure",
+      retryDelayMs: 0,
+    });
+    assert.equal(deadLetter.status, "dead_lettered");
+    assert.equal((await repository.listOutboundEventDeliveries(
+      scope,
+      generation.id,
+      "postgres-test-sink",
+      "dead_lettered",
+    )).length, 1);
+    await repository.redriveOutboundEventDelivery(
+      scope,
+      generation.id,
+      outboundEvent.cursor,
+      "postgres-test-sink",
+    );
+    const redriveClaim = await repository.claimOutboundEventDelivery(scope, {
+      generationId: generation.id,
+      eventCursor: outboundEvent.cursor,
+      sinkId: "postgres-test-sink",
+      leaseToken: randomUUID(),
+      leaseMs: 30_000,
+      maxAttempts: 2,
+    });
+    assert.ok(redriveClaim);
+    const delivered = await repository.completeOutboundEventDelivery(
+      scope,
+      redriveClaim,
+      new Date(),
+    );
+    assert.equal(delivered.status, "delivered");
     assert.deepEqual(
       (await generation.attempts()).map((attempt) => [attempt.number, attempt.status]),
       [[1, "succeeded"]],

@@ -42,6 +42,37 @@ export interface OutboundEventReceipt {
   readonly deliveredAt: Date;
 }
 
+export type OutboundEventDeliveryStatus =
+  | "pending"
+  | "delivering"
+  | "delivered"
+  | "dead_lettered";
+
+export interface OutboundEventDeliveryData {
+  readonly generationId: string;
+  readonly eventCursor: string;
+  readonly eventId: string;
+  readonly sinkId: string;
+  readonly status: OutboundEventDeliveryStatus;
+  readonly attemptCount: number;
+  readonly maxAttempts: number;
+  readonly nextAttemptAt: Date;
+  readonly leaseExpiresAt: Date | null;
+  readonly lastError: string | null;
+  readonly deliveredAt: Date | null;
+  readonly deadLetteredAt: Date | null;
+  readonly createdAt: Date;
+  readonly updatedAt: Date;
+}
+
+export interface OutboundEventRetryPolicy {
+  readonly maxAttempts?: number;
+  readonly initialDelayMs?: number;
+  readonly maxDelayMs?: number;
+  readonly multiplier?: number;
+  readonly leaseMs?: number;
+}
+
 export interface OutboundEventContext extends UserScope {
   readonly chatId: string;
   readonly generationId: string;

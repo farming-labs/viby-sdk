@@ -285,7 +285,11 @@ test("isolates sink failures and exposes an exact safe resume cursor", async () 
 
   let failure: OutboundEventDeliveryError | undefined;
   try {
-    await generation.deliverEvents({ sink: "retryable-events", limit: 100 });
+    await generation.deliverEvents({
+      sink: "retryable-events",
+      limit: 100,
+      retry: { initialDelayMs: 0, maxDelayMs: 0 },
+    });
   } catch (error) {
     if (error instanceof OutboundEventDeliveryError) failure = error;
     else throw error;
@@ -301,6 +305,7 @@ test("isolates sink failures and exposes an exact safe resume cursor", async () 
     sink: "retryable-events",
     after: failure.lastDeliveredCursor,
     limit: 100,
+    retry: { initialDelayMs: 0, maxDelayMs: 0 },
   });
   assert.ok(retry.deliveries.length > 0);
   assert.equal(retry.deliveries[0]?.eventId, `${generation.id}:2`);
@@ -308,6 +313,156 @@ test("isolates sink failures and exposes an exact safe resume cursor", async () 
     () => generation.deliverEvents({ sink: "missing" }),
     /not configured/,
   );
+});
+
+test("durably retries, dead-letters, and explicitly redrives outbound events", async () => {
+  const repository = new MemoryRepository();
+  const generator = new FakeGenerator<"farm">();
+  let available = false;
+  const attempts: string[] = [];
+  const sink = signedOutboundEventSink({
+    id: "durable-events",
+    secret: "durable-outbound-event-secret-at-least-32-bytes",
+    send(request) {
+      attempts.push(request.event.id);
+      if (!available) throw new Error("provider unavailable with secret-value");
+    },
+  });
+  const viby = createVibyWithDependencies(
+    {
+      framework: "farm",
+      model: "test/mock" as LanguageModel,
+      events: { sinks: [sink] },
+    },
+    { repository, generator, skillResolver: new SkillResolver({}) },
+  );
+  const chat = await viby
+    .forUser({ tenantId: "tenant-a", userId: "user-a" })
+    .chats.create();
+  const generation = await chat.start({ prompt: "Build a durable event project" });
+  assert.equal((await generation.wait({ pollIntervalMs: 10 })).status, "succeeded");
+  const retry = { maxAttempts: 2, initialDelayMs: 0, maxDelayMs: 0 } as const;
+
+  await assert.rejects(
+    () => generation.deliverEvents({ sink: "durable-events", retry }),
+    (error: unknown) => (
+      error instanceof OutboundEventDeliveryError
+      && error.delivery?.status === "pending"
+      && error.delivery.attemptCount === 1
+      && error.delivery.lastError?.includes("secret-value") === false
+    ),
+  );
+  await assert.rejects(
+    () => generation.deliverEvents({ sink: "durable-events", retry }),
+    (error: unknown) => (
+      error instanceof OutboundEventDeliveryError
+      && error.delivery?.status === "dead_lettered"
+      && error.delivery.attemptCount === 2
+      && error.delivery.deadLetteredAt instanceof Date
+    ),
+  );
+
+  const [deadLetter] = await generation.outboundDeliveries({
+    sink: "durable-events",
+    status: "dead_lettered",
+  });
+  assert.ok(deadLetter);
+  assert.equal(deadLetter.eventCursor, "1");
+  assert.equal(attempts.length, 2);
+
+  const redriven = await generation.redriveOutboundEvent({
+    sink: "durable-events",
+    cursor: deadLetter.eventCursor,
+  });
+  assert.equal(redriven.status, "pending");
+  assert.equal(redriven.attemptCount, 0);
+
+  available = true;
+  const delivered = await generation.deliverEvents({
+    sink: "durable-events",
+    retry,
+    limit: 100,
+  });
+  assert.ok(delivered.deliveries.length > 0);
+  assert.equal(delivered.deadLetters.length, 0);
+  assert.equal(delivered.retryAt, null);
+  assert.equal(delivered.hasMore, false);
+  assert.ok((await generation.outboundDeliveries({ sink: "durable-events" }))
+    .every((delivery) => delivery.status === "delivered"));
+  await viby.close();
+});
+
+test("returns the durable retry time without busy-looping a deferred delivery", async () => {
+  const repository = new MemoryRepository();
+  const generator = new FakeGenerator<"farm">();
+  const sink = signedOutboundEventSink({
+    id: "deferred-events",
+    secret: "deferred-outbound-event-secret-at-least-32-bytes",
+    send() {
+      throw new Error("temporarily unavailable");
+    },
+  });
+  const viby = createVibyWithDependencies(
+    {
+      framework: "farm",
+      model: "test/mock" as LanguageModel,
+      events: { sinks: [sink] },
+    },
+    { repository, generator, skillResolver: new SkillResolver({}) },
+  );
+  const chat = await viby
+    .forUser({ tenantId: "tenant-a", userId: "user-a" })
+    .chats.create();
+  const generation = await chat.start({ prompt: "Build a deferred event project" });
+  assert.equal((await generation.wait({ pollIntervalMs: 10 })).status, "succeeded");
+
+  await assert.rejects(() => generation.deliverEvents({
+    sink: "deferred-events",
+    retry: { initialDelayMs: 60_000, maxDelayMs: 60_000 },
+  }));
+  const page = await generation.deliverEvents({ sink: "deferred-events" });
+  assert.equal(page.deliveries.length, 0);
+  assert.equal(page.cursor, "0");
+  assert.equal(page.hasMore, true);
+  assert.ok(page.retryAt && page.retryAt.getTime() > Date.now());
+  await viby.close();
+});
+
+test("leases outbound delivery so concurrent callers do not repeat an effect", async () => {
+  const repository = new MemoryRepository();
+  const generator = new FakeGenerator<"farm">();
+  const delivered: string[] = [];
+  const sink = signedOutboundEventSink({
+    id: "leased-events",
+    secret: "leased-outbound-event-secret-at-least-32-bytes",
+    async send(request) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      delivered.push(request.event.id);
+    },
+  });
+  const viby = createVibyWithDependencies(
+    {
+      framework: "farm",
+      model: "test/mock" as LanguageModel,
+      events: { sinks: [sink] },
+    },
+    { repository, generator, skillResolver: new SkillResolver({}) },
+  );
+  const chat = await viby
+    .forUser({ tenantId: "tenant-a", userId: "user-a" })
+    .chats.create();
+  const generation = await chat.start({ prompt: "Build a leased event project" });
+  assert.equal((await generation.wait({ pollIntervalMs: 10 })).status, "succeeded");
+
+  const [first, second] = await Promise.all([
+    generation.deliverEvents({ sink: "leased-events", limit: 100 }),
+    generation.deliverEvents({ sink: "leased-events", limit: 100 }),
+  ]);
+  assert.ok(first.deliveries.length === 0 || second.deliveries.length === 0);
+  const events = (await generation.events({ limit: 100 })).events;
+  assert.equal(delivered.length, events.length);
+  assert.equal(new Set(delivered).size, events.length);
+  await viby.close();
 });
 
 test("validates signed outbound sink configuration", () => {

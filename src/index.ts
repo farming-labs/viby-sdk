@@ -81,9 +81,12 @@ export {
 } from "./outbound-events.js";
 export type {
   OutboundEventContext,
+  OutboundEventDeliveryData,
+  OutboundEventDeliveryStatus,
   OutboundEventEnvelope,
   OutboundEventReceipt,
   OutboundEventRequest,
+  OutboundEventRetryPolicy,
   OutboundEventSink,
   SignedOutboundEventSinkOptions,
   VerifySignedOutboundEventOptions,
@@ -126,8 +129,10 @@ export type {
   GenerationOutcome,
   GenerationWorkerOptions,
   GenerationWorkerRunOptions,
+  OutboundEventDeliveryListOptions,
   OutboundEventDeliveryOptions,
   OutboundEventDeliveryPage,
+  OutboundEventRedriveInput,
   Viby,
 } from "./client.js";
 export type {
