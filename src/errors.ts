@@ -193,3 +193,15 @@ export class SandboxError extends VibyError {
     this.operation = operation;
   }
 }
+
+export class BrowserError extends VibyError {
+  readonly provider: string;
+  readonly operation: string;
+
+  constructor(provider: string, operation: string, message: string, options?: ErrorOptions) {
+    super("browser_error", `${provider} could not ${operation}: ${message}`, options);
+    this.name = "BrowserError";
+    this.provider = provider;
+    this.operation = operation;
+  }
+}

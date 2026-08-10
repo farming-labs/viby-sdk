@@ -13,6 +13,7 @@ export { DownloadArtifact } from "./download.js";
 export { AgentWorkspace } from "./agent-workspace.js";
 export { AgentProjectGenerator } from "./agent-runner.js";
 export { defineGenerationEngine } from "./generation-engine.js";
+export { BrowserSession, openBrowserSession } from "./browser.js";
 export type { PersistenceAdapter } from "./persistence.js";
 export type {
   ArtifactKind,
@@ -101,9 +102,32 @@ export {
   SandboxCommandDeniedError,
   SandboxCommandApprovalRequiredError,
   SandboxError,
+  BrowserError,
   SandboxUnavailableError,
   VibyError,
 } from "./errors.js";
+export type {
+  BrowserAccessibilityImpact,
+  BrowserAccessibilityIssue,
+  BrowserAccessibilityNode,
+  BrowserAccessibilityOptions,
+  BrowserAccessibilityReport,
+  BrowserAdapter,
+  BrowserConsoleError,
+  BrowserDomInspectionOptions,
+  BrowserDomSnapshot,
+  BrowserInstance,
+  BrowserNavigationInput,
+  BrowserNavigationResult,
+  BrowserOpenInput,
+  BrowserOwnershipContext,
+  BrowserReadinessOptions,
+  BrowserReadinessResult,
+  BrowserScreenshot,
+  BrowserScreenshotOptions,
+  BrowserViewport,
+  BrowserWaitUntil,
+} from "./browser.js";
 export {
   SignedOutboundEventSink,
   signedOutboundEventSink,

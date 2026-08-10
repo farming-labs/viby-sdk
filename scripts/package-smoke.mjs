@@ -57,6 +57,10 @@ try {
     "dist/persistence-conformance.d.ts",
     "dist/persistence.js",
     "dist/persistence.d.ts",
+    "dist/browser.js",
+    "dist/browser.d.ts",
+    "dist/browser-conformance.js",
+    "dist/browser-conformance.d.ts",
     "migrations/0001_initial.sql",
     "migrations/0002_durable_generations.sql",
     "migrations/0013_generation_costs.sql",
@@ -90,8 +94,10 @@ try {
       "--input-type=module",
       "--eval",
       [
-        'import { createViby, DownloadArtifact, SandboxSession, SourceImportError, generationEventStreamResponse, openTelemetry, signedOutboundEventSink, verifySignedOutboundEvent, skillRead } from "@viby/sdk";',
+        'import { createViby, BrowserSession, DownloadArtifact, SandboxSession, SourceImportError, generationEventStreamResponse, openBrowserSession, openTelemetry, signedOutboundEventSink, verifySignedOutboundEvent, skillRead } from "@viby/sdk";',
         'if (typeof createViby !== "function") throw new Error("createViby export is missing");',
+        'if (typeof BrowserSession !== "function") throw new Error("BrowserSession export is missing");',
+        'if (typeof openBrowserSession !== "function") throw new Error("openBrowserSession export is missing");',
         'if (typeof DownloadArtifact !== "function") throw new Error("DownloadArtifact export is missing");',
         'if (typeof SandboxSession !== "function") throw new Error("SandboxSession export is missing");',
         'if (typeof SourceImportError !== "function") throw new Error("SourceImportError export is missing");',
@@ -114,6 +120,18 @@ try {
         'import { verifyPersistenceAdapter } from "@viby/sdk/persistence/conformance";',
         'if (typeof postgresPersistence !== "function") throw new Error("Postgres persistence export is missing");',
         'if (typeof verifyPersistenceAdapter !== "function") throw new Error("persistence conformance export is missing");',
+      ].join("\n"),
+    ],
+    { cwd: consumer },
+  );
+  await execute(
+    node,
+    [
+      "--input-type=module",
+      "--eval",
+      [
+        'import { verifyBrowserAdapter } from "@viby/sdk/browser/conformance";',
+        'if (typeof verifyBrowserAdapter !== "function") throw new Error("browser conformance export is missing");',
       ].join("\n"),
     ],
     { cwd: consumer },

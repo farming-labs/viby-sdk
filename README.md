@@ -486,6 +486,30 @@ const viby = createViby({
 
 The adapter uses the local Docker CLI and daemon. It never bind-mounts generated source: files are streamed into a labeled, read-only-root container with dropped capabilities, `no-new-privileges`, PID/CPU/memory limits, and a size-limited temporary workspace. Use it for trusted local or single-tenant infrastructure; a Docker daemon is not a substitute for a hardened multi-tenant cloud sandbox.
 
+## Inspect previews through a portable browser
+
+Browser automation is a separate provider-neutral layer. Core types expose navigation, readiness, screenshots, bounded DOM inspection, console errors, and normalized accessibility reports without leaking browser-driver handles or provider-specific result types:
+
+```ts
+import { openBrowserSession } from "@viby/sdk";
+
+const browser = await openBrowserSession(browserAdapter, {
+  baseUrl: previewUrl,
+  context: { tenantId, userId, chatId: chat.id, versionId: version.id },
+  viewport: { width: 1440, height: 900 },
+});
+
+await browser.navigate("/");
+await browser.waitForReady({ selector: "main", state: "visible" });
+const screenshot = await browser.screenshot({ fullPage: true });
+const dom = await browser.inspect({ selector: "main" });
+const consoleErrors = await browser.consoleErrors();
+const accessibility = await browser.accessibility();
+await browser.close();
+```
+
+Navigation remains on the preview origin by default. Adapter authors can run `verifyBrowserAdapter` from `@viby/sdk/browser/conformance` against a caller-owned reachable fixture. Browser sessions are optional and host-owned; the SDK does not create a managed preview URL.
+
 ## Run and stream asynchronously
 
 `chat.start` persists a queued generation and its first attempt before model execution begins, then immediately returns an addressable generation handle:

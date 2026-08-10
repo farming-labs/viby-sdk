@@ -51,6 +51,17 @@ The core contract branches on declared capabilities, never provider names.
 
 Preview URLs exist only when the configured adapter exposes port URLs and the host starts a server. Viby does not promise a globally hosted preview URL. The [reference application](../examples/reference) demonstrates the complete host composition.
 
+## Browser inspection
+
+| Capability | Shipped surface |
+| --- | --- |
+| Common adapter | provider-neutral browser open/session contract with no driver-specific types |
+| Navigation | same-origin-by-default URL resolution with portable load states and timeouts |
+| Visual evidence | PNG/JPEG screenshot bytes with validated dimensions and defensive copies |
+| Inspection | bounded DOM HTML/text snapshots and normalized console errors |
+| Quality | provider-neutral accessibility issue/report vocabulary and readiness checks |
+| Conformance | reusable lifecycle suite against a caller-owned reachable page |
+
 ## Integration, delivery, and observability
 
 | Capability | Shipped surface |
@@ -86,7 +97,6 @@ Authentication, OAuth connection registries, event scheduling, and transport inf
 
 - Git repository push, branch, commit, and pull-request adapters;
 - deployment adapters, provider connections, and managed preview hosting;
-- screenshot capture and browser automation (generated binary storage is already available);
 - managed authentication, billing, Postgres, workers, queues, secrets, or a Viby API key.
 
 These are absent contracts, not runtime stubs. Future provider features should enter through portable core interfaces and explicit adapters without weakening the framework-, runtime-, model-, or vendor-neutral boundary.
