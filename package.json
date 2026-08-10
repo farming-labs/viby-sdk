@@ -1,6 +1,6 @@
 {
   "name": "@viby/sdk",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "description": "Framework-agnostic SDK for building persistent, skill-guided vibe coding products.",
   "type": "module",
   "main": "./dist/index.js",
