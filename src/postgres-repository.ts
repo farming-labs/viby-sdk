@@ -1,5 +1,9 @@
 import postgres from "postgres";
 import type {
+  OutboundEventDeliveryData,
+  OutboundEventDeliveryStatus,
+} from "./outbound-events.js";
+import type {
   ChatData,
   ChatDeletionData,
   ChatMetadata,
@@ -37,6 +41,7 @@ import type {
   AppendGenerationEventRecord,
   ChatPageCursor,
   ClaimGenerationAttemptRecord,
+  ClaimOutboundEventDeliveryRecord,
   CompleteGenerationRecord,
   CompleteToolCallRecord,
   CreateAttemptRecord,
@@ -48,7 +53,9 @@ import type {
   CreateSourceVersionRecord,
   ForkVersionRecord,
   FailToolCallRecord,
+  FailOutboundEventDeliveryRecord,
   GenerationWorkerLease,
+  OutboundEventDeliveryClaim,
   ImportedChat,
   ImportChatRecord,
   MessagePageCursor,
@@ -139,6 +146,22 @@ interface GenerationEventRow {
   type: GenerationEventType;
   data: unknown;
   created_at: Date;
+}
+
+interface OutboundEventDeliveryRow {
+  generation_id: string;
+  event_cursor: string | number | bigint;
+  sink_id: string;
+  status: OutboundEventDeliveryStatus;
+  attempt_count: number;
+  max_attempts: number;
+  next_attempt_at: Date;
+  lease_expires_at: Date | null;
+  last_error: string | null;
+  delivered_at: Date | null;
+  dead_lettered_at: Date | null;
+  created_at: Date;
+  updated_at: Date;
 }
 
 interface GenerationTaskRow {
@@ -263,6 +286,7 @@ export class PostgresRepository implements Repository {
         AND to_regclass('viby.version_changes') IS NOT NULL
         AND to_regclass('viby.message_parts') IS NOT NULL
         AND to_regclass('viby.tool_calls') IS NOT NULL
+        AND to_regclass('viby.outbound_event_deliveries') IS NOT NULL
         AND EXISTS (
           SELECT 1 FROM information_schema.columns
           WHERE table_schema = 'viby' AND table_name = 'generations'
@@ -1685,6 +1709,147 @@ export class PostgresRepository implements Repository {
     return rows.map(mapEvent);
   }
 
+  async claimOutboundEventDelivery(
+    scope: UserScope,
+    input: ClaimOutboundEventDeliveryRecord,
+  ): Promise<OutboundEventDeliveryClaim | null> {
+    await this.assertReady();
+    const row = await this.#sql.begin(async (sql) => {
+      await sql`
+        INSERT INTO viby.outbound_event_deliveries (
+          tenant_id, user_id, generation_id, event_cursor, sink_id, max_attempts
+        )
+        SELECT
+          event.tenant_id, event.user_id, event.generation_id, event.cursor,
+          ${input.sinkId}, ${input.maxAttempts}
+        FROM viby.generation_events AS event
+        WHERE event.tenant_id = ${scope.tenantId} AND event.user_id = ${scope.userId}
+          AND event.generation_id = ${input.generationId}
+          AND event.cursor = ${input.eventCursor}::bigint
+        ON CONFLICT (generation_id, event_cursor, sink_id) DO NOTHING
+      `;
+      const [claimed] = await sql<OutboundEventDeliveryRow[]>`
+        UPDATE viby.outbound_event_deliveries SET
+          status = 'delivering', attempt_count = attempt_count + 1,
+          lease_token = ${input.leaseToken},
+          lease_expires_at = now() + (${input.leaseMs} * interval '1 millisecond'),
+          updated_at = now()
+        WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+          AND generation_id = ${input.generationId}
+          AND event_cursor = ${input.eventCursor}::bigint AND sink_id = ${input.sinkId}
+          AND attempt_count < max_attempts
+          AND (
+            (status = 'pending' AND next_attempt_at <= now())
+            OR (status = 'delivering' AND lease_expires_at <= now())
+          )
+        RETURNING *
+      `;
+      return claimed ?? null;
+    });
+    return row
+      ? { delivery: mapOutboundEventDelivery(row), leaseToken: input.leaseToken }
+      : null;
+  }
+
+  async getOutboundEventDelivery(
+    scope: UserScope,
+    generationId: string,
+    eventCursor: string,
+    sinkId: string,
+  ): Promise<OutboundEventDeliveryData | null> {
+    await this.assertReady();
+    const [row] = await this.#sql<OutboundEventDeliveryRow[]>`
+      SELECT * FROM viby.outbound_event_deliveries
+      WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+        AND generation_id = ${generationId} AND event_cursor = ${eventCursor}::bigint
+        AND sink_id = ${sinkId}
+    `;
+    return row ? mapOutboundEventDelivery(row) : null;
+  }
+
+  async completeOutboundEventDelivery(
+    scope: UserScope,
+    claim: OutboundEventDeliveryClaim,
+    deliveredAt: Date,
+  ): Promise<OutboundEventDeliveryData> {
+    await this.assertReady();
+    const [row] = await this.#sql<OutboundEventDeliveryRow[]>`
+      UPDATE viby.outbound_event_deliveries SET
+        status = 'delivered', delivered_at = ${deliveredAt}, last_error = NULL,
+        lease_token = NULL, lease_expires_at = NULL, updated_at = now()
+      WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+        AND generation_id = ${claim.delivery.generationId}
+        AND event_cursor = ${claim.delivery.eventCursor}::bigint
+        AND sink_id = ${claim.delivery.sinkId} AND status = 'delivering'
+        AND lease_token = ${claim.leaseToken}
+      RETURNING *
+    `;
+    if (!row) throw new GenerationStateError(claim.delivery.generationId, "Outbound event delivery lease is no longer active.");
+    return mapOutboundEventDelivery(row);
+  }
+
+  async failOutboundEventDelivery(
+    scope: UserScope,
+    input: FailOutboundEventDeliveryRecord,
+  ): Promise<OutboundEventDeliveryData> {
+    await this.assertReady();
+    const [row] = await this.#sql<OutboundEventDeliveryRow[]>`
+      UPDATE viby.outbound_event_deliveries SET
+        status = CASE WHEN attempt_count >= max_attempts THEN 'dead_lettered' ELSE 'pending' END,
+        next_attempt_at = now() + (${input.retryDelayMs} * interval '1 millisecond'),
+        last_error = ${input.error}, lease_token = NULL, lease_expires_at = NULL,
+        dead_lettered_at = CASE WHEN attempt_count >= max_attempts THEN now() ELSE NULL END,
+        updated_at = now()
+      WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+        AND generation_id = ${input.generationId}
+        AND event_cursor = ${input.eventCursor}::bigint AND sink_id = ${input.sinkId}
+        AND status = 'delivering' AND lease_token = ${input.leaseToken}
+      RETURNING *
+    `;
+    if (!row) throw new GenerationStateError(input.generationId, "Outbound event delivery lease is no longer active.");
+    return mapOutboundEventDelivery(row);
+  }
+
+  async listOutboundEventDeliveries(
+    scope: UserScope,
+    generationId: string,
+    sinkId: string,
+    status?: OutboundEventDeliveryStatus,
+  ): Promise<OutboundEventDeliveryData[]> {
+    await this.assertReady();
+    const rows = await this.#sql<OutboundEventDeliveryRow[]>`
+      SELECT delivery.* FROM viby.outbound_event_deliveries AS delivery
+      JOIN viby.generations AS generation ON generation.id = delivery.generation_id
+      WHERE delivery.tenant_id = ${scope.tenantId} AND delivery.user_id = ${scope.userId}
+        AND delivery.generation_id = ${generationId} AND delivery.sink_id = ${sinkId}
+        AND generation.tenant_id = delivery.tenant_id AND generation.user_id = delivery.user_id
+        AND (${status ?? null}::text IS NULL OR delivery.status = ${status ?? null})
+      ORDER BY delivery.event_cursor
+    `;
+    return rows.map(mapOutboundEventDelivery);
+  }
+
+  async redriveOutboundEventDelivery(
+    scope: UserScope,
+    generationId: string,
+    eventCursor: string,
+    sinkId: string,
+  ): Promise<OutboundEventDeliveryData> {
+    await this.assertReady();
+    const [row] = await this.#sql<OutboundEventDeliveryRow[]>`
+      UPDATE viby.outbound_event_deliveries SET
+        status = 'pending', attempt_count = 0, next_attempt_at = now(),
+        last_error = NULL, dead_lettered_at = NULL, lease_token = NULL,
+        lease_expires_at = NULL, updated_at = now()
+      WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+        AND generation_id = ${generationId} AND event_cursor = ${eventCursor}::bigint
+        AND sink_id = ${sinkId} AND status = 'dead_lettered'
+      RETURNING *
+    `;
+    if (!row) throw new NotFoundError("Dead-lettered outbound event delivery");
+    return mapOutboundEventDelivery(row);
+  }
+
   async listToolCalls(scope: UserScope, generationId: string): Promise<ToolCallData[]> {
     await this.assertReady();
     const rows = await this.#sql<ToolCallRow[]>`
@@ -2038,6 +2203,26 @@ function mapEvent(row: GenerationEventRow): GenerationEvent {
     data: row.data,
     createdAt: row.created_at,
   } as GenerationEvent;
+}
+
+function mapOutboundEventDelivery(row: OutboundEventDeliveryRow): OutboundEventDeliveryData {
+  const eventCursor = String(row.event_cursor);
+  return {
+    generationId: row.generation_id,
+    eventCursor,
+    eventId: `${row.generation_id}:${eventCursor}`,
+    sinkId: row.sink_id,
+    status: row.status,
+    attemptCount: row.attempt_count,
+    maxAttempts: row.max_attempts,
+    nextAttemptAt: row.next_attempt_at,
+    leaseExpiresAt: row.lease_expires_at,
+    lastError: row.last_error,
+    deliveredAt: row.delivered_at,
+    deadLetteredAt: row.dead_lettered_at,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
 }
 
 function mapTask(row: GenerationTaskRow): GenerationTaskData {

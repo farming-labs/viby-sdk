@@ -1,4 +1,5 @@
 import type { SandboxCommandProposedAction } from "./sandbox.js";
+import type { OutboundEventDeliveryData } from "./outbound-events.js";
 
 export class VibyError extends Error {
   readonly code: string;
@@ -113,12 +114,14 @@ export class OutboundEventDeliveryError extends VibyError {
   readonly eventId: string;
   readonly eventCursor: string;
   readonly lastDeliveredCursor: string;
+  readonly delivery: OutboundEventDeliveryData | null;
 
   constructor(
     sinkId: string,
     eventId: string,
     eventCursor: string,
     lastDeliveredCursor: string,
+    delivery: OutboundEventDeliveryData | null,
     options?: ErrorOptions,
   ) {
     super("outbound_event_delivery_failed", `Outbound event delivery to ${sinkId} stopped at ${eventId}.`, options);
@@ -127,6 +130,7 @@ export class OutboundEventDeliveryError extends VibyError {
     this.eventId = eventId;
     this.eventCursor = eventCursor;
     this.lastDeliveredCursor = lastDeliveredCursor;
+    this.delivery = delivery;
   }
 }
 

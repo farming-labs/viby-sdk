@@ -29,6 +29,7 @@ import type {
   AppendGenerationEventRecord,
   ChatPageCursor,
   ClaimGenerationAttemptRecord,
+  ClaimOutboundEventDeliveryRecord,
   CompleteGenerationRecord,
   CompleteToolCallRecord,
   CreateAttemptRecord,
@@ -39,12 +40,14 @@ import type {
   CreatedToolCall,
   CreateSourceVersionRecord,
   ForkVersionRecord,
+  FailOutboundEventDeliveryRecord,
   FailToolCallRecord,
   GenerationWorkerLease,
   ImportedChat,
   ImportChatRecord,
   MessagePageCursor,
   PauseGenerationRecord,
+  OutboundEventDeliveryClaim,
   Repository,
   RepositoryPage,
   ResolveGenerationTaskRecord,
@@ -56,6 +59,10 @@ import { createId } from "../../src/utils.js";
 import { ConfigurationError, GenerationStateError, NotFoundError } from "../../src/errors.js";
 import { normalizeAndRedactToolPayload } from "../../src/redaction.js";
 import type { GenerationCostData } from "../../src/telemetry.js";
+import type {
+  OutboundEventDeliveryData,
+  OutboundEventDeliveryStatus,
+} from "../../src/outbound-events.js";
 
 interface ScopedRecord {
   tenantId: string;
@@ -77,6 +84,11 @@ interface MemoryMessageInput {
   readonly createdAt: Date;
 }
 
+type MemoryOutboundEventDelivery = OutboundEventDeliveryData & ScopedRecord & {
+  leaseToken: string | null;
+  leaseExpiresAt: Date | null;
+};
+
 export class MemoryRepository implements Repository {
   readonly chats = new Map<string, MemoryChatRecord>();
   readonly generations = new Map<string, GenerationData & ScopedRecord>();
@@ -89,6 +101,7 @@ export class MemoryRepository implements Repository {
   readonly tasks = new Map<string, GenerationTaskData & ScopedRecord>();
   readonly skills = new Map<string, ResolvedSkill[]>();
   readonly sandboxLeases = new Map<string, SandboxLeaseData & ScopedRecord>();
+  readonly outboundDeliveries = new Map<string, MemoryOutboundEventDelivery>();
   readonly toolCalls = new Map<string, ToolCallData & ScopedRecord>();
   readonly workerLeaseTokens = new Map<string, string>();
   closed = false;
@@ -1087,6 +1100,174 @@ export class MemoryRepository implements Repository {
       .slice(0, limit);
   }
 
+  async claimOutboundEventDelivery(
+    scope: UserScope,
+    input: ClaimOutboundEventDeliveryRecord,
+  ): Promise<OutboundEventDeliveryClaim | null> {
+    this.#requireGeneration(scope, input.generationId);
+    const event = this.events.find((candidate) => (
+      inScope(candidate, scope)
+      && candidate.generationId === input.generationId
+      && candidate.cursor === input.eventCursor
+    ));
+    if (!event) return null;
+    const key = outboundDeliveryKey(input.generationId, input.eventCursor, input.sinkId);
+    const now = new Date();
+    const existing = this.outboundDeliveries.get(key);
+    const delivery: MemoryOutboundEventDelivery = existing ?? {
+      generationId: input.generationId,
+      eventCursor: input.eventCursor,
+      eventId: `${input.generationId}:${input.eventCursor}`,
+      sinkId: input.sinkId,
+      status: "pending",
+      attemptCount: 0,
+      maxAttempts: input.maxAttempts,
+      nextAttemptAt: now,
+      leaseExpiresAt: null,
+      lastError: null,
+      deliveredAt: null,
+      deadLetteredAt: null,
+      createdAt: now,
+      updatedAt: now,
+      leaseToken: null,
+      ...scope,
+    };
+    const claimable = delivery.attemptCount < delivery.maxAttempts && (
+      (delivery.status === "pending" && delivery.nextAttemptAt <= now)
+      || (delivery.status === "delivering" && delivery.leaseExpiresAt !== null
+        && delivery.leaseExpiresAt <= now)
+    );
+    if (!claimable) {
+      if (!existing) this.outboundDeliveries.set(key, delivery);
+      return null;
+    }
+    const claimed: MemoryOutboundEventDelivery = {
+      ...delivery,
+      status: "delivering",
+      attemptCount: delivery.attemptCount + 1,
+      leaseToken: input.leaseToken,
+      leaseExpiresAt: new Date(now.getTime() + input.leaseMs),
+      updatedAt: now,
+    };
+    this.outboundDeliveries.set(key, claimed);
+    return { delivery: publicOutboundDelivery(claimed), leaseToken: input.leaseToken };
+  }
+
+  async getOutboundEventDelivery(
+    scope: UserScope,
+    generationId: string,
+    eventCursor: string,
+    sinkId: string,
+  ): Promise<OutboundEventDeliveryData | null> {
+    const delivery = this.outboundDeliveries.get(
+      outboundDeliveryKey(generationId, eventCursor, sinkId),
+    );
+    return delivery && inScope(delivery, scope) ? publicOutboundDelivery(delivery) : null;
+  }
+
+  async completeOutboundEventDelivery(
+    scope: UserScope,
+    claim: OutboundEventDeliveryClaim,
+    deliveredAt: Date,
+  ): Promise<OutboundEventDeliveryData> {
+    const key = outboundDeliveryKey(
+      claim.delivery.generationId,
+      claim.delivery.eventCursor,
+      claim.delivery.sinkId,
+    );
+    const delivery = this.outboundDeliveries.get(key);
+    if (
+      !delivery
+      || !inScope(delivery, scope)
+      || delivery.status !== "delivering"
+      || delivery.leaseToken !== claim.leaseToken
+    ) throw new GenerationStateError(claim.delivery.generationId, "Outbound event delivery lease is no longer active.");
+    const completed: MemoryOutboundEventDelivery = {
+      ...delivery,
+      status: "delivered",
+      lastError: null,
+      deliveredAt,
+      leaseToken: null,
+      leaseExpiresAt: null,
+      updatedAt: new Date(),
+    };
+    this.outboundDeliveries.set(key, completed);
+    return publicOutboundDelivery(completed);
+  }
+
+  async failOutboundEventDelivery(
+    scope: UserScope,
+    input: FailOutboundEventDeliveryRecord,
+  ): Promise<OutboundEventDeliveryData> {
+    const key = outboundDeliveryKey(input.generationId, input.eventCursor, input.sinkId);
+    const delivery = this.outboundDeliveries.get(key);
+    if (
+      !delivery
+      || !inScope(delivery, scope)
+      || delivery.status !== "delivering"
+      || delivery.leaseToken !== input.leaseToken
+    ) throw new GenerationStateError(input.generationId, "Outbound event delivery lease is no longer active.");
+    const now = new Date();
+    const deadLettered = delivery.attemptCount >= delivery.maxAttempts;
+    const failed: MemoryOutboundEventDelivery = {
+      ...delivery,
+      status: deadLettered ? "dead_lettered" : "pending",
+      nextAttemptAt: new Date(now.getTime() + input.retryDelayMs),
+      lastError: input.error,
+      deadLetteredAt: deadLettered ? now : null,
+      leaseToken: null,
+      leaseExpiresAt: null,
+      updatedAt: now,
+    };
+    this.outboundDeliveries.set(key, failed);
+    return publicOutboundDelivery(failed);
+  }
+
+  async listOutboundEventDeliveries(
+    scope: UserScope,
+    generationId: string,
+    sinkId: string,
+    status?: OutboundEventDeliveryStatus,
+  ): Promise<OutboundEventDeliveryData[]> {
+    this.#requireGeneration(scope, generationId);
+    return [...this.outboundDeliveries.values()]
+      .filter((delivery) => (
+        inScope(delivery, scope)
+        && delivery.generationId === generationId
+        && delivery.sinkId === sinkId
+        && (status === undefined || delivery.status === status)
+      ))
+      .sort((left, right) => Number(left.eventCursor) - Number(right.eventCursor))
+      .map(publicOutboundDelivery);
+  }
+
+  async redriveOutboundEventDelivery(
+    scope: UserScope,
+    generationId: string,
+    eventCursor: string,
+    sinkId: string,
+  ): Promise<OutboundEventDeliveryData> {
+    const key = outboundDeliveryKey(generationId, eventCursor, sinkId);
+    const delivery = this.outboundDeliveries.get(key);
+    if (!delivery || !inScope(delivery, scope) || delivery.status !== "dead_lettered") {
+      throw new NotFoundError("Dead-lettered outbound event delivery");
+    }
+    const now = new Date();
+    const pending: MemoryOutboundEventDelivery = {
+      ...delivery,
+      status: "pending",
+      attemptCount: 0,
+      nextAttemptAt: now,
+      lastError: null,
+      deadLetteredAt: null,
+      leaseToken: null,
+      leaseExpiresAt: null,
+      updatedAt: now,
+    };
+    this.outboundDeliveries.set(key, pending);
+    return publicOutboundDelivery(pending);
+  }
+
   async listGenerationTasks(
     scope: UserScope,
     generationId: string,
@@ -1374,5 +1555,34 @@ function addCost(
   return {
     amountMicros: previous.amountMicros + current.amountMicros,
     currency: current.currency,
+  };
+}
+
+function outboundDeliveryKey(
+  generationId: string,
+  eventCursor: string,
+  sinkId: string,
+): string {
+  return `${generationId}:${eventCursor}:${sinkId}`;
+}
+
+function publicOutboundDelivery(
+  delivery: MemoryOutboundEventDelivery,
+): OutboundEventDeliveryData {
+  return {
+    generationId: delivery.generationId,
+    eventCursor: delivery.eventCursor,
+    eventId: delivery.eventId,
+    sinkId: delivery.sinkId,
+    status: delivery.status,
+    attemptCount: delivery.attemptCount,
+    maxAttempts: delivery.maxAttempts,
+    nextAttemptAt: delivery.nextAttemptAt,
+    leaseExpiresAt: delivery.leaseExpiresAt,
+    lastError: delivery.lastError,
+    deliveredAt: delivery.deliveredAt,
+    deadLetteredAt: delivery.deadLetteredAt,
+    createdAt: delivery.createdAt,
+    updatedAt: delivery.updatedAt,
   };
 }

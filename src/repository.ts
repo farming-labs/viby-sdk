@@ -26,6 +26,10 @@ import type {
 } from "./types.js";
 import type { GenerationCostData } from "./telemetry.js";
 import type {
+  OutboundEventDeliveryData,
+  OutboundEventDeliveryStatus,
+} from "./outbound-events.js";
+import type {
   CreateSandboxLeaseRecord,
   SandboxLeaseData,
   SandboxLeaseStatus,
@@ -228,6 +232,29 @@ export interface GenerationWorkerLease {
   readonly expiresAt: Date;
 }
 
+export interface ClaimOutboundEventDeliveryRecord {
+  readonly generationId: string;
+  readonly eventCursor: string;
+  readonly sinkId: string;
+  readonly leaseToken: string;
+  readonly leaseMs: number;
+  readonly maxAttempts: number;
+}
+
+export interface OutboundEventDeliveryClaim {
+  readonly delivery: OutboundEventDeliveryData;
+  readonly leaseToken: string;
+}
+
+export interface FailOutboundEventDeliveryRecord {
+  readonly generationId: string;
+  readonly eventCursor: string;
+  readonly sinkId: string;
+  readonly leaseToken: string;
+  readonly error: string;
+  readonly retryDelayMs: number;
+}
+
 export interface Repository {
   assertReady(): Promise<void>;
   close(): Promise<void>;
@@ -344,6 +371,37 @@ export interface Repository {
     after: string,
     limit: number,
   ): Promise<GenerationEvent[]>;
+  claimOutboundEventDelivery(
+    scope: UserScope,
+    input: ClaimOutboundEventDeliveryRecord,
+  ): Promise<OutboundEventDeliveryClaim | null>;
+  getOutboundEventDelivery(
+    scope: UserScope,
+    generationId: string,
+    eventCursor: string,
+    sinkId: string,
+  ): Promise<OutboundEventDeliveryData | null>;
+  completeOutboundEventDelivery(
+    scope: UserScope,
+    claim: OutboundEventDeliveryClaim,
+    deliveredAt: Date,
+  ): Promise<OutboundEventDeliveryData>;
+  failOutboundEventDelivery(
+    scope: UserScope,
+    input: FailOutboundEventDeliveryRecord,
+  ): Promise<OutboundEventDeliveryData>;
+  listOutboundEventDeliveries(
+    scope: UserScope,
+    generationId: string,
+    sinkId: string,
+    status?: OutboundEventDeliveryStatus,
+  ): Promise<OutboundEventDeliveryData[]>;
+  redriveOutboundEventDelivery(
+    scope: UserScope,
+    generationId: string,
+    eventCursor: string,
+    sinkId: string,
+  ): Promise<OutboundEventDeliveryData>;
   listGenerationTasks(scope: UserScope, generationId: string): Promise<GenerationTaskData[]>;
   listToolCalls(scope: UserScope, generationId: string): Promise<ToolCallData[]>;
   getVersionByGeneration<Framework extends FrameworkId>(

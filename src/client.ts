@@ -100,7 +100,10 @@ import {
 import { normalizeChatMetadata } from "./metadata.js";
 import { SandboxRegistry, type SandboxSession } from "./sandbox.js";
 import type {
+  OutboundEventDeliveryData,
   OutboundEventReceipt,
+  OutboundEventRetryPolicy,
+  OutboundEventDeliveryStatus,
   OutboundEventSink,
 } from "./outbound-events.js";
 import {
@@ -126,16 +129,34 @@ const DEFAULT_WORKER_HEARTBEAT_MS = 10_000;
 const DEFAULT_WORKER_POLL_INTERVAL_MS = 500;
 const DEFAULT_DELETED_CHAT_RETENTION_MS = 30 * 24 * 60 * 60 * 1_000;
 const MAX_DELETED_CHAT_RETENTION_MS = 10 * 365 * 24 * 60 * 60 * 1_000;
+const DEFAULT_OUTBOUND_MAX_ATTEMPTS = 5;
+const DEFAULT_OUTBOUND_INITIAL_DELAY_MS = 1_000;
+const DEFAULT_OUTBOUND_MAX_DELAY_MS = 60_000;
+const DEFAULT_OUTBOUND_MULTIPLIER = 2;
+const DEFAULT_OUTBOUND_LEASE_MS = 30_000;
 
 export interface OutboundEventDeliveryOptions extends GenerationEventOptions {
   readonly sink: string;
   readonly signal?: AbortSignal;
+  readonly retry?: OutboundEventRetryPolicy;
 }
 
 export interface OutboundEventDeliveryPage {
   readonly deliveries: readonly OutboundEventReceipt[];
+  readonly deadLetters: readonly OutboundEventDeliveryData[];
   readonly cursor: string;
   readonly hasMore: boolean;
+  readonly retryAt: Date | null;
+}
+
+export interface OutboundEventDeliveryListOptions {
+  readonly sink: string;
+  readonly status?: OutboundEventDeliveryStatus;
+}
+
+export interface OutboundEventRedriveInput {
+  readonly sink: string;
+  readonly cursor: string;
 }
 
 export interface GenerationWorkerOptions {
@@ -800,38 +821,139 @@ export class Generation<Framework extends FrameworkId = FrameworkId> {
     const sinkId = assertIdentifier(options.sink, "Outbound event sink id");
     const sink = this.#dependencies.eventSinks.get(sinkId);
     if (!sink) throw new ConfigurationError(`Outbound event sink is not configured: ${sinkId}`);
+    const retry = normalizeOutboundRetryPolicy(options.retry);
     const after = normalizeCursor(options.after);
     const page = await this.events({
       after,
       ...(options.limit === undefined ? {} : { limit: options.limit }),
     });
     const deliveries: OutboundEventReceipt[] = [];
+    const deadLetters: OutboundEventDeliveryData[] = [];
     let cursor = after;
+    let retryAt: Date | null = null;
     for (const event of page.events) {
       options.signal?.throwIfAborted();
+      const claim = await this.#dependencies.repository.claimOutboundEventDelivery(
+        this.#dependencies.scope,
+        {
+          generationId: this.id,
+          eventCursor: event.cursor,
+          sinkId,
+          leaseToken: createId(),
+          leaseMs: retry.leaseMs,
+          maxAttempts: retry.maxAttempts,
+        },
+      );
+      if (!claim) {
+        const existing = await this.#dependencies.repository.getOutboundEventDelivery(
+          this.#dependencies.scope,
+          this.id,
+          event.cursor,
+          sinkId,
+        );
+        if (!existing) {
+          throw new GenerationStateError(this.id, `Outbound event ${event.cursor} could not be claimed.`);
+        }
+        if (existing.status === "delivered") {
+          cursor = event.cursor;
+          continue;
+        }
+        if (existing.status === "dead_lettered") {
+          deadLetters.push(existing);
+          cursor = event.cursor;
+          continue;
+        }
+        retryAt = existing.status === "delivering"
+          ? existing.leaseExpiresAt
+          : existing.nextAttemptAt;
+        break;
+      }
       try {
-        deliveries.push(await sink.deliver(event, {
+        const receipt = await sink.deliver(event, {
           ...this.#dependencies.scope,
           chatId: this.chatId,
           generationId: this.id,
           ...(options.signal ? { signal: options.signal } : {}),
-        }));
+        });
+        await this.#dependencies.repository.completeOutboundEventDelivery(
+          this.#dependencies.scope,
+          claim,
+          receipt.deliveredAt,
+        );
+        deliveries.push(receipt);
         cursor = event.cursor;
       } catch (error) {
+        let failed: OutboundEventDeliveryData | null = null;
+        try {
+          failed = await this.#dependencies.repository.failOutboundEventDelivery(
+            this.#dependencies.scope,
+            {
+              generationId: this.id,
+              eventCursor: event.cursor,
+              sinkId,
+              leaseToken: claim.leaseToken,
+              error: errorMessage(error),
+              retryDelayMs: outboundRetryDelay(retry, claim.delivery.attemptCount),
+            },
+          );
+        } catch {
+          failed = await this.#dependencies.repository.getOutboundEventDelivery(
+            this.#dependencies.scope,
+            this.id,
+            event.cursor,
+            sinkId,
+          ).catch(() => null);
+        }
         throw new OutboundEventDeliveryError(
           sink.id,
           `${this.id}:${event.cursor}`,
           event.cursor,
           cursor,
+          failed,
           { cause: error },
         );
       }
     }
     return Object.freeze({
       deliveries: Object.freeze(deliveries),
+      deadLetters: Object.freeze(deadLetters),
       cursor,
-      hasMore: page.events.length === (options.limit ?? DEFAULT_EVENT_LIMIT),
+      hasMore: retryAt !== null || page.events.length === (options.limit ?? DEFAULT_EVENT_LIMIT),
+      retryAt,
     });
+  }
+
+  async outboundDeliveries(
+    options: OutboundEventDeliveryListOptions,
+  ): Promise<readonly OutboundEventDeliveryData[]> {
+    if (!options || typeof options !== "object") {
+      throw new ConfigurationError("Outbound event delivery list options must be an object.");
+    }
+    const sinkId = assertIdentifier(options.sink, "Outbound event sink id");
+    normalizeOutboundDeliveryStatus(options.status);
+    return this.#dependencies.repository.listOutboundEventDeliveries(
+      this.#dependencies.scope,
+      this.id,
+      sinkId,
+      options.status,
+    );
+  }
+
+  async redriveOutboundEvent(
+    input: OutboundEventRedriveInput,
+  ): Promise<OutboundEventDeliveryData> {
+    if (!input || typeof input !== "object") {
+      throw new ConfigurationError("Outbound event redrive input must be an object.");
+    }
+    const sinkId = assertIdentifier(input.sink, "Outbound event sink id");
+    const cursor = normalizeCursor(input.cursor);
+    if (cursor === "0") throw new ConfigurationError("A persisted event cursor is required.");
+    return this.#dependencies.repository.redriveOutboundEventDelivery(
+      this.#dependencies.scope,
+      this.id,
+      cursor,
+      sinkId,
+    );
   }
 
   async *stream(options: GenerationStreamOptions = {}): AsyncGenerator<GenerationEvent> {
@@ -2149,6 +2271,62 @@ function normalizeOutboundEventSinks(
     sinks.set(id, sink);
   }
   return sinks;
+}
+
+interface NormalizedOutboundRetryPolicy {
+  readonly maxAttempts: number;
+  readonly initialDelayMs: number;
+  readonly maxDelayMs: number;
+  readonly multiplier: number;
+  readonly leaseMs: number;
+}
+
+function normalizeOutboundRetryPolicy(
+  value: OutboundEventRetryPolicy | undefined,
+): NormalizedOutboundRetryPolicy {
+  if (value !== undefined && (!value || typeof value !== "object" || Array.isArray(value))) {
+    throw new ConfigurationError("Outbound event retry policy must be an object.");
+  }
+  const maxAttempts = value?.maxAttempts ?? DEFAULT_OUTBOUND_MAX_ATTEMPTS;
+  const initialDelayMs = value?.initialDelayMs ?? DEFAULT_OUTBOUND_INITIAL_DELAY_MS;
+  const maxDelayMs = value?.maxDelayMs ?? DEFAULT_OUTBOUND_MAX_DELAY_MS;
+  const multiplier = value?.multiplier ?? DEFAULT_OUTBOUND_MULTIPLIER;
+  const leaseMs = value?.leaseMs ?? DEFAULT_OUTBOUND_LEASE_MS;
+  if (!Number.isInteger(maxAttempts) || maxAttempts < 1 || maxAttempts > 100) {
+    throw new ConfigurationError("Outbound event maxAttempts must be an integer between 1 and 100.");
+  }
+  if (!Number.isInteger(initialDelayMs) || initialDelayMs < 0 || initialDelayMs > 86_400_000) {
+    throw new ConfigurationError("Outbound event initialDelayMs must be an integer between 0 and 86400000.");
+  }
+  if (!Number.isInteger(maxDelayMs) || maxDelayMs < initialDelayMs || maxDelayMs > 86_400_000) {
+    throw new ConfigurationError("Outbound event maxDelayMs must be an integer between initialDelayMs and 86400000.");
+  }
+  if (!Number.isFinite(multiplier) || multiplier < 1 || multiplier > 10) {
+    throw new ConfigurationError("Outbound event retry multiplier must be between 1 and 10.");
+  }
+  if (!Number.isInteger(leaseMs) || leaseMs < 100 || leaseMs > 900_000) {
+    throw new ConfigurationError("Outbound event leaseMs must be an integer between 100 and 900000.");
+  }
+  return { maxAttempts, initialDelayMs, maxDelayMs, multiplier, leaseMs };
+}
+
+function outboundRetryDelay(policy: NormalizedOutboundRetryPolicy, attemptCount: number): number {
+  return Math.min(
+    policy.maxDelayMs,
+    Math.round(policy.initialDelayMs * policy.multiplier ** Math.max(0, attemptCount - 1)),
+  );
+}
+
+function normalizeOutboundDeliveryStatus(
+  value: OutboundEventDeliveryStatus | undefined,
+): void {
+  if (
+    value !== undefined
+    && value !== "pending"
+    && value !== "delivering"
+    && value !== "delivered"
+    && value !== "dead_lettered"
+  ) throw new ConfigurationError("Outbound event delivery status is invalid.");
 }
 
 function normalizeTelemetry(value: VibyTelemetry | undefined): VibyTelemetry | undefined {
