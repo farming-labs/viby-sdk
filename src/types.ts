@@ -51,6 +51,7 @@ export type SkillGroups = {
 export interface VibyConfig<Framework extends FrameworkId = FrameworkId> {
   readonly framework: Framework;
   readonly model: LanguageModel;
+  readonly models?: Readonly<Record<string, LanguageModel>>;
   readonly skills?: SkillGroups;
   readonly sandbox?: SandboxAdapter;
   readonly sandboxPolicy?: SandboxCommandPolicy;
@@ -158,6 +159,11 @@ export interface ImportProjectInput {
 
 export interface GenerateInput {
   readonly prompt: string;
+  /** Stable alias from `VibyConfig.models`. Omit to use the default `model`. */
+  readonly model?: string;
+  readonly instructions?: string;
+  readonly skills?: SkillGroups;
+  readonly metadata?: ChatMetadata;
 }
 
 export type IterateInput = GenerateInput;
@@ -368,6 +374,7 @@ export interface GenerationData {
   readonly status: GenerationStatus;
   readonly modelProvider: string;
   readonly modelId: string;
+  readonly configuration: GenerationConfigurationData;
   readonly inputTokens: number | null;
   readonly outputTokens: number | null;
   readonly totalTokens: number | null;
@@ -376,6 +383,14 @@ export interface GenerationData {
   readonly createdAt: Date;
   readonly startedAt: Date | null;
   readonly completedAt: Date | null;
+}
+
+/** The exact, serializable request configuration stored with a durable generation. */
+export interface GenerationConfigurationData {
+  readonly model: string;
+  readonly instructions: string | null;
+  readonly skills: SkillGroups;
+  readonly metadata: ChatMetadata;
 }
 
 export interface GenerationAttemptData {

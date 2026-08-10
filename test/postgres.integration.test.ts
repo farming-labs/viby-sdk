@@ -95,11 +95,24 @@ test("persists a durable generation, iteration, events, and download in Postgres
   try {
     const user = viby.forUser(scope);
     const chat = await user.chats.create({ title: "Postgres integration" });
-    const generation = await chat.start({ prompt: "Build a durable Farm project" });
+    const generation = await chat.start({
+      prompt: "Build a durable Farm project",
+      instructions: "Use a compact product layout.",
+      skills: { design: [] },
+      metadata: { test: "postgres-generation-config" },
+    });
     const outcome = await generation.wait({ pollIntervalMs: 10 });
     assert.equal(outcome.status, "succeeded");
     if (outcome.status !== "succeeded") throw new Error("Expected a successful generation");
     assert.deepEqual(outcome.generation.cost, { amountMicros: 240, currency: "USD" });
+    assert.deepEqual(outcome.generation.configuration, {
+      model: "default",
+      instructions: "Use a compact product layout.",
+      skills: { design: [] },
+      metadata: { test: "postgres-generation-config" },
+    });
+    assert.equal(calls[0]?.instructions, "Use a compact product layout.");
+    assert.deepEqual(calls[0]?.metadata, { test: "postgres-generation-config" });
     assert.deepEqual((await generation.attempts())[0]?.cost, {
       amountMicros: 240,
       currency: "USD",

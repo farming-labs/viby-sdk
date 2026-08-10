@@ -542,6 +542,7 @@ function createAgentInstructions<Framework extends FrameworkId>(input: Generator
     "For a task outcome, title and summary must be null. Every output property is required.",
     "\nResolved skills:\n",
     skills,
+    input.instructions ? `\nGeneration-specific host instructions:\n${input.instructions}` : "",
   ].join("\n");
 }
 

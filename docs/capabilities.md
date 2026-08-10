@@ -59,6 +59,7 @@ Preview URLs exist only when the configured adapter exposes port URLs and the ho
 | HTTP streaming | `Last-Event-ID` parsing, standard SSE frames, request abort propagation, and Web `Response` headers |
 | Telemetry | provider-neutral hooks plus an OpenTelemetry-compatible tracer/meter adapter |
 | Cost attribution | host-defined currency/credit calculator, immutable attempt cost, cumulative generation cost, and usage parts |
+| Generation configuration | durable per-request model aliases, host instructions, categorized skill overlays, and JSON metadata |
 
 Authentication, OAuth connection registries, event scheduling, and transport infrastructure remain host-owned. Viby stores delivery state but does not run a hidden queue or scheduler.
 

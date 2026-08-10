@@ -9,6 +9,7 @@ import type {
   ChatMetadata,
   FrameworkId,
   GenerationAttemptData,
+  GenerationConfigurationData,
   GenerationAttemptReason,
   GenerationAttemptStatus,
   GenerationData,
@@ -99,6 +100,7 @@ interface GenerationRow {
   status: GenerationStatus;
   model_provider: string;
   model_id: string;
+  configuration: GenerationConfigurationData;
   input_tokens: number | null;
   output_tokens: number | null;
   total_tokens: number | null;
@@ -727,10 +729,13 @@ export class PostgresRepository implements Repository {
       const [generation] = await sql<GenerationRow[]>`
         INSERT INTO viby.generations (
           id, tenant_id, user_id, chat_id, base_version_id, active_attempt_id,
-          attempt_count, prompt, status, model_provider, model_id
+          attempt_count, prompt, status, model_provider, model_id, configuration
         )
         SELECT ${input.id}, ${scope.tenantId}, ${scope.userId}, id, ${input.baseVersionId},
-          ${input.attemptId}, 1, ${input.prompt}, 'queued', ${input.modelProvider}, ${input.modelId}
+          ${input.attemptId}, 1, ${input.prompt}, 'queued', ${input.modelProvider}, ${input.modelId},
+          ${sql.json(JSON.parse(JSON.stringify(
+            input.configuration ?? defaultGenerationConfiguration(),
+          )))}
         FROM viby.chats
         WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId} AND id = ${input.chatId}
           AND deleted_at IS NULL
@@ -834,6 +839,10 @@ export class PostgresRepository implements Repository {
     input: ClaimGenerationAttemptRecord<Framework>,
   ): Promise<GenerationWorkerLease | null> {
     await this.assertReady();
+    const models = input.models ?? [{ provider: input.modelProvider, id: input.modelId }];
+    if (models.length === 0) return null;
+    const modelProviders = models.map((model) => model.provider);
+    const modelIds = models.map((model) => model.id);
     return this.#sql.begin(async (sql) => {
       const candidates = input.attemptId
         ? await sql<GenerationAttemptClaimRow[]>`
@@ -847,8 +856,9 @@ export class PostgresRepository implements Repository {
               AND attempt.status IN ('queued', 'running')
               AND (attempt.lease_expires_at IS NULL OR attempt.lease_expires_at <= now())
               AND chat.framework = ${input.framework}
-              AND generation.model_provider = ${input.modelProvider}
-              AND generation.model_id = ${input.modelId}
+              AND (generation.model_provider, generation.model_id) IN (
+                SELECT * FROM unnest(${modelProviders}::text[], ${modelIds}::text[])
+              )
             FOR UPDATE OF attempt, generation SKIP LOCKED
             LIMIT 1
           `
@@ -862,8 +872,9 @@ export class PostgresRepository implements Repository {
               AND attempt.status IN ('queued', 'running')
               AND (attempt.lease_expires_at IS NULL OR attempt.lease_expires_at <= now())
               AND chat.framework = ${input.framework}
-              AND generation.model_provider = ${input.modelProvider}
-              AND generation.model_id = ${input.modelId}
+              AND (generation.model_provider, generation.model_id) IN (
+                SELECT * FROM unnest(${modelProviders}::text[], ${modelIds}::text[])
+              )
             ORDER BY attempt.created_at, attempt.id
             FOR UPDATE OF attempt, generation SKIP LOCKED
             LIMIT 1
@@ -2136,6 +2147,10 @@ function createPage<Item>(items: Item[], limit: number): RepositoryPage<Item> {
   return { items: items.slice(0, limit), hasMore: items.length > limit };
 }
 
+function defaultGenerationConfiguration(): GenerationConfigurationData {
+  return { model: "default", instructions: null, skills: {}, metadata: {} };
+}
+
 function mapGeneration(row: GenerationRow): GenerationData {
   return {
     id: row.id,
@@ -2147,6 +2162,7 @@ function mapGeneration(row: GenerationRow): GenerationData {
     status: row.status,
     modelProvider: row.model_provider,
     modelId: row.model_id,
+    configuration: row.configuration ?? defaultGenerationConfiguration(),
     inputTokens: row.input_tokens,
     outputTokens: row.output_tokens,
     totalTokens: row.total_tokens,

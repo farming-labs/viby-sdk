@@ -59,9 +59,9 @@ The official v2 documentation organizes the API around these resources and endpo
 | Delete a chat | Delete Chat | `chat.delete`, time-bounded restore, and explicit batched purge | Shipped |
 | Stop work | stop/cancel active agent work | `generation.cancel` | Shipped |
 | Resume interrupted work | Resume Chat Stream and async task continuation | event cursor plus `generation.resume` | Shipped |
-| Per-request system prompt | `systemPrompt` | generation-scoped instruction/skill override | Planned |
-| Per-request model options | `modelConfiguration` | generation-scoped AI SDK settings | Planned |
-| Per-request skills | remote, memory, and project skills | configured categorized skills and stored snapshots | Partial |
+| Per-request system prompt | `systemPrompt` | durable generation-scoped instructions | Shipped |
+| Per-request model options | `modelConfiguration` | stable configured model aliases with persisted provider/model identity | Shipped |
+| Per-request skills | remote, memory, and project skills | durable categorized overrides plus stored resolved snapshots | Shipped |
 | Attachments and image generation | attachment URLs and image option | portable attachment snapshots and multimodal input | Planned |
 
 Viby does not copy v0's privacy enum, author identity, account URLs, or hosted write-permission field. The embedding application already owns those decisions.

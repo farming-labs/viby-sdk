@@ -12,6 +12,7 @@ import type {
   ImportProjectInput,
   ImportProjectSource,
   GenerationAttemptData,
+  GenerationConfigurationData,
   GenerationData,
   GenerationEvent,
   GenerationEventDataMap,
@@ -32,6 +33,8 @@ import type {
   PurgeDeletedChatsInput,
   ResolveGenerationTaskInput,
   RestoreVersionInput,
+  SkillGroups,
+  SkillReference,
   SourceChange,
   ToolCallData,
   UserScope,
@@ -203,7 +206,67 @@ export type GenerationOutcome<Framework extends FrameworkId = FrameworkId> =
 interface ClientDependencies<Framework extends FrameworkId> {
   readonly repository: Repository;
   readonly generator: ProjectGenerator<Framework>;
+  readonly generators?: Readonly<Record<string, ProjectGenerator<Framework>>>;
   readonly skillResolver: SkillResolver;
+}
+
+interface GenerationModelBinding<Framework extends FrameworkId> {
+  readonly alias: string;
+  readonly provider: string;
+  readonly id: string;
+  readonly generator: ProjectGenerator<Framework>;
+}
+
+class GenerationModelRegistry<Framework extends FrameworkId> {
+  readonly #bindings = new Map<string, GenerationModelBinding<Framework>>();
+
+  constructor(config: VibyConfig<Framework>, dependencies: ClientDependencies<Framework>) {
+    this.#add("default", config.model, dependencies.generator);
+    for (const [alias, model] of Object.entries(config.models ?? {})) {
+      if (alias === "default") {
+        throw new ConfigurationError("models.default is reserved for the top-level model.");
+      }
+      this.#add(alias, model, dependencies.generators?.[alias] ?? dependencies.generator);
+    }
+  }
+
+  get identities(): readonly { readonly provider: string; readonly id: string }[] {
+    const seen = new Set<string>();
+    return [...this.#bindings.values()].flatMap(({ provider, id }) => {
+      const key = `${provider}\u0000${id}`;
+      if (seen.has(key)) return [];
+      seen.add(key);
+      return [{ provider, id }];
+    });
+  }
+
+  resolve(alias = "default"): GenerationModelBinding<Framework> {
+    const normalized = assertModelAlias(alias);
+    const binding = this.#bindings.get(normalized);
+    if (!binding) {
+      throw new ConfigurationError(`Generation model alias is not configured: ${normalized}`);
+    }
+    return binding;
+  }
+
+  resolveGeneration(generation: GenerationData): GenerationModelBinding<Framework> {
+    const binding = this.resolve(generation.configuration.model);
+    if (binding.provider !== generation.modelProvider || binding.id !== generation.modelId) {
+      throw new ConfigurationError(
+        `Generation ${generation.id} model alias no longer resolves to ${generation.modelProvider}/${generation.modelId}.`,
+      );
+    }
+    return binding;
+  }
+
+  #add(alias: string, model: VibyConfig<Framework>["model"], generator: ProjectGenerator<Framework>): void {
+    const normalized = assertModelAlias(alias);
+    if (this.#bindings.has(normalized)) {
+      throw new ConfigurationError(`Generation model alias is duplicated: ${normalized}`);
+    }
+    const identity = languageModelIdentity(model);
+    this.#bindings.set(normalized, { alias: normalized, ...identity, generator });
+  }
 }
 
 export function createViby<const Framework extends FrameworkId>(
@@ -219,6 +282,9 @@ export function createViby<const Framework extends FrameworkId>(
   return createVibyWithDependencies(config, {
     repository: new PostgresRepository(databaseUrl),
     generator: new AgentProjectGenerator(config.model, config.agent),
+    generators: Object.fromEntries(Object.entries(config.models ?? {}).map(([alias, model]) => (
+      [alias, new AgentProjectGenerator(model, config.agent)]
+    ))),
     skillResolver: new SkillResolver(config.skills),
   });
 }
@@ -237,8 +303,8 @@ class VibyClient<Framework extends FrameworkId> implements Viby<Framework> {
   readonly framework: Framework;
   readonly #repository: Repository;
   readonly #skillResolver: SkillResolver;
-  readonly #modelProvider: string;
-  readonly #modelId: string;
+  readonly #models: GenerationModelRegistry<Framework>;
+  readonly #skills: SkillGroups;
   readonly #sandbox: SandboxAdapter | undefined;
   readonly #registry = new GenerationRunRegistry();
   readonly #sandboxes: SandboxRegistry;
@@ -258,22 +324,15 @@ class VibyClient<Framework extends FrameworkId> implements Viby<Framework> {
     this.#eventSinks = normalizeOutboundEventSinks(config.events);
     this.#sandboxes = new SandboxRegistry(this.#repository, config.sandboxPolicy);
     this.#skillResolver = dependencies.skillResolver;
-    if (typeof config.model === "string") {
-      this.#modelProvider = config.model.split("/", 1)[0] || "gateway";
-      this.#modelId = config.model;
-    } else {
-      this.#modelProvider = config.model.provider;
-      this.#modelId = config.model.modelId;
-    }
+    this.#models = new GenerationModelRegistry(config, dependencies);
+    this.#skills = normalizeSkillGroups(config.skills);
     this.#runner = new GenerationRunner({
       framework: this.framework,
       repository: this.#repository,
-      generator: dependencies.generator,
+      models: this.#models,
       skillResolver: this.#skillResolver,
       registry: this.#registry,
       automatic: normalizeGenerationExecution(config.generation) === "embedded",
-      modelProvider: this.#modelProvider,
-      modelId: this.#modelId,
       sandbox: this.#sandbox,
       sandboxes: this.#sandboxes,
       agent: normalizeAgentRunnerConfig(config.agent),
@@ -293,8 +352,8 @@ class VibyClient<Framework extends FrameworkId> implements Viby<Framework> {
       repository: this.#repository,
       runner: this.#runner,
       registry: this.#registry,
-      modelProvider: this.#modelProvider,
-      modelId: this.#modelId,
+      models: this.#models,
+      skills: this.#skills,
       sandbox: this.#sandbox,
       sandboxes: this.#sandboxes,
       deletedChatsMs: this.#deletedChatsMs,
@@ -396,8 +455,8 @@ interface ScopedDependencies<Framework extends FrameworkId> {
   readonly repository: Repository;
   readonly runner: GenerationRunner<Framework>;
   readonly registry: GenerationRunRegistry;
-  readonly modelProvider: string;
-  readonly modelId: string;
+  readonly models: GenerationModelRegistry<Framework>;
+  readonly skills: SkillGroups;
   readonly sandbox: SandboxAdapter | undefined;
   readonly sandboxes: SandboxRegistry;
   readonly deletedChatsMs: number | null;
@@ -723,6 +782,11 @@ export class Chat<Framework extends FrameworkId = FrameworkId> {
   ): Promise<Generation<Framework>> {
     await this.#assertActive();
     const prompt = assertPrompt(input.prompt);
+    const selected = normalizeGenerationConfiguration(
+      input,
+      this.#dependencies.skills,
+      this.#dependencies.models,
+    );
     const generationId = createId();
     const attemptId = createId();
     await this.#dependencies.repository.createGeneration(this.#dependencies.scope, {
@@ -731,8 +795,9 @@ export class Chat<Framework extends FrameworkId = FrameworkId> {
       chatId: this.id,
       baseVersionId: baseVersion?.id ?? null,
       prompt,
-      modelProvider: this.#dependencies.modelProvider,
-      modelId: this.#dependencies.modelId,
+      modelProvider: selected.model.provider,
+      modelId: selected.model.id,
+      configuration: selected.configuration,
     });
     this.#dependencies.runner.schedule(this.#dependencies.scope, generationId, attemptId);
     return new Generation(generationId, this.id, this.#dependencies);
@@ -1288,15 +1353,85 @@ function normalizeVersionSummary(value: string | undefined, fallback: string): s
   return summary;
 }
 
+function languageModelIdentity(model: VibyConfig["model"]): { provider: string; id: string } {
+  if (typeof model === "string") {
+    return { provider: model.split("/", 1)[0] || "gateway", id: model };
+  }
+  return { provider: model.provider, id: model.modelId };
+}
+
+function assertModelAlias(value: string): string {
+  const alias = value.trim();
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,99}$/.test(alias)) {
+    throw new ConfigurationError(
+      "Generation model aliases must contain 1-100 letters, numbers, dots, underscores, or hyphens.",
+    );
+  }
+  return alias;
+}
+
+function normalizeSkillGroups(value: SkillGroups | undefined): SkillGroups {
+  if (value === undefined) return {};
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new ConfigurationError("Generation skills must be a categorized object.");
+  }
+  const groups: Record<string, SkillGroups[string]> = {};
+  for (const [category, references] of Object.entries(value)) {
+    if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,99}$/.test(category)) {
+      throw new ConfigurationError(`Generation skill category is invalid: ${category}`);
+    }
+    if (!Array.isArray(references)) {
+      throw new ConfigurationError(`Generation skill category ${category} must be an array.`);
+    }
+    groups[category] = references.map((reference) => {
+      if (typeof reference === "string") return reference as SkillReference;
+      if (
+        !reference
+        || typeof reference !== "object"
+        || reference.source !== "file"
+        || typeof reference.path !== "string"
+        || reference.path.trim().length === 0
+      ) {
+        throw new ConfigurationError(`Generation skill reference in ${category} is invalid.`);
+      }
+      return { source: "file", path: reference.path } as const;
+    });
+  }
+  return groups;
+}
+
+function normalizeGenerationConfiguration<Framework extends FrameworkId>(
+  input: GenerateInput,
+  defaults: SkillGroups,
+  models: GenerationModelRegistry<Framework>,
+): { configuration: GenerationConfigurationData; model: GenerationModelBinding<Framework> } {
+  const model = models.resolve(input.model);
+  const instructions = input.instructions?.trim() || null;
+  if (instructions && instructions.length > 50_000) {
+    throw new ConfigurationError("Generation instructions cannot exceed 50,000 characters.");
+  }
+  const skills = {
+    ...defaults,
+    ...normalizeSkillGroups(input.skills),
+  };
+  return {
+    model,
+    configuration: {
+      model: model.alias,
+      instructions,
+      skills,
+      metadata: normalizeChatMetadata(input.metadata),
+    },
+  };
+}
+
 interface RunnerDependencies<Framework extends FrameworkId> {
   readonly framework: Framework;
   readonly repository: Repository;
-  readonly generator: ProjectGenerator<Framework>;
+  readonly models: GenerationModelRegistry<Framework>;
   readonly skillResolver: SkillResolver;
   readonly registry: GenerationRunRegistry;
   readonly automatic: boolean;
-  readonly modelProvider: string;
-  readonly modelId: string;
   readonly sandbox: SandboxAdapter | undefined;
   readonly sandboxes: SandboxRegistry;
   readonly agent: ReturnType<typeof normalizeAgentRunnerConfig>;
@@ -1362,8 +1497,9 @@ class GenerationRunner<Framework extends FrameworkId> {
       leaseToken: createId(),
       leaseMs: options.leaseMs,
       framework: this.#dependencies.framework,
-      modelProvider: this.#dependencies.modelProvider,
-      modelId: this.#dependencies.modelId,
+      modelProvider: this.#dependencies.models.identities[0]!.provider,
+      modelId: this.#dependencies.models.identities[0]!.id,
+      models: this.#dependencies.models.identities,
       ...(attemptId ? { attemptId } : {}),
     });
   }
@@ -1479,7 +1615,10 @@ class GenerationRunner<Framework extends FrameworkId> {
 
       let skills = await this.#dependencies.repository.getGenerationSkills(scope, generationId);
       if (skills === null) {
-        skills = await this.#dependencies.skillResolver.resolveForPrompt(generation.prompt);
+        skills = await this.#dependencies.skillResolver.resolveForPrompt(
+          generation.prompt,
+          generation.configuration.skills,
+        );
         await this.#dependencies.repository.attachGenerationSkills(
           scope,
           generationId,
@@ -1535,10 +1674,12 @@ class GenerationRunner<Framework extends FrameworkId> {
         );
       }
 
-      const output = await this.#dependencies.generator.generate(
+      const output = await this.#dependencies.models.resolveGeneration(generation).generator.generate(
         {
           framework: chat.framework,
           prompt: generation.prompt,
+          instructions: generation.configuration.instructions,
+          metadata: generation.configuration.metadata,
           messages: messages.filter((message) => message.generationId !== generationId),
           previousFiles,
           skills,

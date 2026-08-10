@@ -428,6 +428,12 @@ export class MemoryRepository implements Repository {
       status: "queued",
       modelProvider: input.modelProvider,
       modelId: input.modelId,
+      configuration: input.configuration ?? {
+        model: "default",
+        instructions: null,
+        skills: {},
+        metadata: {},
+      },
       inputTokens: null,
       outputTokens: null,
       totalTokens: null,
@@ -521,7 +527,10 @@ export class MemoryRepository implements Repository {
         const generation = this.generations.get(attempt.generationId);
         if (!generation || generation.activeAttemptId !== attempt.id) return false;
         if (generation.status !== "queued" && generation.status !== "running") return false;
-        if (generation.modelProvider !== input.modelProvider || generation.modelId !== input.modelId) {
+        const models = input.models ?? [{ provider: input.modelProvider, id: input.modelId }];
+        if (!models.some((model) => (
+          generation.modelProvider === model.provider && generation.modelId === model.id
+        ))) {
           return false;
         }
         const chat = this.chats.get(generation.chatId);
