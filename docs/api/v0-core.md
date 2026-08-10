@@ -136,6 +136,8 @@ Capability discovery, the adapter conformance suite, background processes, readi
 
 Generation-scoped model/skill configuration, durable multimodal input snapshots and outputs, and immutable design evaluation results are shipped.
 
+Persistence is also provider-neutral: `DATABASE_URL` selects the built-in PostgreSQL implementation, while `persistence` accepts a host-owned durable adapter verified by the reusable conformance suite. Custom adapters retain responsibility for their own transactions, migrations, credentials, and binary-store integration.
+
 1. Browser/screenshot tools behind a portable tool contract.
 2. Explicit Git and deployment adapters after the portable generation workflow is complete.
 

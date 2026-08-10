@@ -13,6 +13,7 @@ export { DownloadArtifact } from "./download.js";
 export { AgentWorkspace } from "./agent-workspace.js";
 export { AgentProjectGenerator } from "./agent-runner.js";
 export { defineGenerationEngine } from "./generation-engine.js";
+export type { PersistenceAdapter } from "./persistence.js";
 export type {
   ArtifactKind,
   ArtifactReference,

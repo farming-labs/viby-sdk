@@ -10,7 +10,7 @@ This inventory describes the current `@viby/sdk` source on `main`. “Shipped”
 | Model selection | any AI SDK `LanguageModel` | host configures and owns provider credentials |
 | Generation engine | public provider-neutral engine plus conformance suite | host may replace the AI SDK shortcut with any agent, model runtime, or orchestrator |
 | Categorized skills | skills.sh slugs and `skillRead(...)` directories | host selects; Viby resolves and snapshots exact content |
-| Durable database | `DATABASE_URL`, explicit `viby db migrate` | host provisions Postgres; Viby owns its schema and migrations |
+| Durable persistence | provider-neutral `PersistenceAdapter` and conformance suite; `DATABASE_URL` remains the PostgreSQL default | host may provide another durable implementation and owns its credentials and migrations |
 | Binary artifact storage | provider-neutral `ArtifactStore`, conformance suite, and filesystem reference adapter | host selects storage and owns its credentials; PostgreSQL keeps metadata and opaque references |
 | Tenant isolation | `viby.forUser({ tenantId, userId })` | host authenticates; every Viby query enforces both IDs |
 | Viby API key | none | no managed Viby control plane is required |
@@ -87,7 +87,6 @@ Authentication, OAuth connection registries, event scheduling, and transport inf
 - Git repository push, branch, commit, and pull-request adapters;
 - deployment adapters, provider connections, and managed preview hosting;
 - screenshot capture and browser automation (generated binary storage is already available);
-- a public custom storage adapter (Postgres is currently the required persistence implementation);
 - managed authentication, billing, Postgres, workers, queues, secrets, or a Viby API key.
 
 These are absent contracts, not runtime stubs. Future provider features should enter through portable core interfaces and explicit adapters without weakening the framework-, runtime-, model-, or vendor-neutral boundary.

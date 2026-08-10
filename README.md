@@ -55,6 +55,18 @@ export const viby = createViby({
 
 The model provider reads its own credential from your environment. Viby does not receive or store it. The default generator is a bounded AI SDK tool-loop agent: it reads and changes source through `AgentWorkspace`, emits durable tool and trace records, and returns either an immutable project result or a typed blocking task.
 
+PostgreSQL remains the zero-configuration durable backend: omit `persistence`, set `DATABASE_URL`, and run `viby db migrate`. Products that already own another database or durable service can provide the same provider-neutral boundary directly:
+
+```ts
+const viby = createViby({
+  framework: "farm",
+  model,
+  persistence: companyPersistence({ connection: companyDatabase }),
+});
+```
+
+Custom persistence adapters own transactions, tenant isolation, durable event cursors, leases, retention, and artifact references; Viby never assumes their database, query language, or migration system. The interface and operation record types are exported from `@viby/sdk/persistence`, and adapter authors can run `verifyPersistenceAdapter` from `@viby/sdk/persistence/conformance` against a fresh isolated adapter. To configure PostgreSQL explicitly instead of using the environment shortcut, use `postgresPersistence` from `@viby/sdk/persistence/postgres`. When supplying custom persistence, pass its artifact store into the adapter itself; the top-level `artifactStore` option configures only the default PostgreSQL path.
+
 Binary attachments use a separate provider-neutral artifact store so PostgreSQL retains only queryable ownership, media metadata, checksums, and opaque storage references. The filesystem adapter is a reference implementation for development or hosts with a durable mounted volume:
 
 ```ts

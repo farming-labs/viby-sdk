@@ -78,7 +78,7 @@ import type {
   Repository,
 } from "./repository.js";
 import { AgentProjectGenerator, normalizeAgentRunnerConfig } from "./agent-runner.js";
-import { PostgresRepository } from "./postgres-repository.js";
+import { postgresPersistence } from "./persistence-postgres.js";
 import { SkillResolver } from "./skills.js";
 import {
   ConfigurationError,
@@ -333,15 +333,15 @@ class GenerationModelRegistry<Framework extends FrameworkId> {
 export function createViby<const Framework extends FrameworkId>(
   config: VibyConfig<Framework>,
 ): Viby<Framework> {
-  const databaseUrl = process.env.DATABASE_URL;
-  if (!databaseUrl) {
+  if (config.persistence && config.artifactStore) {
     throw new ConfigurationError(
-      "DATABASE_URL is required. Viby stores tenant-scoped chats, generations, attempts, events, versions, and files in your Postgres database.",
+      "A custom persistence adapter owns artifact references; pass artifactStore to that adapter instead of the top-level Viby config.",
     );
   }
-
   return createVibyWithDependencies(config, {
-    repository: new PostgresRepository(databaseUrl, config.artifactStore),
+    repository: config.persistence ?? postgresPersistence({
+      ...(config.artifactStore ? { artifactStore: config.artifactStore } : {}),
+    }),
     ...(!config.engine ? {
       generator: new AgentProjectGenerator(config.model, config.agent),
       generators: Object.fromEntries(Object.entries(config.models ?? {}).map(([alias, model]) => (

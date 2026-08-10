@@ -1,6 +1,7 @@
 import type { LanguageModel } from "ai";
 import type { GenerationEngine } from "./generation-engine.js";
 import type { ArtifactReference, ArtifactStore } from "./artifact-store.js";
+import type { PersistenceAdapter } from "./persistence.js";
 import type { OutboundEventSink } from "./outbound-events.js";
 import type {
   SandboxAdapter,
@@ -52,6 +53,8 @@ export type SkillGroups = {
 
 interface VibyBaseConfig<Framework extends FrameworkId = FrameworkId> {
   readonly framework: Framework;
+  /** Custom durable state implementation. Omit to use PostgreSQL through DATABASE_URL. */
+  readonly persistence?: PersistenceAdapter;
   /** External byte storage for attachments and generated binary artifacts. */
   readonly artifactStore?: ArtifactStore;
   readonly skills?: SkillGroups;
