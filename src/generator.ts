@@ -4,6 +4,7 @@ import {
   streamText,
   type LanguageModel,
   type LanguageModelUsage,
+  type GeneratedFile,
 } from "ai";
 import { z } from "zod";
 import type {
@@ -20,6 +21,7 @@ import type {
   ToolCallData,
   ToolCallEffect,
   VersionFile,
+  GeneratedArtifactKind,
 } from "./types.js";
 import { normalizeProjectPath, sha256 } from "./utils.js";
 import { ConfigurationError } from "./errors.js";
@@ -99,6 +101,7 @@ export interface GeneratorProjectOutput {
   readonly files: readonly VersionFile[];
   readonly usage: LanguageModelUsage;
   readonly finishReason: string;
+  readonly artifacts?: readonly GeneratorArtifactOutput[];
 }
 
 export interface GeneratorTaskOutput {
@@ -106,6 +109,7 @@ export interface GeneratorTaskOutput {
   readonly task: GenerationTaskRequest;
   readonly usage: LanguageModelUsage;
   readonly finishReason: string;
+  readonly artifacts?: readonly GeneratorArtifactOutput[];
 }
 
 export interface GeneratorChangesOutput {
@@ -115,6 +119,14 @@ export interface GeneratorChangesOutput {
   readonly changes: readonly SourceChange[];
   readonly usage: LanguageModelUsage;
   readonly finishReason: string;
+  readonly artifacts?: readonly GeneratorArtifactOutput[];
+}
+
+export interface GeneratorArtifactOutput {
+  readonly kind?: GeneratedArtifactKind;
+  readonly filename: string;
+  readonly mediaType: string;
+  readonly bytes: Uint8Array;
 }
 
 export type GeneratorOutput = GeneratorProjectOutput | GeneratorChangesOutput | GeneratorTaskOutput;
@@ -198,7 +210,10 @@ implements ProjectGenerator<Framework> {
       ...(options.signal ? { abortSignal: options.signal } : {}),
     });
 
-    return normalizeOutput(result.output, result.usage, result.finishReason, input.previousFiles);
+    return withGeneratedArtifacts(
+      normalizeOutput(result.output, result.usage, result.finishReason, input.previousFiles),
+      generatedFileOutputs(result.files),
+    );
   }
 
   async #generateStreaming(
@@ -225,13 +240,66 @@ implements ProjectGenerator<Framework> {
       }
     }
 
-    return normalizeOutput(
-      await result.output,
-      await result.usage,
-      await result.finishReason,
-      input.previousFiles,
+    return withGeneratedArtifacts(
+      normalizeOutput(
+        await result.output,
+        await result.usage,
+        await result.finishReason,
+        input.previousFiles,
+      ),
+      generatedFileOutputs(await result.files),
     );
   }
+}
+
+export function generatedFileOutputs(
+  files: readonly GeneratedFile[],
+): readonly GeneratorArtifactOutput[] {
+  return files.map((file, index) => {
+    const kind = artifactKindForMediaType(file.mediaType);
+    return {
+      kind,
+      filename: `generated-${index + 1}.${extensionForMediaType(file.mediaType)}`,
+      mediaType: file.mediaType,
+      bytes: Uint8Array.from(file.uint8Array),
+    };
+  });
+}
+
+function withGeneratedArtifacts(
+  output: GeneratorOutput,
+  artifacts: readonly GeneratorArtifactOutput[],
+): GeneratorOutput {
+  return artifacts.length === 0 ? output : { ...output, artifacts };
+}
+
+function artifactKindForMediaType(mediaType: string): GeneratedArtifactKind {
+  if (mediaType.startsWith("image/")) return "image";
+  if (mediaType.startsWith("audio/")) return "audio";
+  if (mediaType.startsWith("video/")) return "video";
+  if (
+    mediaType.startsWith("text/")
+    || mediaType === "application/pdf"
+    || mediaType.includes("document")
+    || mediaType.includes("json")
+  ) return "document";
+  return "binary";
+}
+
+function extensionForMediaType(mediaType: string): string {
+  return ({
+    "image/jpeg": "jpg",
+    "image/png": "png",
+    "image/webp": "webp",
+    "image/gif": "gif",
+    "image/svg+xml": "svg",
+    "audio/mpeg": "mp3",
+    "audio/wav": "wav",
+    "video/mp4": "mp4",
+    "application/pdf": "pdf",
+    "application/json": "json",
+    "text/plain": "txt",
+  } as Record<string, string>)[mediaType] ?? "bin";
 }
 
 function createSystemPrompt(

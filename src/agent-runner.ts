@@ -19,7 +19,7 @@ import type {
   GeneratorOutput,
   ProjectGenerator,
 } from "./generator.js";
-import { createMultimodalPrompt } from "./generator.js";
+import { createMultimodalPrompt, generatedFileOutputs } from "./generator.js";
 import type {
   AgentRunnerConfig,
   FrameworkId,
@@ -145,12 +145,14 @@ implements ProjectGenerator<Framework> {
         toolMs: this.#config.commandTimeoutMs,
       },
     });
+    const artifacts = generatedFileOutputs(result.files);
     if (approval.proposedAction) {
       return {
         kind: "task",
         task: approval.task(),
         usage: result.totalUsage,
         finishReason: result.finishReason,
+        artifacts,
       };
     }
     const output = result.output;
@@ -166,6 +168,7 @@ implements ProjectGenerator<Framework> {
         task: normalizeAgentTask(output.task),
         usage: result.totalUsage,
         finishReason: result.finishReason,
+        artifacts,
       };
     }
     if (!output.title || !output.summary || output.task) {
@@ -183,6 +186,7 @@ implements ProjectGenerator<Framework> {
         files: workspace.files(),
         usage: result.totalUsage,
         finishReason: result.finishReason,
+        artifacts,
       };
     }
     return {
@@ -192,6 +196,7 @@ implements ProjectGenerator<Framework> {
       changes,
       usage: result.totalUsage,
       finishReason: result.finishReason,
+      artifacts,
     };
   }
 }

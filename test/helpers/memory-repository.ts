@@ -10,6 +10,8 @@ import type {
   GenerationEvent,
   GenerationEventDataMap,
   GenerationEventType,
+  GeneratedArtifactContent,
+  GeneratedArtifactData,
   GenerationTaskData,
   MessageData,
   MessagePart,
@@ -102,6 +104,7 @@ export class MemoryRepository implements Repository {
   readonly designEvaluations = new Map<string, DesignEvaluationData & ScopedRecord>();
   readonly messages: Array<MessageData & ScopedRecord> = [];
   readonly attachments = new Map<string, AttachmentContent & ScopedRecord>();
+  readonly generatedArtifacts = new Map<string, GeneratedArtifactContent & ScopedRecord>();
   readonly files = new Map<string, VersionFile[]>();
   readonly changes = new Map<string, SourceChange[]>();
   readonly events: Array<GenerationEvent & ScopedRecord> = [];
@@ -386,6 +389,11 @@ export class MemoryRepository implements Repository {
       for (const [attachmentId, attachment] of this.attachments) {
         if (attachment.chatId === id && inScope(attachment, scope)) {
           this.attachments.delete(attachmentId);
+        }
+      }
+      for (const [artifactId, artifact] of this.generatedArtifacts) {
+        if (artifact.chatId === id && inScope(artifact, scope)) {
+          this.generatedArtifacts.delete(artifactId);
         }
       }
       for (let index = this.events.length - 1; index >= 0; index -= 1) {
@@ -901,6 +909,15 @@ export class MemoryRepository implements Repository {
       parts: input.assistantParts,
       createdAt: completedAt,
     });
+    this.#addGeneratedArtifacts(
+      scope,
+      generation.chatId,
+      generation.id,
+      attempt.id,
+      version.id,
+      input.artifacts ?? [],
+      completedAt,
+    );
     this.#append(scope, generation.id, attempt.id, "attempt.succeeded", {
       number: attempt.number,
       versionId: version.id,
@@ -965,6 +982,15 @@ export class MemoryRepository implements Repository {
       parts: input.assistantParts,
       createdAt: now,
     });
+    this.#addGeneratedArtifacts(
+      scope,
+      generation.chatId,
+      generation.id,
+      attempt.id,
+      null,
+      input.artifacts ?? [],
+      now,
+    );
     this.#append(scope, generation.id, attempt.id, "attempt.waiting", { taskId: task.id });
     this.#append(scope, generation.id, attempt.id, "task.created", {
       task: { id: task.id, ...input.task },
@@ -1448,6 +1474,34 @@ export class MemoryRepository implements Repository {
       .map((attachment) => ({ ...attachment, bytes: Uint8Array.from(attachment.bytes) }));
   }
 
+  async listGeneratedArtifacts(
+    scope: UserScope,
+    generationId: string,
+  ): Promise<GeneratedArtifactData[]> {
+    this.#requireGeneration(scope, generationId);
+    return [...this.generatedArtifacts.values()]
+      .filter((artifact) => artifact.generationId === generationId && inScope(artifact, scope))
+      .sort((left, right) => (
+        left.createdAt.getTime() - right.createdAt.getTime()
+        || left.attemptId.localeCompare(right.attemptId)
+        || left.position - right.position
+        || left.id.localeCompare(right.id)
+      ))
+      .map(({ bytes: _bytes, tenantId: _tenantId, userId: _userId, ...artifact }) => artifact);
+  }
+
+  async getGeneratedArtifact(
+    scope: UserScope,
+    generationId: string,
+    id: string,
+  ): Promise<GeneratedArtifactContent | null> {
+    this.#requireGeneration(scope, generationId);
+    const artifact = this.generatedArtifacts.get(id);
+    return artifact && artifact.generationId === generationId && inScope(artifact, scope)
+      ? { ...artifact, bytes: Uint8Array.from(artifact.bytes) }
+      : null;
+  }
+
   async listMessagePage(
     scope: UserScope,
     chatId: string,
@@ -1550,6 +1604,46 @@ export class MemoryRepository implements Repository {
       ) {
         this.toolCalls.set(toolCall.id, { ...toolCall, messageId: message.id });
       }
+    }
+  }
+
+  #addGeneratedArtifacts(
+    scope: UserScope,
+    chatId: string,
+    generationId: string,
+    attemptId: string,
+    versionId: string | null,
+    artifacts: NonNullable<CompleteGenerationRecord["artifacts"]>,
+    createdAt: Date,
+  ): void {
+    for (const artifact of artifacts) {
+      const data: GeneratedArtifactContent & ScopedRecord = {
+        id: artifact.id,
+        chatId,
+        generationId,
+        attemptId,
+        versionId,
+        position: artifact.position,
+        kind: artifact.kind,
+        filename: artifact.filename,
+        mediaType: artifact.mediaType,
+        size: artifact.size,
+        checksum: artifact.checksum,
+        artifact: { store: "memory", key: `generated/${generationId}/${artifact.id}` },
+        bytes: Uint8Array.from(artifact.bytes),
+        createdAt,
+        ...scope,
+      };
+      this.generatedArtifacts.set(data.id, data);
+      this.#append(scope, generationId, attemptId, "artifact.created", {
+        artifactId: data.id,
+        position: data.position,
+        kind: data.kind,
+        filename: data.filename,
+        mediaType: data.mediaType,
+        size: data.size,
+        checksum: data.checksum,
+      });
     }
   }
 

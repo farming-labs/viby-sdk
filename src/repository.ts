@@ -7,6 +7,9 @@ import type {
   DesignEvaluationEvidence,
   DesignEvaluationCriterionInput,
   DesignEvaluationStatus,
+  GeneratedArtifactContent,
+  GeneratedArtifactData,
+  GeneratedArtifactKind,
   FrameworkId,
   GenerationAttemptData,
   GenerationAttemptReason,
@@ -156,6 +159,17 @@ export interface CreateAttachmentRecord {
   readonly checksum: string;
 }
 
+export interface CreateGeneratedArtifactRecord {
+  readonly id: string;
+  readonly position: number;
+  readonly kind: GeneratedArtifactKind;
+  readonly filename: string;
+  readonly mediaType: string;
+  readonly bytes: Uint8Array;
+  readonly size: number;
+  readonly checksum: string;
+}
+
 export interface CreatedGeneration {
   readonly generation: GenerationData;
   readonly attempt: GenerationAttemptData;
@@ -184,6 +198,7 @@ export interface CompleteGenerationRecord<Framework extends FrameworkId = Framew
   readonly totalTokens: number | null;
   readonly finishReason: string;
   readonly cost: GenerationCostData | null;
+  readonly artifacts?: readonly CreateGeneratedArtifactRecord[];
 }
 
 export interface PauseGenerationRecord {
@@ -198,6 +213,7 @@ export interface PauseGenerationRecord {
   readonly totalTokens: number | null;
   readonly finishReason: string;
   readonly cost: GenerationCostData | null;
+  readonly artifacts?: readonly CreateGeneratedArtifactRecord[];
 }
 
 export interface ResolveGenerationTaskRecord {
@@ -488,6 +504,15 @@ export interface Repository {
     scope: UserScope,
     generationId: string,
   ): Promise<AttachmentContent[]>;
+  listGeneratedArtifacts(
+    scope: UserScope,
+    generationId: string,
+  ): Promise<GeneratedArtifactData[]>;
+  getGeneratedArtifact(
+    scope: UserScope,
+    generationId: string,
+    id: string,
+  ): Promise<GeneratedArtifactContent | null>;
   listMessagePage(
     scope: UserScope,
     chatId: string,
