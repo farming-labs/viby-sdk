@@ -2,6 +2,8 @@
 
 `@viby/sdk` is a framework-agnostic TypeScript SDK for building persistent, skill-guided vibe coding products. Your application owns authentication, model credentials, and Postgres. Viby owns chats, durable generation attempts and events, typed tasks, immutable source versions, iteration, and source downloads.
 
+See the [shipped capability inventory](./docs/capabilities.md) for the complete core, adapter, integration, verification, and boundary matrix.
+
 ## Install
 
 ```bash
@@ -456,6 +458,17 @@ for await (const event of generation.stream({ after: lastCursor })) {
 }
 ```
 
+HTTP hosts can return the same cursor as standards-compliant SSE without a framework adapter:
+
+```ts
+return generation.toEventStreamResponse({ request });
+
+// Or use the standalone helper with any compatible generation source:
+return generationEventStreamResponse(generation, { request });
+```
+
+The helper reads `Last-Event-ID`, emits normal `id`, `event`, and JSON `data` fields, sends an SSE retry hint, propagates request cancellation, and returns a Web-standard `Response`.
+
 Agent trace parts use four lifecycle events: `part.started`, `part.delta`, `part.completed`, and `part.failed`. Started events establish a stable part id, type, and trace position; deltas append live display data; completion carries the typed durable part; and failures carry a redaction-safe error. Completed trace parts retain the same id in the final assistant message. Saving the normal generation cursor is sufficient to resume both lifecycle and trace events.
 
 Send those same durable events to any application-owned transport with signed envelopes:
@@ -489,9 +502,44 @@ const page = await generation.deliverEvents({
 savedCursor = page.cursor;
 ```
 
-`deliverEvents` is explicit so the host can run it in its own request, cron, queue, or workflow system and persist one cursor per sink. Delivery is at least once. Event IDs are stable as `<generationId>:<cursor>`, so receivers should deduplicate them. A transport failure throws `OutboundEventDeliveryError` with `lastDeliveredCursor`, allowing an exact retry without changing generation state.
+`deliverEvents` is explicit so the host can run it in its own request, cron, queue, or workflow system. Viby durably claims each generation/event/sink tuple, fences concurrent delivery with a lease, retries with bounded backoff, and moves exhausted events to a dead letter. `generation.outboundDeliveries(...)` inspects delivery state and `generation.redriveOutboundEvent(...)` explicitly returns a dead letter to the pending queue. Delivery is at least once. Event IDs are stable as `<generationId>:<cursor>`, so receivers must still deduplicate them.
 
-The helper emits a CloudEvents-style JSON envelope and signs `timestamp.eventId.body` with HMAC-SHA256. It includes key ID, timestamp, event ID, and `v1` signature headers. Rotate keys through `keyId`, keep signing secrets server-side, reject timestamps outside your chosen replay window, and use `verifySignedOutboundEvent` for constant-time verification. Neither secrets nor transport responses are persisted.
+The helper emits a CloudEvents-style JSON envelope and signs `timestamp.eventId.body` with HMAC-SHA256. It includes key ID, timestamp, event ID, and `v1` signature headers. Rotate keys through `keyId`, keep signing secrets server-side, reject timestamps outside your chosen replay window, and use `verifySignedOutboundEvent` for constant-time verification. Secrets and transport response bodies are never persisted.
+
+## Expose scoped MCP tools
+
+Install the optional official server package and register tools against an already-authenticated Viby scope:
+
+```ts
+import { McpServer } from "@modelcontextprotocol/server";
+import { registerVibyMcpTools } from "@viby/sdk/mcp";
+
+const server = new McpServer({ name: "my-product", version: "1.0.0" });
+registerVibyMcpTools(server, { viby: userViby });
+```
+
+The registration exposes scoped chat, generation, event, task-resolution, version, iteration, and download operations. The host still owns MCP transport, authentication, connection lifecycle, and any third-party OAuth grants.
+
+## Observe usage and cost
+
+Pass provider-neutral telemetry hooks directly or adapt OpenTelemetry-compatible tracer and meter objects:
+
+```ts
+import { openTelemetry } from "@viby/sdk";
+
+const viby = createViby({
+  framework: "farm",
+  model,
+  telemetry: openTelemetry({ tracer, meter }),
+  cost: {
+    currency: "USD",
+    calculate: ({ inputTokens, outputTokens }) =>
+      (inputTokens ?? 0) * 2 + (outputTokens ?? 0) * 8,
+  },
+});
+```
+
+Cost uses safe integer micro-units in a host-defined currency or credit unit. Each attempt keeps its immutable estimate, the logical generation stores the cumulative amount across retries/resumes, and the final usage message part includes cost when configured. Telemetry is fail-open and omits prompts, source, tool payloads, credentials, and high-cardinality tenant/user IDs.
 
 Tool executions are provider-neutral records owned by their immutable attempt and, after completion, their assistant message:
 
@@ -691,9 +739,15 @@ Included now:
 - portable agent workspace tools and durable immutable change sets
 - a bounded default workspace agent with capability-gated sandbox tools
 - raw source ZIP downloads
+- standard SSE and Web `Response` helpers
+- scoped MCP tool registration through the official server SDK
 - sandboxed execution, durable leases, and preview URLs when an adapter supports them
 - enforced provider-neutral sandbox command authorization
 - durable approval-gated sandbox actions with exact-action, idempotent resume
+- signed outbound events with durable retries, dead letters, inspection, and redrive
+- provider-neutral telemetry hooks, OpenTelemetry adaptation, and durable cost attribution
+- migration immutability plus schema-upgrade and public-API compatibility fixtures
+- a complete framework-neutral reference host for chat, stream, preview, iteration, and download
 
 Planned as separate capabilities later:
 
@@ -709,9 +763,9 @@ npm run check
 npm run test:package
 ```
 
-Run the [persistent OpenAI example](./examples/basic) to exercise chat creation, generation, optional iteration, Postgres reload, and source download end to end.
+Run the [persistent OpenAI example](./examples/basic) for the minimal durable flow, or the [complete reference application](./examples/reference) for chat → SSE → sandbox preview → iteration → source download.
 
-The CI workflow tests supported Node releases, the compiled package and CLI, the example's public types, and a durable lifecycle against PostgreSQL. See [RELEASING.md](./RELEASING.md) for versioning commands and the [npm publishing guide](./docs/publishing.md) for trusted-publisher setup.
+The CI workflow tests supported Node releases, the compiled package and CLI, both examples, API/export compatibility, immutable migrations, historical schema upgrades, the full reference flow, and a durable lifecycle against PostgreSQL. See [RELEASING.md](./RELEASING.md) for versioning commands and the [npm publishing guide](./docs/publishing.md) for trusted-publisher setup.
 
 ## License
 

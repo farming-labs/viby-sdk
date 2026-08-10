@@ -80,7 +80,7 @@ v0 v2 messages contain ordered parts such as text, thinking, file reads, file ed
 | Ordered message parts | `Message.parts` | typed durable agent parts linked to messages, generations, and attempts | Shipped |
 | Live part lifecycle | streaming message part events | started, delta, completed, and failed events on the durable generation cursor | Shipped |
 | Final text and finish reason | message content and `finishReason` | message content plus attempt finish reason | Partial |
-| Token and credit usage | per-message usage | token usage is durable; currency/cost policy is host-owned | Partial |
+| Token and credit usage | per-message usage | durable token usage plus host-defined immutable attempt and cumulative generation cost | Shipped |
 | Resolve blocking work | Resolve Task sync/async/streaming | typed `generation.resolve` followed by wait or stream | Shipped |
 | Restore historical state | Restore Message | `version.restore` | Shipped |
 
@@ -109,7 +109,7 @@ v0 v2 makes its VM an implicit property of every chat. Viby keeps execution opti
 | --- | --- | --- | --- |
 | Isolated execution | VM-backed chat | `SandboxAdapter` selected by the host | Shipped |
 | Read/write/run | internal VM tools | common file and command contract | Shipped |
-| Live preview | Get Preview URL | sandbox capability plus managed preview session | Partial |
+| Live preview | Get Preview URL | sandbox background process and port readiness primitives plus a complete reference host | Shipped |
 | Preview readiness | nullable preview response and polling | portable port readiness API | Shipped |
 | Preview access token | short-lived hosted token | provider or app proxy policy, never a Viby API key | Adapter |
 | Long-running process | persistent VM services | provider-neutral background process handle | Shipped |
@@ -124,16 +124,16 @@ Viby separates a portable tool call from the credentialed connection used to ful
 - Core may define typed tools, calls, results, approval tasks, and durable events.
 - Typed calls and results, attempt/message ownership, redaction, and external-effect idempotency are shipped in core.
 - The host supplies tool implementations and authorizes each external effect.
-- MCP discovery, OAuth grants, refresh tokens, and connection storage remain host-owned.
-- Signed event sinks ship durable generation events through an app-owned transport with stable IDs, HMAC verification, and exact resume cursors; endpoint CRUD and scheduling remain app-owned.
+- Viby operations can be registered as scoped MCP tools; MCP transport, discovery registries, OAuth grants, refresh tokens, and connection storage remain host-owned.
+- Signed event sinks ship durable generation events through an app-owned transport with stable IDs, HMAC verification, leases, retries, dead letters, and redrive; endpoint CRUD and scheduling remain app-owned.
 - Deployment and Git provider credentials stay in their future adapters and never enter model context by default.
 
 ## Prioritized parity backlog
 
-Capability discovery, the adapter conformance suite, background processes, readiness checks, durable sandbox leases, reconnect-by-ID, generation worker leases with heartbeats, sandbox command policy enforcement, immutable agent workspace change sets, typed durable message parts, permission-gated agent sandbox actions, source import adapters, file locks, retention-aware deletion, and signed outbound sinks are shipped.
+Capability discovery, the adapter conformance suite, background processes, readiness checks, durable sandbox leases, reconnect-by-ID, generation worker leases with heartbeats, sandbox command policy enforcement, immutable agent workspace change sets, typed durable message parts, permission-gated agent sandbox actions, source import adapters, file locks, retention-aware deletion, standard SSE/Web responses, scoped MCP tools, durable signed outbound delivery, OpenTelemetry hooks, and cost attribution are shipped.
 
-1. Optional sandbox-backed preview sessions and a host-proxy contract.
-2. Attachments and generation-scoped model/skill configuration.
+1. Attachments and generation-scoped model/skill configuration.
+2. Browser/screenshot tools behind a portable tool contract.
 3. Explicit Git and deployment adapters after the portable generation workflow is complete.
 
 ## Persistence rules
