@@ -124,6 +124,28 @@ test("persists a durable generation, iteration, events, and download in Postgres
       amountMicros: 240,
       currency: "USD",
     });
+    const generationMessages = (await chat.listMessages()).items;
+    const designEvaluation = await outcome.version.recordDesignEvaluation({
+      evaluator: "postgres-visual@1",
+      status: "passed",
+      score: 96.5,
+      summary: "The generated source matches the persisted reference.",
+      criteria: [{
+        id: "source-quality",
+        label: "Source quality",
+        status: "passed",
+        score: 96.5,
+        summary: "The generated entry point is complete.",
+        evidence: [{ type: "version-file", path: "src/index.ts" }],
+      }],
+      evidence: [{
+        type: "attachment",
+        attachmentId: generationMessages.find((message) => message.role === "user")!.attachments[0]!.id,
+      }],
+      metadata: { integration: true },
+    });
+    assert.deepEqual(await outcome.version.getDesignEvaluation(designEvaluation.id), designEvaluation);
+    assert.deepEqual((await outcome.version.listDesignEvaluations()).items, [designEvaluation]);
 
     const events = (await generation.events({ limit: 100 })).events;
     assert.deepEqual(events.map((event) => event.type), [

@@ -3,6 +3,7 @@ import type {
   ChatData,
   ChatDeletionData,
   ChatMetadata,
+  DesignEvaluationData,
   FrameworkId,
   GenerationAttemptData,
   GenerationData,
@@ -40,6 +41,8 @@ import type {
   DeleteChatRecord,
   CreatedToolCall,
   CreateSourceVersionRecord,
+  CreateDesignEvaluationRecord,
+  DesignEvaluationPageCursor,
   ForkVersionRecord,
   FailOutboundEventDeliveryRecord,
   FailToolCallRecord,
@@ -96,6 +99,7 @@ export class MemoryRepository implements Repository {
   readonly generations = new Map<string, GenerationData & ScopedRecord>();
   readonly attempts = new Map<string, GenerationAttemptData & ScopedRecord>();
   readonly versions = new Map<string, VersionData & ScopedRecord>();
+  readonly designEvaluations = new Map<string, DesignEvaluationData & ScopedRecord>();
   readonly messages: Array<MessageData & ScopedRecord> = [];
   readonly attachments = new Map<string, AttachmentContent & ScopedRecord>();
   readonly files = new Map<string, VersionFile[]>();
@@ -372,6 +376,9 @@ export class MemoryRepository implements Repository {
         this.versions.delete(versionId);
         this.files.delete(versionId);
         this.changes.delete(versionId);
+      }
+      for (const [evaluationId, evaluation] of this.designEvaluations) {
+        if (versionIds.includes(evaluation.versionId)) this.designEvaluations.delete(evaluationId);
       }
       for (let index = this.messages.length - 1; index >= 0; index -= 1) {
         if (this.messages[index]?.chatId === id) this.messages.splice(index, 1);
@@ -1343,6 +1350,67 @@ export class MemoryRepository implements Repository {
       .sort((left, right) => right.number - left.number);
     if (after) records = records.filter((version) => version.number < after.number);
     return createPage(records as unknown as Array<VersionData<Framework>>, limit);
+  }
+
+  async createDesignEvaluation(
+    scope: UserScope,
+    input: CreateDesignEvaluationRecord,
+  ): Promise<DesignEvaluationData> {
+    const version = await this.getVersion(scope, input.versionId);
+    if (!version || version.chatId !== input.chatId) throw new NotFoundError("Version");
+    const chat = await this.getChat(scope, version.chatId);
+    if (!chat) throw new NotFoundError("Version");
+    const evaluation: DesignEvaluationData & ScopedRecord = {
+      id: input.id,
+      chatId: version.chatId,
+      versionId: version.id,
+      generationId: version.generationId,
+      evaluator: input.evaluator,
+      status: input.status,
+      score: input.score,
+      summary: input.summary,
+      criteria: JSON.parse(JSON.stringify(input.criteria)) as DesignEvaluationData["criteria"],
+      evidence: JSON.parse(JSON.stringify(input.evidence)) as DesignEvaluationData["evidence"],
+      metadata: JSON.parse(JSON.stringify(input.metadata)) as ChatMetadata,
+      createdAt: new Date(),
+      ...scope,
+    };
+    this.designEvaluations.set(evaluation.id, evaluation);
+    return evaluation;
+  }
+
+  async getDesignEvaluation(
+    scope: UserScope,
+    versionId: string,
+    id: string,
+  ): Promise<DesignEvaluationData | null> {
+    const evaluation = this.designEvaluations.get(id);
+    return evaluation && evaluation.versionId === versionId && inScope(evaluation, scope)
+      ? evaluation
+      : null;
+  }
+
+  async listDesignEvaluationPage(
+    scope: UserScope,
+    versionId: string,
+    limit: number,
+    after: DesignEvaluationPageCursor | null,
+  ): Promise<RepositoryPage<DesignEvaluationData>> {
+    let records = [...this.designEvaluations.values()]
+      .filter((evaluation) => evaluation.versionId === versionId && inScope(evaluation, scope))
+      .sort((left, right) => (
+        right.createdAt.getTime() - left.createdAt.getTime() || right.id.localeCompare(left.id)
+      ));
+    if (after) {
+      records = records.filter((evaluation) => (
+        evaluation.createdAt < after.createdAt
+        || (
+          evaluation.createdAt.getTime() === after.createdAt.getTime()
+          && evaluation.id < after.id
+        )
+      ));
+    }
+    return createPage(records, limit);
   }
 
   async listMessages(scope: UserScope, chatId: string): Promise<MessageData[]> {

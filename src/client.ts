@@ -7,6 +7,8 @@ import type {
   ApplySourceChangesInput,
   CreateChatInput,
   DeleteChatInput,
+  DesignEvaluationData,
+  DesignEvaluationEvidence,
   FrameworkId,
   ForkVersionInput,
   GenerateInput,
@@ -33,6 +35,7 @@ import type {
   PageOptions,
   PurgeDeletedChatsInput,
   ResolveGenerationTaskInput,
+  RecordDesignEvaluationInput,
   RestoreVersionInput,
   SkillGroups,
   SkillReference,
@@ -102,10 +105,13 @@ import {
   decodeChatCursor,
   decodeMessageCursor,
   decodeVersionCursor,
+  decodeDesignEvaluationCursor,
   encodeChatCursor,
   encodeMessageCursor,
   encodeVersionCursor,
+  encodeDesignEvaluationCursor,
 } from "./cursors.js";
+import { normalizeDesignEvaluation } from "./design-evaluations.js";
 import { normalizeChatMetadata } from "./metadata.js";
 import { SandboxRegistry, type SandboxSession } from "./sandbox.js";
 import type {
@@ -1328,6 +1334,83 @@ export class Version<Framework extends FrameworkId = FrameworkId> {
     );
     if (!generation) throw new NotFoundError("Generation");
     return generation;
+  }
+
+  async recordDesignEvaluation(
+    input: RecordDesignEvaluationInput,
+  ): Promise<DesignEvaluationData> {
+    await assertActiveChat(this.#dependencies, this.chatId);
+    const evaluation = normalizeDesignEvaluation(input);
+    await this.#validateDesignEvaluationEvidence([
+      ...evaluation.evidence,
+      ...evaluation.criteria.flatMap((criterion) => criterion.evidence ?? []),
+    ]);
+    return this.#dependencies.repository.createDesignEvaluation(
+      this.#dependencies.scope,
+      {
+        id: createId(),
+        chatId: this.chatId,
+        versionId: this.id,
+        generationId: this.generationId,
+        ...evaluation,
+      },
+    );
+  }
+
+  async getDesignEvaluation(id: string): Promise<DesignEvaluationData> {
+    await assertActiveChat(this.#dependencies, this.chatId);
+    const evaluation = await this.#dependencies.repository.getDesignEvaluation(
+      this.#dependencies.scope,
+      this.id,
+      assertIdentifier(id, "design evaluation id"),
+    );
+    if (!evaluation) throw new NotFoundError("Design evaluation");
+    return evaluation;
+  }
+
+  async listDesignEvaluations(
+    options: PageOptions = {},
+  ): Promise<CursorPage<DesignEvaluationData>> {
+    await assertActiveChat(this.#dependencies, this.chatId);
+    const limit = normalizePageLimit(options.limit);
+    const page = await this.#dependencies.repository.listDesignEvaluationPage(
+      this.#dependencies.scope,
+      this.id,
+      limit,
+      decodeDesignEvaluationCursor(options.after),
+    );
+    const last = page.items.at(-1);
+    return {
+      items: page.items,
+      nextCursor: page.hasMore && last
+        ? encodeDesignEvaluationCursor({ createdAt: last.createdAt, id: last.id })
+        : null,
+    };
+  }
+
+  async #validateDesignEvaluationEvidence(
+    evidence: readonly DesignEvaluationEvidence[],
+  ): Promise<void> {
+    const filePaths = new Set(evidence.flatMap((item) => (
+      item.type === "version-file" ? [item.path] : []
+    )));
+    if (filePaths.size > 0) {
+      const existing = new Set((await this.files()).map((file) => file.path));
+      for (const path of filePaths) {
+        if (!existing.has(path)) throw new NotFoundError("Design evaluation version file");
+      }
+    }
+    const attachmentIds = new Set(evidence.flatMap((item) => (
+      item.type === "attachment" ? [item.attachmentId] : []
+    )));
+    await Promise.all([...attachmentIds].map(async (id) => {
+      const attachment = await this.#dependencies.repository.getAttachment(
+        this.#dependencies.scope,
+        this.chatId,
+        id,
+      );
+      if (!attachment) throw new NotFoundError("Design evaluation attachment");
+    }));
   }
 
   async download(): Promise<DownloadArtifact> {

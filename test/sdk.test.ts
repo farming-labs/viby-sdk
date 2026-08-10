@@ -201,7 +201,7 @@ test("snapshots multimodal attachments and loads bytes only through explicit sco
   sourceBytes.fill(0);
   assert.equal((await generation.wait({ pollIntervalMs: 10 })).status, "succeeded");
 
-  const [userMessage] = (await chat.listMessages()).items;
+  const userMessage = (await chat.listMessages()).items.find((message) => message.role === "user");
   assert.equal(userMessage?.role, "user");
   assert.equal(userMessage?.attachments.length, 1);
   const attachmentData = userMessage!.attachments[0]!;
@@ -227,6 +227,113 @@ test("snapshots multimodal attachments and loads bytes only through explicit sco
     prompt: "Unsafe attachment",
     attachments: [{ filename: "../secret.txt", mediaType: "text/plain", bytes: new Uint8Array([1]) }],
   }), ConfigurationError);
+});
+
+test("persists immutable provider-neutral design evaluations against exact versions", async () => {
+  const { viby } = setup();
+  const user = viby.forUser({ tenantId: "tenant-evaluations", userId: "user-evaluations" });
+  const chat = await user.chats.create({ title: "Evaluation" });
+  const version = await chat.generate({
+    prompt: "Build an evaluated dashboard",
+    attachments: [{
+      filename: "target.png",
+      mediaType: "image/png",
+      bytes: new Uint8Array([1, 2, 3]),
+    }],
+  });
+  const attachment = (await chat.listMessages()).items
+    .find((message) => message.role === "user")!.attachments[0]!;
+  const first = await version.recordDesignEvaluation({
+    evaluator: "visual-regression@1",
+    status: "warning",
+    score: 84.5,
+    summary: "The hierarchy is strong, with one spacing regression.",
+    criteria: [{
+      id: "visual-hierarchy",
+      label: "Visual hierarchy",
+      status: "passed",
+      score: 94,
+      summary: "Primary content and actions are easy to scan.",
+      evidence: [{ type: "version-file", path: "src/index.ts" }],
+    }, {
+      id: "reference-match",
+      label: "Reference match",
+      status: "warning",
+      score: 75,
+      summary: "Spacing differs from the supplied target.",
+      evidence: [{ type: "attachment", attachmentId: attachment.id }],
+    }],
+    evidence: [{ type: "note", text: "Reviewed at desktop and mobile widths." }],
+    metadata: { viewport: "responsive", run: 1 },
+  });
+
+  assert.equal(first.versionId, version.id);
+  assert.equal(first.generationId, version.generationId);
+  assert.equal(first.score, 84.5);
+  assert.deepEqual(await version.getDesignEvaluation(first.id), first);
+
+  await version.recordDesignEvaluation({
+    evaluator: "accessibility@1",
+    status: "passed",
+    score: 98,
+    summary: "The static accessibility audit passed.",
+    criteria: [{
+      id: "semantics",
+      label: "Semantics",
+      status: "passed",
+      score: 98,
+      summary: "Landmarks and controls are labelled.",
+    }],
+  });
+  await version.recordDesignEvaluation({
+    evaluator: "responsive@1",
+    status: "passed",
+    score: 92,
+    summary: "The responsive layouts passed.",
+    criteria: [{
+      id: "responsive-layout",
+      label: "Responsive layout",
+      status: "passed",
+      score: 92,
+      summary: "No overflow was found.",
+    }],
+  });
+  const pageOne = await version.listDesignEvaluations({ limit: 2 });
+  assert.equal(pageOne.items.length, 2);
+  assert.ok(pageOne.nextCursor);
+  const pageTwo = await version.listDesignEvaluations({ limit: 2, after: pageOne.nextCursor! });
+  assert.equal(pageTwo.items.length, 1);
+  assert.equal(new Set([...pageOne.items, ...pageTwo.items].map((item) => item.id)).size, 3);
+
+  const other = await chat.generate({ prompt: "Create another independent version" });
+  await assert.rejects(() => other.getDesignEvaluation(first.id), NotFoundError);
+  await assert.rejects(() => version.recordDesignEvaluation({
+    evaluator: "invalid@1",
+    status: "failed",
+    score: 101,
+    summary: "Invalid score.",
+    criteria: [{
+      id: "invalid",
+      label: "Invalid",
+      status: "failed",
+      score: 0,
+      summary: "Invalid.",
+    }],
+  }), ConfigurationError);
+  await assert.rejects(() => version.recordDesignEvaluation({
+    evaluator: "invalid-evidence@1",
+    status: "failed",
+    score: 0,
+    summary: "Missing evidence.",
+    criteria: [{
+      id: "missing-file",
+      label: "Missing file",
+      status: "failed",
+      score: 0,
+      summary: "The file is missing.",
+      evidence: [{ type: "version-file", path: "missing.ts" }],
+    }],
+  }), NotFoundError);
 });
 
 test("persists typed ordered message parts with message, generation, and attempt ownership", async () => {

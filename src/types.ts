@@ -614,6 +614,63 @@ export interface VersionData<Framework extends FrameworkId = FrameworkId> {
   readonly createdAt: Date;
 }
 
+export type DesignEvaluationStatus = "passed" | "warning" | "failed";
+
+export type DesignEvaluationEvidence =
+  | {
+      readonly type: "version-file";
+      readonly path: string;
+      readonly description?: string;
+    }
+  | {
+      readonly type: "attachment";
+      readonly attachmentId: string;
+      readonly description?: string;
+    }
+  | {
+      readonly type: "url";
+      readonly url: string;
+      readonly description?: string;
+    }
+  | {
+      readonly type: "note";
+      readonly text: string;
+    };
+
+export interface DesignEvaluationCriterionInput {
+  readonly id: string;
+  readonly label: string;
+  readonly status: DesignEvaluationStatus;
+  readonly score: number;
+  readonly summary: string;
+  readonly evidence?: readonly DesignEvaluationEvidence[];
+}
+
+export interface RecordDesignEvaluationInput {
+  readonly evaluator: string;
+  readonly status: DesignEvaluationStatus;
+  readonly score: number;
+  readonly summary: string;
+  readonly criteria: readonly DesignEvaluationCriterionInput[];
+  readonly evidence?: readonly DesignEvaluationEvidence[];
+  readonly metadata?: ChatMetadata;
+}
+
+export interface DesignEvaluationData {
+  readonly id: string;
+  readonly chatId: string;
+  readonly versionId: string;
+  readonly generationId: string | null;
+  readonly evaluator: string;
+  readonly status: DesignEvaluationStatus;
+  readonly score: number;
+  readonly summary: string;
+  readonly criteria: readonly DesignEvaluationCriterionInput[];
+  readonly evidence: readonly DesignEvaluationEvidence[];
+  readonly metadata: ChatMetadata;
+  readonly createdAt: Date;
+}
+
 export type VersionOrigin = "generated" | "imported" | "edited" | "forked" | "restored";
 
 export interface VersionFile {

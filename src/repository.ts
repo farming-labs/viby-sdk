@@ -3,6 +3,10 @@ import type {
   ChatData,
   ChatDeletionData,
   ChatMetadata,
+  DesignEvaluationData,
+  DesignEvaluationEvidence,
+  DesignEvaluationCriterionInput,
+  DesignEvaluationStatus,
   FrameworkId,
   GenerationAttemptData,
   GenerationAttemptReason,
@@ -101,6 +105,25 @@ export interface MessagePageCursor {
 
 export interface VersionPageCursor {
   readonly number: number;
+}
+
+export interface DesignEvaluationPageCursor {
+  readonly createdAt: Date;
+  readonly id: string;
+}
+
+export interface CreateDesignEvaluationRecord {
+  readonly id: string;
+  readonly chatId: string;
+  readonly versionId: string;
+  readonly generationId: string | null;
+  readonly evaluator: string;
+  readonly status: DesignEvaluationStatus;
+  readonly score: number;
+  readonly summary: string;
+  readonly criteria: readonly DesignEvaluationCriterionInput[];
+  readonly evidence: readonly DesignEvaluationEvidence[];
+  readonly metadata: ChatMetadata;
 }
 
 export interface RestoreVersionRecord<Framework extends FrameworkId = FrameworkId> {
@@ -443,6 +466,21 @@ export interface Repository {
     limit: number,
     after: VersionPageCursor | null,
   ): Promise<RepositoryPage<VersionData<Framework>>>;
+  createDesignEvaluation(
+    scope: UserScope,
+    input: CreateDesignEvaluationRecord,
+  ): Promise<DesignEvaluationData>;
+  getDesignEvaluation(
+    scope: UserScope,
+    versionId: string,
+    id: string,
+  ): Promise<DesignEvaluationData | null>;
+  listDesignEvaluationPage(
+    scope: UserScope,
+    versionId: string,
+    limit: number,
+    after: DesignEvaluationPageCursor | null,
+  ): Promise<RepositoryPage<DesignEvaluationData>>;
   listMessages(scope: UserScope, chatId: string): Promise<MessageData[]>;
   getMessage(scope: UserScope, chatId: string, id: string): Promise<MessageData | null>;
   getAttachment(scope: UserScope, chatId: string, id: string): Promise<AttachmentContent | null>;

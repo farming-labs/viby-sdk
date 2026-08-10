@@ -9,6 +9,10 @@ import type {
   ChatData,
   ChatDeletionData,
   ChatMetadata,
+  DesignEvaluationData,
+  DesignEvaluationCriterionInput,
+  DesignEvaluationEvidence,
+  DesignEvaluationStatus,
   FrameworkId,
   GenerationAttemptData,
   GenerationConfigurationData,
@@ -54,6 +58,8 @@ import type {
   DeleteChatRecord,
   CreatedToolCall,
   CreateSourceVersionRecord,
+  CreateDesignEvaluationRecord,
+  DesignEvaluationPageCursor,
   ForkVersionRecord,
   FailToolCallRecord,
   FailOutboundEventDeliveryRecord,
@@ -199,6 +205,21 @@ interface VersionRow {
   framework: string;
   title: string;
   summary: string;
+  created_at: Date;
+}
+
+interface DesignEvaluationRow {
+  id: string;
+  chat_id: string;
+  version_id: string;
+  generation_id: string | null;
+  evaluator: string;
+  status: DesignEvaluationStatus;
+  score: number;
+  summary: string;
+  criteria: DesignEvaluationCriterionInput[];
+  evidence: DesignEvaluationEvidence[];
+  metadata: ChatMetadata;
   created_at: Date;
 }
 
@@ -1987,6 +2008,90 @@ export class PostgresRepository implements Repository {
     return createPage(rows.map(mapVersion<Framework>), limit);
   }
 
+  async createDesignEvaluation(
+    scope: UserScope,
+    input: CreateDesignEvaluationRecord,
+  ): Promise<DesignEvaluationData> {
+    await this.assertReady();
+    const [row] = await this.#sql<DesignEvaluationRow[]>`
+      INSERT INTO viby.design_evaluations (
+        id, tenant_id, user_id, chat_id, version_id, generation_id,
+        evaluator, status, score, summary, criteria, evidence, metadata
+      )
+      SELECT ${input.id}, ${scope.tenantId}, ${scope.userId}, version.chat_id,
+        version.id, version.generation_id, ${input.evaluator}, ${input.status},
+        ${input.score}, ${input.summary},
+        ${this.#sql.json(JSON.parse(JSON.stringify(input.criteria)))},
+        ${this.#sql.json(JSON.parse(JSON.stringify(input.evidence)))},
+        ${this.#sql.json(JSON.parse(JSON.stringify(input.metadata)))}
+      FROM viby.versions AS version
+      JOIN viby.chats AS chat ON chat.id = version.chat_id
+      WHERE version.tenant_id = ${scope.tenantId} AND version.user_id = ${scope.userId}
+        AND version.id = ${input.versionId} AND version.chat_id = ${input.chatId}
+        AND chat.deleted_at IS NULL
+      RETURNING *
+    `;
+    if (!row) throw new NotFoundError("Version");
+    return mapDesignEvaluation(row);
+  }
+
+  async getDesignEvaluation(
+    scope: UserScope,
+    versionId: string,
+    id: string,
+  ): Promise<DesignEvaluationData | null> {
+    await this.assertReady();
+    const [row] = await this.#sql<DesignEvaluationRow[]>`
+      SELECT evaluation.*
+      FROM viby.design_evaluations AS evaluation
+      JOIN viby.chats AS chat ON chat.id = evaluation.chat_id
+      WHERE evaluation.tenant_id = ${scope.tenantId}
+        AND evaluation.user_id = ${scope.userId}
+        AND evaluation.version_id = ${versionId} AND evaluation.id = ${id}
+        AND chat.deleted_at IS NULL
+      LIMIT 1
+    `;
+    return row ? mapDesignEvaluation(row) : null;
+  }
+
+  async listDesignEvaluationPage(
+    scope: UserScope,
+    versionId: string,
+    limit: number,
+    after: DesignEvaluationPageCursor | null,
+  ): Promise<RepositoryPage<DesignEvaluationData>> {
+    await this.assertReady();
+    const rows = after
+      ? await this.#sql<DesignEvaluationRow[]>`
+          SELECT evaluation.*
+          FROM viby.design_evaluations AS evaluation
+          JOIN viby.chats AS chat ON chat.id = evaluation.chat_id
+          WHERE evaluation.tenant_id = ${scope.tenantId}
+            AND evaluation.user_id = ${scope.userId}
+            AND evaluation.version_id = ${versionId} AND chat.deleted_at IS NULL
+            AND (
+              date_trunc('milliseconds', evaluation.created_at) < ${after.createdAt}
+              OR (
+                date_trunc('milliseconds', evaluation.created_at) = ${after.createdAt}
+                AND evaluation.id < ${after.id}
+              )
+            )
+          ORDER BY date_trunc('milliseconds', evaluation.created_at) DESC, evaluation.id DESC
+          LIMIT ${limit + 1}
+        `
+      : await this.#sql<DesignEvaluationRow[]>`
+          SELECT evaluation.*
+          FROM viby.design_evaluations AS evaluation
+          JOIN viby.chats AS chat ON chat.id = evaluation.chat_id
+          WHERE evaluation.tenant_id = ${scope.tenantId}
+            AND evaluation.user_id = ${scope.userId}
+            AND evaluation.version_id = ${versionId} AND chat.deleted_at IS NULL
+          ORDER BY date_trunc('milliseconds', evaluation.created_at) DESC, evaluation.id DESC
+          LIMIT ${limit + 1}
+        `;
+    return createPage(rows.map(mapDesignEvaluation), limit);
+  }
+
   async listMessages(scope: UserScope, chatId: string): Promise<MessageData[]> {
     await this.assertReady();
     const rows = await this.#sql<MessageRow[]>`
@@ -2332,6 +2437,23 @@ function mapVersion<Framework extends FrameworkId>(row: VersionRow): VersionData
     framework: row.framework as Framework,
     title: row.title,
     summary: row.summary,
+    createdAt: row.created_at,
+  };
+}
+
+function mapDesignEvaluation(row: DesignEvaluationRow): DesignEvaluationData {
+  return {
+    id: row.id,
+    chatId: row.chat_id,
+    versionId: row.version_id,
+    generationId: row.generation_id,
+    evaluator: row.evaluator,
+    status: row.status,
+    score: Number(row.score),
+    summary: row.summary,
+    criteria: row.criteria,
+    evidence: row.evidence,
+    metadata: row.metadata,
     createdAt: row.created_at,
   };
 }
