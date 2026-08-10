@@ -76,6 +76,7 @@ Authentication, OAuth connection registries, event scheduling, and transport inf
 | API compatibility | frozen compile fixture and additive runtime export manifests for package entry points |
 | Sandbox integration | shared conformance suite plus a real local Docker integration job |
 | Reference E2E | request-level chat → SSE → preview → iterate → ZIP download through real Viby objects and deterministic adapters |
+| Generated-project quality matrix | Farm, TanStack Start, and a custom framework ID across generation, runtime checks, preview HTTP, iteration, evaluation, and ZIP parity |
 | Package smoke test | packed artifact install, public import, CLI, and exported subpaths |
 
 ## Deliberately outside the current release

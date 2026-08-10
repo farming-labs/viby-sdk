@@ -53,6 +53,19 @@ jobs:
       - run: npm ci --prefix examples/basic
       - run: npm run typecheck --prefix examples/basic
 
+  quality:
+    name: Generated project quality matrix
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run test:quality
+
   postgres:
     name: PostgreSQL integration
     runs-on: ubuntu-latest
