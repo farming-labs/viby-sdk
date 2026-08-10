@@ -136,10 +136,11 @@ Capability discovery, the adapter conformance suite, background processes, readi
 
 Generation-scoped model/skill configuration, durable multimodal input snapshots and outputs, and immutable design evaluation results are shipped.
 
+Visual evaluation workflows are shipped on the provider-neutral browser contract. They capture one or more preview routes, persist screenshot bytes outside PostgreSQL, and link the durable artifact references to immutable design evaluations. Quality gates are callbacks, so products can use rules, visual regression, any model runtime, or their own agent without a hard-coded design model.
+
 Persistence is also provider-neutral: `DATABASE_URL` selects the built-in PostgreSQL implementation, while `persistence` accepts a host-owned durable adapter verified by the reusable conformance suite. Custom adapters retain responsibility for their own transactions, migrations, credentials, and binary-store integration.
 
-1. Visual evaluation workflows on top of the shipped Playwright browser adapter.
-2. Explicit Git and deployment adapters after the portable generation workflow is complete.
+1. Explicit Git and deployment adapters after the portable generation workflow is complete.
 
 ## Persistence rules
 

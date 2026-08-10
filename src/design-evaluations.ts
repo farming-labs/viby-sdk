@@ -101,6 +101,12 @@ function normalizeEvidence(
         attachmentId: assertIdentifier(evidence.attachmentId, `${label} attachment id`),
         ...normalizeDescription(evidence.description, label),
       };
+    case "artifact":
+      return {
+        type: "artifact",
+        artifactId: assertIdentifier(evidence.artifactId, `${label} artifact id`),
+        ...normalizeDescription(evidence.description, label),
+      };
     case "url": {
       const url = normalizeUrl(evidence.url, label);
       return { type: "url", url, ...normalizeDescription(evidence.description, label) };

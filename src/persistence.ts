@@ -18,6 +18,7 @@ export type {
   CreatedToolCall,
   CreateDesignEvaluationRecord,
   CreateGeneratedArtifactRecord,
+  CreateVisualArtifactRecord,
   CreateGenerationRecord,
   CreateSourceVersionRecord,
   CreateToolCallRecord,

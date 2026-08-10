@@ -23,6 +23,8 @@ import type {
   UserScope,
   VersionData,
   VersionFile,
+  VisualArtifactContent,
+  VisualArtifactData,
 } from "../../src/types.js";
 import type {
   CreateSandboxLeaseRecord,
@@ -39,6 +41,7 @@ import type {
   CreateAttemptRecord,
   CreatedGeneration,
   CreateGenerationRecord,
+  CreateVisualArtifactRecord,
   CreateToolCallRecord,
   DeleteChatRecord,
   CreatedToolCall,
@@ -105,6 +108,7 @@ export class MemoryRepository implements Repository {
   readonly messages: Array<MessageData & ScopedRecord> = [];
   readonly attachments = new Map<string, AttachmentContent & ScopedRecord>();
   readonly generatedArtifacts = new Map<string, GeneratedArtifactContent & ScopedRecord>();
+  readonly visualArtifacts = new Map<string, VisualArtifactContent & ScopedRecord>();
   readonly files = new Map<string, VersionFile[]>();
   readonly changes = new Map<string, SourceChange[]>();
   readonly events: Array<GenerationEvent & ScopedRecord> = [];
@@ -394,6 +398,11 @@ export class MemoryRepository implements Repository {
       for (const [artifactId, artifact] of this.generatedArtifacts) {
         if (artifact.chatId === id && inScope(artifact, scope)) {
           this.generatedArtifacts.delete(artifactId);
+        }
+      }
+      for (const [artifactId, artifact] of this.visualArtifacts) {
+        if (artifact.chatId === id && inScope(artifact, scope)) {
+          this.visualArtifacts.delete(artifactId);
         }
       }
       for (let index = this.events.length - 1; index >= 0; index -= 1) {
@@ -1498,6 +1507,57 @@ export class MemoryRepository implements Repository {
     this.#requireGeneration(scope, generationId);
     const artifact = this.generatedArtifacts.get(id);
     return artifact && artifact.generationId === generationId && inScope(artifact, scope)
+      ? { ...artifact, bytes: Uint8Array.from(artifact.bytes) }
+      : null;
+  }
+
+  async createVisualArtifact(
+    scope: UserScope,
+    input: CreateVisualArtifactRecord,
+  ): Promise<VisualArtifactData> {
+    const version = await this.getVersion(scope, input.versionId);
+    if (!version || version.chatId !== input.chatId) throw new NotFoundError("Version");
+    const artifact: VisualArtifactContent & ScopedRecord = {
+      id: input.id,
+      chatId: input.chatId,
+      versionId: input.versionId,
+      pageId: input.pageId,
+      path: input.path,
+      url: input.url,
+      filename: input.filename,
+      mediaType: input.mediaType,
+      width: input.width,
+      height: input.height,
+      size: input.size,
+      checksum: input.checksum,
+      artifact: { store: "memory", key: `visual/${input.versionId}/${input.id}` },
+      bytes: Uint8Array.from(input.bytes),
+      createdAt: new Date(),
+      ...scope,
+    };
+    this.visualArtifacts.set(artifact.id, artifact);
+    const { bytes: _bytes, tenantId: _tenantId, userId: _userId, ...data } = artifact;
+    return data;
+  }
+
+  async listVisualArtifacts(scope: UserScope, versionId: string): Promise<VisualArtifactData[]> {
+    const version = await this.getVersion(scope, versionId);
+    if (!version) return [];
+    return [...this.visualArtifacts.values()]
+      .filter((artifact) => artifact.versionId === versionId && inScope(artifact, scope))
+      .sort((left, right) => (
+        left.createdAt.getTime() - right.createdAt.getTime() || left.id.localeCompare(right.id)
+      ))
+      .map(({ bytes: _bytes, tenantId: _tenantId, userId: _userId, ...artifact }) => artifact);
+  }
+
+  async getVisualArtifact(
+    scope: UserScope,
+    versionId: string,
+    id: string,
+  ): Promise<VisualArtifactContent | null> {
+    const artifact = this.visualArtifacts.get(id);
+    return artifact && artifact.versionId === versionId && inScope(artifact, scope)
       ? { ...artifact, bytes: Uint8Array.from(artifact.bytes) }
       : null;
   }

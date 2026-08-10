@@ -15,6 +15,19 @@ export { AgentProjectGenerator } from "./agent-runner.js";
 export { defineGenerationEngine } from "./generation-engine.js";
 export { BrowserSession, openBrowserSession } from "./browser.js";
 export { openSandboxPreview } from "./browser-preview.js";
+export { accessibilityGate, consoleErrorGate } from "./visual-evaluation.js";
+export type {
+  AccessibilityGateOptions,
+  ConsoleErrorGateOptions,
+  VisualEvaluationCapture,
+  VisualEvaluationInput,
+  VisualEvaluationPage,
+  VisualEvaluationResult,
+  VisualPreviewSource,
+  VisualQualityGate,
+  VisualQualityGateContext,
+  VisualQualityGateResult,
+} from "./visual-evaluation.js";
 export type { PersistenceAdapter } from "./persistence.js";
 export type {
   ArtifactKind,
@@ -271,5 +284,7 @@ export type {
   VersionData,
   VersionFile,
   VersionOrigin,
+  VisualArtifactContent,
+  VisualArtifactData,
   VibyConfig,
 } from "./types.js";
