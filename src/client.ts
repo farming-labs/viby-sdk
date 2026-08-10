@@ -26,6 +26,9 @@ import type {
   GenerationStreamOptions,
   GenerationTaskData,
   GenerationTaskResolution,
+  GeneratedArtifactContent,
+  GeneratedArtifactData,
+  GeneratedArtifactKind,
   GenerationWaitOptions,
   IterateInput,
   MessageData,
@@ -61,6 +64,7 @@ import type {
   AgentToolCall,
   AgentToolCallInput,
   AgentToolCallWriter,
+  GeneratorOutput,
   ProjectGenerator,
 } from "./generator.js";
 import {
@@ -69,6 +73,7 @@ import {
 } from "./generation-engine.js";
 import type {
   CreateAttachmentRecord,
+  CreateGeneratedArtifactRecord,
   GenerationWorkerLease,
   Repository,
 } from "./repository.js";
@@ -157,6 +162,9 @@ const DEFAULT_OUTBOUND_LEASE_MS = 30_000;
 const MAX_GENERATION_ATTACHMENTS = 10;
 const MAX_ATTACHMENT_BYTES = 10_000_000;
 const MAX_GENERATION_ATTACHMENT_BYTES = 25_000_000;
+const MAX_GENERATED_ARTIFACTS = 20;
+const MAX_GENERATED_ARTIFACT_BYTES = 25_000_000;
+const MAX_GENERATED_ARTIFACT_TOTAL_BYTES = 100_000_000;
 
 export interface OutboundEventDeliveryOptions extends GenerationEventOptions {
   readonly sink: string;
@@ -928,6 +936,25 @@ export class Generation<Framework extends FrameworkId = FrameworkId> {
     );
   }
 
+  async artifacts(): Promise<readonly GeneratedArtifactData[]> {
+    await assertActiveChat(this.#dependencies, this.chatId);
+    return this.#dependencies.repository.listGeneratedArtifacts(
+      this.#dependencies.scope,
+      this.id,
+    );
+  }
+
+  async getArtifact(id: string): Promise<GeneratedArtifactContent> {
+    await assertActiveChat(this.#dependencies, this.chatId);
+    const artifact = await this.#dependencies.repository.getGeneratedArtifact(
+      this.#dependencies.scope,
+      this.id,
+      assertIdentifier(id, "generated artifact id"),
+    );
+    if (!artifact) throw new NotFoundError("Generated artifact");
+    return artifact;
+  }
+
   async events(options: GenerationEventOptions = {}): Promise<GenerationEventPage> {
     await assertActiveChat(this.#dependencies, this.chatId);
     const after = normalizeCursor(options.after);
@@ -1599,6 +1626,88 @@ function normalizeAttachments(
   });
 }
 
+function normalizeGeneratedArtifacts(
+  value: GeneratorOutput["artifacts"],
+): readonly CreateGeneratedArtifactRecord[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.length > MAX_GENERATED_ARTIFACTS) {
+    throw new ConfigurationError(
+      `Generated artifacts must be an array with at most ${MAX_GENERATED_ARTIFACTS} items.`,
+    );
+  }
+  let totalBytes = 0;
+  return value.map((artifact, position) => {
+    if (!artifact || typeof artifact !== "object") {
+      throw new ConfigurationError("Each generated artifact must be an object.");
+    }
+    const filename = artifact.filename.trim();
+    if (
+      filename.length === 0
+      || filename.length > 255
+      || filename === "."
+      || filename === ".."
+      || /[\\/\u0000-\u001f\u007f]/.test(filename)
+    ) {
+      throw new ConfigurationError(`Generated artifact filename is invalid: ${artifact.filename}`);
+    }
+    const mediaType = artifact.mediaType.trim().toLowerCase();
+    if (!/^[a-z0-9][a-z0-9!#$&^_.+-]{0,126}\/[a-z0-9][a-z0-9!#$&^_.+-]{0,126}$/.test(mediaType)) {
+      throw new ConfigurationError(`Generated artifact media type is invalid: ${artifact.mediaType}`);
+    }
+    if (!(artifact.bytes instanceof Uint8Array)) {
+      throw new ConfigurationError(`Generated artifact ${filename} bytes must be a Uint8Array.`);
+    }
+    if (
+      artifact.bytes.byteLength === 0
+      || artifact.bytes.byteLength > MAX_GENERATED_ARTIFACT_BYTES
+    ) {
+      throw new ConfigurationError(
+        `Generated artifact ${filename} must contain 1-${MAX_GENERATED_ARTIFACT_BYTES} bytes.`,
+      );
+    }
+    totalBytes += artifact.bytes.byteLength;
+    if (totalBytes > MAX_GENERATED_ARTIFACT_TOTAL_BYTES) {
+      throw new ConfigurationError(
+        `Generated artifacts cannot exceed ${MAX_GENERATED_ARTIFACT_TOTAL_BYTES} total bytes.`,
+      );
+    }
+    const bytes = Uint8Array.from(artifact.bytes);
+    return {
+      id: createId(),
+      position,
+      kind: normalizeGeneratedArtifactKind(artifact.kind, mediaType),
+      filename,
+      mediaType,
+      bytes,
+      size: bytes.byteLength,
+      checksum: sha256(bytes),
+    };
+  });
+}
+
+function normalizeGeneratedArtifactKind(
+  value: GeneratedArtifactKind | undefined,
+  mediaType: string,
+): GeneratedArtifactKind {
+  const inferred = mediaType.startsWith("image/")
+    ? "image"
+    : mediaType.startsWith("audio/")
+      ? "audio"
+      : mediaType.startsWith("video/")
+        ? "video"
+        : mediaType.startsWith("text/")
+          || mediaType === "application/pdf"
+          || mediaType.includes("document")
+          || mediaType.includes("json")
+          ? "document"
+          : "binary";
+  if (value === undefined) return inferred;
+  if (!["image", "audio", "video", "document", "binary"].includes(value)) {
+    throw new ConfigurationError(`Generated artifact kind is invalid: ${value}`);
+  }
+  return value;
+}
+
 function normalizeGenerationConfiguration<Framework extends FrameworkId>(
   input: GenerateInput,
   defaults: SkillGroups,
@@ -1905,6 +2014,7 @@ class GenerationRunner<Framework extends FrameworkId> {
       );
       signal.throwIfAborted();
       await trace.finish();
+      const artifacts = normalizeGeneratedArtifacts(output.artifacts);
 
       if (output.kind === "task") {
         const inputTokens = output.usage.inputTokens ?? null;
@@ -1938,6 +2048,7 @@ class GenerationRunner<Framework extends FrameworkId> {
           totalTokens,
           finishReason: output.finishReason,
           cost,
+          artifacts,
         });
         telemetryOutcome = "waiting";
         recordGenerationUsage(
@@ -1993,6 +2104,7 @@ class GenerationRunner<Framework extends FrameworkId> {
         totalTokens,
         finishReason: output.finishReason,
         cost,
+        artifacts,
       });
       telemetryOutcome = "succeeded";
       recordGenerationUsage(

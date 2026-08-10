@@ -291,6 +291,33 @@ export interface AttachmentContent extends AttachmentData {
   readonly bytes: Uint8Array;
 }
 
+export type GeneratedArtifactKind =
+  | "image"
+  | "audio"
+  | "video"
+  | "document"
+  | "binary";
+
+export interface GeneratedArtifactData {
+  readonly id: string;
+  readonly chatId: string;
+  readonly generationId: string;
+  readonly attemptId: string;
+  readonly versionId: string | null;
+  readonly position: number;
+  readonly kind: GeneratedArtifactKind;
+  readonly filename: string;
+  readonly mediaType: string;
+  readonly size: number;
+  readonly checksum: string;
+  readonly artifact: ArtifactReference;
+  readonly createdAt: Date;
+}
+
+export interface GeneratedArtifactContent extends GeneratedArtifactData {
+  readonly bytes: Uint8Array;
+}
+
 export type ToolCallEffect = "read" | "write" | "external";
 export type ToolCallStatus = "pending" | "succeeded" | "failed";
 
@@ -531,6 +558,7 @@ export type GenerationEventType =
   | "part.delta"
   | "part.completed"
   | "part.failed"
+  | "artifact.created"
   | "attempt.waiting"
   | "task.created"
   | "task.resolved"
@@ -567,6 +595,15 @@ export interface GenerationEventDataMap {
       readonly code: string | null;
       readonly retryable: boolean;
     };
+  };
+  readonly "artifact.created": {
+    readonly artifactId: string;
+    readonly position: number;
+    readonly kind: GeneratedArtifactKind;
+    readonly filename: string;
+    readonly mediaType: string;
+    readonly size: number;
+    readonly checksum: string;
   };
   readonly "attempt.waiting": { readonly taskId: string };
   readonly "task.created": { readonly task: GenerationTaskRequest & { readonly id: string } };

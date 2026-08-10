@@ -62,7 +62,7 @@ The official v2 documentation organizes the API around these resources and endpo
 | Per-request system prompt | `systemPrompt` | durable generation-scoped instructions | Shipped |
 | Per-request model options | `modelConfiguration` | stable configured model aliases with persisted provider/model identity | Shipped |
 | Per-request skills | remote, memory, and project skills | durable categorized overrides plus stored resolved snapshots | Shipped |
-| Attachments and image generation | attachment URLs and image option | immutable input snapshots in a provider-neutral artifact store, scoped retrieval, and AI SDK multimodal file parts | Partial — input shipped; generated binary output planned |
+| Attachments and image generation | attachment URLs and image option | immutable input snapshots, AI SDK multimodal file parts, and durable generated images or other binary outputs in a provider-neutral artifact store | Shipped |
 
 Viby does not copy v0's privacy enum, author identity, account URLs, or hosted write-permission field. The embedding application already owns those decisions.
 
@@ -97,7 +97,7 @@ Thinking content must be represented as provider-safe summaries or opaque status
 | Download source ZIP | Download Chat Files | `version.download` | Shipped |
 | Restore prior source | Restore Message | `version.restore` | Shipped |
 | Branch source history | Duplicate Chat | `version.fork` | Shipped |
-| Binary files | base64-encoded chat files | source import supports validated UTF-8 projects; binary artifact policy is planned | Partial |
+| Binary files | base64-encoded chat files | source remains validated UTF-8 while generation-owned binary artifacts use external storage with durable metadata and scoped retrieval | Partial |
 | Locked files | retained v1 capability and import option | `filePolicy.locked`, per-file import locks, and enforcement across all edit paths | Shipped |
 | Incremental agent patches | file-edit message parts | `version.workspace` tools and generated source changes persisted with the materialized snapshot | Shipped |
 
@@ -134,7 +134,7 @@ Viby separates a portable tool call from the credentialed connection used to ful
 
 Capability discovery, the adapter conformance suite, background processes, readiness checks, durable sandbox leases, reconnect-by-ID, generation worker leases with heartbeats, sandbox command policy enforcement, immutable agent workspace change sets, typed durable message parts, permission-gated agent sandbox actions, source import adapters, file locks, retention-aware deletion, standard SSE/Web responses, scoped MCP tools, durable signed outbound delivery, OpenTelemetry hooks, and cost attribution are shipped.
 
-Generation-scoped model/skill configuration, durable multimodal input snapshots, and immutable design evaluation results are shipped.
+Generation-scoped model/skill configuration, durable multimodal input snapshots and outputs, and immutable design evaluation results are shipped.
 
 1. Browser/screenshot tools behind a portable tool contract.
 2. Explicit Git and deployment adapters after the portable generation workflow is complete.

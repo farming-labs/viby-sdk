@@ -63,6 +63,7 @@ Preview URLs exist only when the configured adapter exposes port URLs and the ho
 | Cost attribution | host-defined currency/credit calculator, immutable attempt cost, cumulative generation cost, and usage parts |
 | Generation configuration | durable per-request model aliases, host instructions, categorized skill overlays, and JSON metadata |
 | Multimodal input | immutable attachment bytes in an external artifact store, lightweight PostgreSQL metadata, scoped retrieval, and standard AI SDK file parts |
+| Generated artifacts | durable images, audio, video, documents, and binary outputs with ownership, checksums, artifact-store references, and resumable creation events |
 | Design evaluation | immutable version-bound rubric results, criterion scores, validated evidence references, metadata, and cursor pagination |
 
 Authentication, OAuth connection registries, event scheduling, and transport infrastructure remain host-owned. Viby stores delivery state but does not run a hidden queue or scheduler.
@@ -85,7 +86,7 @@ Authentication, OAuth connection registries, event scheduling, and transport inf
 
 - Git repository push, branch, commit, and pull-request adapters;
 - deployment adapters, provider connections, and managed preview hosting;
-- screenshot capture and browser automation;
+- screenshot capture and browser automation (generated binary storage is already available);
 - a public custom storage adapter (Postgres is currently the required persistence implementation);
 - managed authentication, billing, Postgres, workers, queues, secrets, or a Viby API key.
 

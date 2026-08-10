@@ -74,6 +74,12 @@ test("persists a durable generation, iteration, events, and download in Postgres
         files,
         usage,
         finishReason: "stop",
+        artifacts: number === 1 ? [{
+          kind: "image",
+          filename: "generated-preview.png",
+          mediaType: "image/png",
+          bytes: new Uint8Array([137, 80, 78, 71]),
+        }] : [],
       };
     },
   };
@@ -131,6 +137,14 @@ test("persists a durable generation, iteration, events, and download in Postgres
       currency: "USD",
     });
     const generationMessages = (await chat.listMessages()).items;
+    const generatedArtifacts = await generation.artifacts();
+    assert.equal(generatedArtifacts.length, 1);
+    assert.equal(generatedArtifacts[0]?.artifact.store, "filesystem");
+    assert.equal(generatedArtifacts[0]?.versionId, outcome.version.id);
+    assert.deepEqual(
+      (await generation.getArtifact(generatedArtifacts[0]!.id)).bytes,
+      new Uint8Array([137, 80, 78, 71]),
+    );
     const designEvaluation = await outcome.version.recordDesignEvaluation({
       evaluator: "postgres-visual@1",
       status: "passed",
@@ -164,6 +178,7 @@ test("persists a durable generation, iteration, events, and download in Postgres
       "part.completed",
       "part.started",
       "part.completed",
+      "artifact.created",
       "attempt.succeeded",
       "generation.succeeded",
     ]);

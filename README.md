@@ -69,6 +69,21 @@ const viby = createViby({
 
 Configure `artifactStore` before accepting attachment bytes. Custom stores implement ordinary `put`, `get`, and idempotent `delete` methods and retain their own credentials. Adapter authors can verify byte roundtrips and defensive reads with `verifyArtifactStore` from `@viby/sdk/artifact/conformance`. Existing attachment bytes from older schemas remain readable through the explicit `postgres-legacy` migration marker; all new binary writes go to the configured store.
 
+The same store holds durable binary output from a generation engine. AI SDK generated files are captured automatically; custom engines can return an `artifacts` array containing images, audio, video, documents, or arbitrary binary files. Viby persists ownership, ordering, MIME type, size, checksum, and the opaque store reference while keeping bytes outside PostgreSQL:
+
+```ts
+const generation = await chat.start({ prompt: "Create the app and a share image" });
+await generation.wait();
+
+const [artifact] = await generation.artifacts();
+if (artifact) {
+  const content = await generation.getArtifact(artifact.id);
+  console.log(content.mediaType, content.bytes);
+}
+```
+
+Every stored output emits an `artifact.created` event on the normal resumable generation cursor. Artifacts created with a successful source result link to its immutable version; artifacts accompanying a blocking task remain generation- and attempt-owned until the host decides what to do next. Store references are not public URLs, so serving or signing downloads remains an explicit host concern.
+
 Advanced consumers can replace the AI SDK shortcut with a provider-neutral generation engine. The engine may call a custom model runtime, run an agent, or delegate to an orchestration service while Viby continues to own durable attempts, events, tasks, usage, and immutable source versions:
 
 ```ts

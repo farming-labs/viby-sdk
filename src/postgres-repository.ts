@@ -30,6 +30,9 @@ import type {
   GenerationTaskData,
   GenerationTaskRequest,
   GenerationTaskResolution,
+  GeneratedArtifactContent,
+  GeneratedArtifactData,
+  GeneratedArtifactKind,
   MessageData,
   MessagePart,
   MessagePartInput,
@@ -59,6 +62,7 @@ import type {
   CreateAttemptRecord,
   CreatedGeneration,
   CreateGenerationRecord,
+  CreateGeneratedArtifactRecord,
   CreateToolCallRecord,
   DeleteChatRecord,
   CreatedToolCall,
@@ -273,6 +277,35 @@ interface StoredAttachmentInput {
   readonly artifactKey: string;
 }
 
+interface GeneratedArtifactRow {
+  id: string;
+  chat_id: string;
+  generation_id: string;
+  attempt_id: string;
+  version_id: string | null;
+  position: number;
+  kind: GeneratedArtifactKind;
+  filename: string;
+  media_type: string;
+  size: number;
+  checksum: string;
+  artifact_store: string;
+  artifact_key: string;
+  created_at: Date;
+}
+
+interface StoredGeneratedArtifactInput extends Omit<CreateGeneratedArtifactRecord, "bytes"> {
+  readonly artifactStore: string;
+  readonly artifactKey: string;
+}
+
+interface StoredArtifactLocation {
+  readonly id: string;
+  readonly artifact_store: string;
+  readonly artifact_key: string;
+  readonly kind: "attachment" | "generated";
+}
+
 interface ToolCallRow {
   id: string;
   generation_id: string;
@@ -345,6 +378,7 @@ export class PostgresRepository implements Repository {
         AND to_regclass('viby.message_parts') IS NOT NULL
         AND to_regclass('viby.tool_calls') IS NOT NULL
         AND to_regclass('viby.outbound_event_deliveries') IS NOT NULL
+        AND to_regclass('viby.generated_artifacts') IS NOT NULL
         AND EXISTS (
           SELECT 1 FROM information_schema.columns
           WHERE table_schema = 'viby' AND table_name = 'attachments'
@@ -721,12 +755,16 @@ export class PostgresRepository implements Repository {
         LIMIT ${limit}
         FOR UPDATE SKIP LOCKED
       `;
-      if (candidates.length === 0) return { count: 0, artifacts: [] as AttachmentRow[] };
+      if (candidates.length === 0) return { count: 0, artifacts: [] as StoredArtifactLocation[] };
       const ids = candidates.map(({ id }) => id);
-      const artifacts = await sql<AttachmentRow[]>`
-        SELECT id, chat_id, message_id, generation_id, filename, media_type,
-          size, checksum, artifact_store, artifact_key, created_at
+      const artifacts = await sql<StoredArtifactLocation[]>`
+        SELECT id, artifact_store, artifact_key, 'attachment'::text AS kind
         FROM viby.attachments
+        WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+          AND chat_id = ANY(${sql.array(ids)}::uuid[])
+        UNION ALL
+        SELECT id, artifact_store, artifact_key, 'generated'::text AS kind
+        FROM viby.generated_artifacts
         WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
           AND chat_id = ANY(${sql.array(ids)}::uuid[])
       `;
@@ -739,7 +777,7 @@ export class PostgresRepository implements Repository {
       return { count: deleted.length, artifacts };
     });
     await Promise.allSettled(result.artifacts.map((artifact) => (
-      this.#deleteStoredAttachment(scope, artifact)
+      this.#deleteStoredArtifact(scope, artifact)
     )));
     return result.count;
   }
@@ -1349,7 +1387,14 @@ export class PostgresRepository implements Repository {
     input: CompleteGenerationRecord<Framework>,
   ): Promise<VersionData<Framework>> {
     await this.assertReady();
-    const row = await this.#sql.begin(async (sql) => {
+    const artifacts = await this.#storeGeneratedArtifacts(
+      scope,
+      input.generationId,
+      input.artifacts ?? [],
+    );
+    let row: VersionRow;
+    try {
+      row = await this.#sql.begin(async (sql) => {
       const [generation] = await sql<GenerationRow[]>`
         SELECT * FROM viby.generations
         WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
@@ -1423,6 +1468,14 @@ export class PostgresRepository implements Repository {
         `;
       }
 
+      await insertGeneratedArtifacts(sql, scope, {
+        chatId: generation.chat_id,
+        generationId: input.generationId,
+        attemptId: input.attemptId,
+        versionId,
+        artifacts,
+      });
+
       await insertMessage(sql, scope, {
         chatId: generation.chat_id,
         generationId: input.generationId,
@@ -1474,7 +1527,11 @@ export class PostgresRepository implements Repository {
         )
       `;
       return version;
-    });
+      });
+    } catch (error) {
+      await this.#cleanupGeneratedArtifacts(scope, artifacts);
+      throw error;
+    }
     return mapVersion<Framework>(row);
   }
 
@@ -1483,7 +1540,14 @@ export class PostgresRepository implements Repository {
     input: PauseGenerationRecord,
   ): Promise<GenerationTaskData> {
     await this.assertReady();
-    const row = await this.#sql.begin(async (sql) => {
+    const artifacts = await this.#storeGeneratedArtifacts(
+      scope,
+      input.generationId,
+      input.artifacts ?? [],
+    );
+    let row: GenerationTaskRow;
+    try {
+      row = await this.#sql.begin(async (sql) => {
       const [generation] = await sql<GenerationRow[]>`
         SELECT * FROM viby.generations
         WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
@@ -1519,6 +1583,14 @@ export class PostgresRepository implements Repository {
         RETURNING id, generation_id, attempt_id, status, payload, resolution, created_at, resolved_at
       `;
       if (!task) throw new Error("Postgres did not return the created task.");
+
+      await insertGeneratedArtifacts(sql, scope, {
+        chatId: generation.chat_id,
+        generationId: input.generationId,
+        attemptId: input.attemptId,
+        versionId: null,
+        artifacts,
+      });
 
       await insertMessage(sql, scope, {
         chatId: generation.chat_id,
@@ -1568,7 +1640,11 @@ export class PostgresRepository implements Repository {
         )
       `;
       return task;
-    });
+      });
+    } catch (error) {
+      await this.#cleanupGeneratedArtifacts(scope, artifacts);
+      throw error;
+    }
     return mapTask(row);
   }
 
@@ -2198,6 +2274,53 @@ export class PostgresRepository implements Repository {
     return Promise.all(rows.map((row) => this.#loadAttachmentContent(scope, row)));
   }
 
+  async listGeneratedArtifacts(
+    scope: UserScope,
+    generationId: string,
+  ): Promise<GeneratedArtifactData[]> {
+    await this.assertReady();
+    const rows = await this.#sql<GeneratedArtifactRow[]>`
+      SELECT id, chat_id, generation_id, attempt_id, version_id, position, kind, filename,
+        media_type, size, checksum, artifact_store, artifact_key, created_at
+      FROM viby.generated_artifacts
+      WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+        AND generation_id = ${generationId}
+      ORDER BY created_at, attempt_id, position, id
+    `;
+    return rows.map(mapGeneratedArtifact);
+  }
+
+  async getGeneratedArtifact(
+    scope: UserScope,
+    generationId: string,
+    id: string,
+  ): Promise<GeneratedArtifactContent | null> {
+    await this.assertReady();
+    const [row] = await this.#sql<GeneratedArtifactRow[]>`
+      SELECT id, chat_id, generation_id, attempt_id, version_id, position, kind, filename,
+        media_type, size, checksum, artifact_store, artifact_key, created_at
+      FROM viby.generated_artifacts
+      WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+        AND generation_id = ${generationId} AND id = ${id}
+      LIMIT 1
+    `;
+    if (!row) return null;
+    if (!this.#artifactStore || this.#artifactStore.id !== row.artifact_store) {
+      throw new ConfigurationError(
+        `Artifact store ${row.artifact_store} is required to read generated artifact ${row.id}.`,
+      );
+    }
+    const bytes = await this.#artifactStore.get(
+      row.artifact_key,
+      generatedArtifactContext(scope, row.id),
+    );
+    if (!bytes) throw new NotFoundError("Generated artifact content");
+    if (bytes.byteLength !== row.size || sha256(bytes) !== row.checksum) {
+      throw new Error(`Generated artifact ${row.id} failed its persisted size or checksum validation.`);
+    }
+    return { ...mapGeneratedArtifact(row), bytes: Uint8Array.from(bytes) };
+  }
+
   async listMessagePage(
     scope: UserScope,
     chatId: string,
@@ -2393,6 +2516,59 @@ export class PostgresRepository implements Repository {
     }
   }
 
+  async #storeGeneratedArtifacts(
+    scope: UserScope,
+    generationId: string,
+    artifacts: readonly CreateGeneratedArtifactRecord[],
+  ): Promise<StoredGeneratedArtifactInput[]> {
+    if (artifacts.length === 0) return [];
+    if (!this.#artifactStore) {
+      throw new ConfigurationError(
+        "artifactStore is required when a generation produces binary artifacts.",
+      );
+    }
+    const stored: StoredGeneratedArtifactInput[] = [];
+    try {
+      for (const artifact of artifacts) {
+        const artifactKey = `generated/${generationId}/${artifact.id}-${artifact.checksum}`;
+        await this.#artifactStore.put({
+          key: artifactKey,
+          bytes: Uint8Array.from(artifact.bytes),
+          mediaType: artifact.mediaType,
+          checksum: artifact.checksum,
+        }, generatedArtifactContext(scope, artifact.id));
+        stored.push({
+          id: artifact.id,
+          position: artifact.position,
+          kind: artifact.kind,
+          filename: artifact.filename,
+          mediaType: artifact.mediaType,
+          size: artifact.size,
+          checksum: artifact.checksum,
+          artifactStore: this.#artifactStore.id,
+          artifactKey,
+        });
+      }
+      return stored;
+    } catch (error) {
+      await this.#cleanupGeneratedArtifacts(scope, stored);
+      throw error;
+    }
+  }
+
+  async #cleanupGeneratedArtifacts(
+    scope: UserScope,
+    artifacts: readonly StoredGeneratedArtifactInput[],
+  ): Promise<void> {
+    if (!this.#artifactStore) return;
+    await Promise.allSettled(artifacts.map((artifact) => (
+      this.#artifactStore!.delete(
+        artifact.artifactKey,
+        generatedArtifactContext(scope, artifact.id),
+      )
+    )));
+  }
+
   async #loadAttachmentContent(
     scope: UserScope,
     row: AttachmentRow,
@@ -2417,7 +2593,7 @@ export class PostgresRepository implements Repository {
     return { ...mapAttachment(row), bytes: Uint8Array.from(bytes) };
   }
 
-  async #deleteStoredAttachment(scope: UserScope, row: AttachmentRow): Promise<void> {
+  async #deleteStoredArtifact(scope: UserScope, row: StoredArtifactLocation): Promise<void> {
     if (
       row.artifact_store === "postgres-legacy"
       || !this.#artifactStore
@@ -2425,13 +2601,19 @@ export class PostgresRepository implements Repository {
     ) return;
     await this.#artifactStore.delete(
       row.artifact_key,
-      attachmentContext(scope, row.id),
+      row.kind === "attachment"
+        ? attachmentContext(scope, row.id)
+        : generatedArtifactContext(scope, row.id),
     );
   }
 }
 
 function attachmentContext(scope: UserScope, ownerId: string): ArtifactStoreContext {
   return { ...scope, kind: "attachment", ownerId };
+}
+
+function generatedArtifactContext(scope: UserScope, ownerId: string): ArtifactStoreContext {
+  return { ...scope, kind: "generated", ownerId };
 }
 
 function mapChat<Framework extends FrameworkId>(row: ChatRow): ChatData<Framework> {
@@ -2622,6 +2804,24 @@ function mapAttachment(row: AttachmentRow): AttachmentData {
   };
 }
 
+function mapGeneratedArtifact(row: GeneratedArtifactRow): GeneratedArtifactData {
+  return {
+    id: row.id,
+    chatId: row.chat_id,
+    generationId: row.generation_id,
+    attemptId: row.attempt_id,
+    versionId: row.version_id,
+    position: row.position,
+    kind: row.kind,
+    filename: row.filename,
+    mediaType: row.media_type,
+    size: row.size,
+    checksum: row.checksum,
+    artifact: { store: row.artifact_store, key: row.artifact_key },
+    createdAt: row.created_at,
+  };
+}
+
 function mapMessagePart(row: MessagePartRow): MessagePart {
   return {
     id: row.id,
@@ -2633,6 +2833,51 @@ function mapMessagePart(row: MessagePartRow): MessagePart {
     data: row.data,
     createdAt: row.created_at,
   } as MessagePart;
+}
+
+async function insertGeneratedArtifacts(
+  sql: postgres.TransactionSql,
+  scope: UserScope,
+  input: {
+    readonly chatId: string;
+    readonly generationId: string;
+    readonly attemptId: string;
+    readonly versionId: string | null;
+    readonly artifacts: readonly StoredGeneratedArtifactInput[];
+  },
+): Promise<void> {
+  for (const artifact of input.artifacts) {
+    const [row] = await sql<GeneratedArtifactRow[]>`
+      INSERT INTO viby.generated_artifacts (
+        id, tenant_id, user_id, chat_id, generation_id, attempt_id, version_id, position,
+        kind, filename, media_type, size, checksum, artifact_store, artifact_key
+      ) VALUES (
+        ${artifact.id}, ${scope.tenantId}, ${scope.userId}, ${input.chatId},
+        ${input.generationId}, ${input.attemptId}, ${input.versionId}, ${artifact.position}, ${artifact.kind},
+        ${artifact.filename}, ${artifact.mediaType}, ${artifact.size}, ${artifact.checksum},
+        ${artifact.artifactStore}, ${artifact.artifactKey}
+      )
+      RETURNING id, chat_id, generation_id, attempt_id, version_id, position, kind, filename,
+        media_type, size, checksum, artifact_store, artifact_key, created_at
+    `;
+    if (!row) throw new Error("Postgres did not return the generated artifact.");
+    await sql`
+      INSERT INTO viby.generation_events (
+        tenant_id, user_id, generation_id, attempt_id, type, data
+      ) VALUES (
+        ${scope.tenantId}, ${scope.userId}, ${input.generationId}, ${input.attemptId},
+        'artifact.created', ${sql.json({
+          artifactId: row.id,
+          position: row.position,
+          kind: row.kind,
+          filename: row.filename,
+          mediaType: row.media_type,
+          size: row.size,
+          checksum: row.checksum,
+        })}
+      )
+    `;
+  }
 }
 
 async function insertMessage(
