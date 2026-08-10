@@ -5,6 +5,11 @@ import type {
   SandboxCommandPolicy,
   SandboxCommandProposedAction,
 } from "./sandbox.js";
+import type {
+  GenerationCostConfig,
+  GenerationCostData,
+  VibyTelemetry,
+} from "./telemetry.js";
 
 export type FrameworkId =
   | "farm"
@@ -59,6 +64,8 @@ export interface VibyConfig<Framework extends FrameworkId = FrameworkId> {
   readonly events?: {
     readonly sinks?: readonly OutboundEventSink[];
   };
+  readonly telemetry?: VibyTelemetry;
+  readonly cost?: GenerationCostConfig;
 }
 
 export interface AgentRunnerConfig {
@@ -315,6 +322,7 @@ export interface MessagePartDataMap {
     readonly inputTokens: number | null;
     readonly outputTokens: number | null;
     readonly totalTokens: number | null;
+    readonly cost?: GenerationCostData;
   };
 }
 
@@ -363,6 +371,7 @@ export interface GenerationData {
   readonly inputTokens: number | null;
   readonly outputTokens: number | null;
   readonly totalTokens: number | null;
+  readonly cost: GenerationCostData | null;
   readonly error: string | null;
   readonly createdAt: Date;
   readonly startedAt: Date | null;
@@ -380,6 +389,7 @@ export interface GenerationAttemptData {
   readonly inputTokens: number | null;
   readonly outputTokens: number | null;
   readonly totalTokens: number | null;
+  readonly cost: GenerationCostData | null;
   readonly finishReason: string | null;
   readonly error: string | null;
   readonly createdAt: Date;

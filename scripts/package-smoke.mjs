@@ -47,6 +47,7 @@ try {
     "dist/sandbox-conformance.d.ts",
     "migrations/0001_initial.sql",
     "migrations/0002_durable_generations.sql",
+    "migrations/0013_generation_costs.sql",
   ]) {
     assert.ok(paths.has(path), `packed package is missing ${path}`);
   }
@@ -74,7 +75,7 @@ try {
       "--input-type=module",
       "--eval",
       [
-        'import { createViby, DownloadArtifact, SandboxSession, SourceImportError, generationEventStreamResponse, signedOutboundEventSink, verifySignedOutboundEvent, skillRead } from "@viby/sdk";',
+        'import { createViby, DownloadArtifact, SandboxSession, SourceImportError, generationEventStreamResponse, openTelemetry, signedOutboundEventSink, verifySignedOutboundEvent, skillRead } from "@viby/sdk";',
         'if (typeof createViby !== "function") throw new Error("createViby export is missing");',
         'if (typeof DownloadArtifact !== "function") throw new Error("DownloadArtifact export is missing");',
         'if (typeof SandboxSession !== "function") throw new Error("SandboxSession export is missing");',
@@ -82,6 +83,7 @@ try {
         'if (typeof signedOutboundEventSink !== "function") throw new Error("signedOutboundEventSink export is missing");',
         'if (typeof verifySignedOutboundEvent !== "function") throw new Error("verifySignedOutboundEvent export is missing");',
         'if (typeof generationEventStreamResponse !== "function") throw new Error("generationEventStreamResponse export is missing");',
+        'if (typeof openTelemetry !== "function") throw new Error("openTelemetry export is missing");',
         'if (skillRead("./skills").source !== "file") throw new Error("skillRead export is invalid");',
       ].join("\n"),
     ],

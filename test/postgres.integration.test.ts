@@ -76,6 +76,10 @@ test("persists a durable generation, iteration, events, and download in Postgres
       framework: "farm",
       model: "test/postgres" as LanguageModel,
       skills: {},
+      cost: {
+        currency: "USD",
+        calculate: ({ totalTokens }) => (totalTokens ?? 0) * 10,
+      },
     },
     {
       repository,
@@ -95,6 +99,11 @@ test("persists a durable generation, iteration, events, and download in Postgres
     const outcome = await generation.wait({ pollIntervalMs: 10 });
     assert.equal(outcome.status, "succeeded");
     if (outcome.status !== "succeeded") throw new Error("Expected a successful generation");
+    assert.deepEqual(outcome.generation.cost, { amountMicros: 240, currency: "USD" });
+    assert.deepEqual((await generation.attempts())[0]?.cost, {
+      amountMicros: 240,
+      currency: "USD",
+    });
 
     const events = (await generation.events({ limit: 100 })).events;
     assert.deepEqual(events.map((event) => event.type), [
@@ -120,6 +129,10 @@ test("persists a durable generation, iteration, events, and download in Postgres
     const persistedVersion = await persistedChat.getVersion(second.id);
     assert.equal(persistedVersion.number, 2);
     assert.equal(persistedVersion.parentVersionId, outcome.version.id);
+    assert.deepEqual((await persistedVersion.generation())?.cost, {
+      amountMicros: 240,
+      currency: "USD",
+    });
     assert.equal((await persistedChat.listMessages()).items.length, 4);
     const persistedMessages = (await persistedChat.listMessages()).items;
     assert.deepEqual(persistedMessages[0]?.parts.map((part) => part.type), ["text"]);

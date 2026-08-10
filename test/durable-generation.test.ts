@@ -689,6 +689,7 @@ test("persists redacted typed tool calls with ownership and external-effect idem
     outputTokens: 1,
     totalTokens: 2,
     finishReason: "stop",
+    cost: null,
   });
 
   const toolCalls = await repository.listToolCalls(scope, generationId);

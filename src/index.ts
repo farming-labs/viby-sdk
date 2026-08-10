@@ -13,6 +13,25 @@ export { DownloadArtifact } from "./download.js";
 export { AgentWorkspace } from "./agent-workspace.js";
 export { AgentProjectGenerator } from "./agent-runner.js";
 export { MESSAGE_PART_TYPES } from "./types.js";
+export { openTelemetry } from "./telemetry.js";
+export type {
+  GenerationCostCalculator,
+  GenerationCostConfig,
+  GenerationCostData,
+  GenerationCostInput,
+  OpenTelemetryCounterLike,
+  OpenTelemetryHistogramLike,
+  OpenTelemetryMeterLike,
+  OpenTelemetryOptions,
+  OpenTelemetrySpanLike,
+  OpenTelemetryTracerLike,
+  TelemetryAttribute,
+  TelemetryAttributes,
+  TelemetryMetricInput,
+  TelemetrySpan,
+  TelemetrySpanInput,
+  VibyTelemetry,
+} from "./telemetry.js";
 export {
   generationEventCursor,
   generationEventStream,
