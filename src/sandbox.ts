@@ -5,7 +5,7 @@ import {
   SandboxError,
   SandboxUnavailableError,
 } from "./errors.js";
-import type { FrameworkId, UserScope, VersionFile } from "./types.js";
+import type { FrameworkId, UserScope } from "./types.js";
 import { createId, errorMessage, normalizeProjectPath, sha256 } from "./utils.js";
 
 const DEFAULT_SANDBOX_TIMEOUT_MS = 300_000;
@@ -729,7 +729,7 @@ export class SandboxRegistry {
       readonly chatId: string;
       readonly framework: Framework;
     },
-    files: readonly VersionFile[],
+    files: readonly SandboxFile[],
     options: SandboxOpenOptions = {},
     resolvedActions: SandboxResolvedCommandActions = {},
   ): Promise<SandboxSession> {

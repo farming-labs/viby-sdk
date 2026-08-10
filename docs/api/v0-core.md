@@ -92,12 +92,12 @@ Thinking content must be represented as provider-safe summaries or opaque status
 
 | Capability | v0 v2 | Viby-native surface | Status |
 | --- | --- | --- | --- |
-| Read current files | Get Chat Files | `version.files` | Shipped |
+| Read current files | Get Chat Files | `version.entries` (complete) and compatible text-only `version.files` | Shipped |
 | Add, replace, move, or delete files | Update Chat Files | immutable `version.apply` change set | Shipped |
 | Download source ZIP | Download Chat Files | `version.download` | Shipped |
 | Restore prior source | Restore Message | `version.restore` | Shipped |
 | Branch source history | Duplicate Chat | `version.fork` | Shipped |
-| Binary files | base64-encoded chat files | source remains validated UTF-8 while generation-owned binary artifacts use external storage with durable metadata and scoped retrieval | Partial |
+| Binary files | base64-encoded chat files | artifact-backed version entries with external bytes, durable metadata, scoped retrieval, history, ZIP, and sandbox materialization | Shipped |
 | Locked files | retained v1 capability and import option | `filePolicy.locked`, per-file import locks, and enforcement across all edit paths | Shipped |
 | Incremental agent patches | file-edit message parts | `version.workspace` tools and generated source changes persisted with the materialized snapshot | Shipped |
 

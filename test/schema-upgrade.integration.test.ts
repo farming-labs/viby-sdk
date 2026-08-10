@@ -79,6 +79,7 @@ test("upgrades a historical v0.2 schema without losing tenant data", {
       "0018_artifact_storage",
       "0019_generated_artifacts",
       "0020_visual_artifacts",
+      "0021_project_artifacts",
     ]);
     assert.equal((await getMigrationStatus(databaseUrl.toString())).every((entry) => entry.applied), true);
     assert.deepEqual(await migrateDatabase(databaseUrl.toString()), []);
@@ -103,6 +104,8 @@ test("upgrades a historical v0.2 schema without losing tenant data", {
         artifactKeyColumn: boolean;
         generatedArtifacts: string | null;
         visualArtifacts: string | null;
+        projectArtifacts: string | null;
+        projectArtifactColumn: boolean;
       }[]>`
         SELECT
           to_regclass('viby.outbound_event_deliveries')::text AS deliveries,
@@ -129,7 +132,13 @@ test("upgrades a historical v0.2 schema without losing tenant data", {
               AND column_name = 'artifact_key'
           ) AS "artifactKeyColumn",
           to_regclass('viby.generated_artifacts')::text AS "generatedArtifacts",
-          to_regclass('viby.visual_artifacts')::text AS "visualArtifacts"
+          to_regclass('viby.visual_artifacts')::text AS "visualArtifacts",
+          to_regclass('viby.project_artifacts')::text AS "projectArtifacts",
+          EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'viby' AND table_name = 'version_files'
+              AND column_name = 'artifact_id'
+          ) AS "projectArtifactColumn"
       `;
       assert.equal(row?.deliveries, "viby.outbound_event_deliveries");
       assert.equal(row?.costColumn, true);
@@ -140,6 +149,8 @@ test("upgrades a historical v0.2 schema without losing tenant data", {
       assert.equal(row?.artifactKeyColumn, true);
       assert.equal(row?.generatedArtifacts, "viby.generated_artifacts");
       assert.equal(row?.visualArtifacts, "viby.visual_artifacts");
+      assert.equal(row?.projectArtifacts, "viby.project_artifacts");
+      assert.equal(row?.projectArtifactColumn, true);
     } finally {
       await inspection.end({ timeout: 5 });
     }

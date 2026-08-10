@@ -13,6 +13,7 @@ export type {
   CompleteGenerationRecord,
   CompleteToolCallRecord,
   CreateAttachmentRecord,
+  CreateProjectArtifactRecord,
   CreateAttemptRecord,
   CreatedGeneration,
   CreatedToolCall,

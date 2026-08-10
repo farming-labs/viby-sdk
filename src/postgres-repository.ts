@@ -37,6 +37,7 @@ import type {
   MessagePart,
   MessagePartInput,
   MessagePartType,
+  ProjectArtifactContent,
   ResolvedSkill,
   SourceChange,
   ToolCallData,
@@ -44,6 +45,8 @@ import type {
   ToolCallStatus,
   UserScope,
   VersionData,
+  VersionArtifact,
+  VersionEntry,
   VersionFile,
   VisualArtifactContent,
   VisualArtifactData,
@@ -65,6 +68,7 @@ import type {
   CreatedGeneration,
   CreateGenerationRecord,
   CreateGeneratedArtifactRecord,
+  CreateProjectArtifactRecord,
   CreateVisualArtifactRecord,
   CreateToolCallRecord,
   DeleteChatRecord,
@@ -302,6 +306,21 @@ interface StoredGeneratedArtifactInput extends Omit<CreateGeneratedArtifactRecor
   readonly artifactKey: string;
 }
 
+interface ProjectArtifactRow {
+  id: string;
+  media_type: string;
+  size: number;
+  checksum: string;
+  artifact_store: string;
+  artifact_key: string;
+  created_at: Date;
+}
+
+interface StoredProjectArtifactInput extends Omit<CreateProjectArtifactRecord, "bytes"> {
+  readonly artifactStore: string;
+  readonly artifactKey: string;
+}
+
 interface VisualArtifactRow {
   id: string;
   chat_id: string;
@@ -324,7 +343,7 @@ interface StoredArtifactLocation {
   readonly id: string;
   readonly artifact_store: string;
   readonly artifact_key: string;
-  readonly kind: "attachment" | "generated" | "visual";
+  readonly kind: "attachment" | "generated" | "project" | "visual";
 }
 
 interface ToolCallRow {
@@ -346,7 +365,9 @@ interface ToolCallRow {
 
 interface VersionFileRow {
   path: string;
-  content: string;
+  kind: "text" | "artifact";
+  content: string | null;
+  artifact_id: string | null;
   media_type: string;
   size: number;
   checksum: string;
@@ -401,10 +422,16 @@ export class PostgresRepository implements Repository {
         AND to_regclass('viby.outbound_event_deliveries') IS NOT NULL
         AND to_regclass('viby.generated_artifacts') IS NOT NULL
         AND to_regclass('viby.visual_artifacts') IS NOT NULL
+        AND to_regclass('viby.project_artifacts') IS NOT NULL
         AND EXISTS (
           SELECT 1 FROM information_schema.columns
           WHERE table_schema = 'viby' AND table_name = 'attachments'
             AND column_name = 'artifact_key'
+        )
+        AND EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_schema = 'viby' AND table_name = 'version_files'
+            AND column_name = 'artifact_id'
         )
         AND EXISTS (
           SELECT 1 FROM information_schema.columns
@@ -442,46 +469,43 @@ export class PostgresRepository implements Repository {
     input: ImportChatRecord<Framework>,
   ): Promise<ImportedChat<Framework>> {
     await this.assertReady();
-    const result = await this.#sql.begin(async (sql) => {
-      const [chat] = await sql<ChatRow[]>`
-        INSERT INTO viby.chats (id, tenant_id, user_id, title, metadata, framework)
-        VALUES (
-          ${input.chatId}, ${scope.tenantId}, ${scope.userId}, ${input.title},
-          ${sql.json(JSON.parse(JSON.stringify(input.metadata)))}, ${input.framework}
-        )
-        RETURNING *
-      `;
-      if (!chat) throw new Error("Postgres did not return the imported chat.");
-
-      const [version] = await sql<VersionRow[]>`
-        INSERT INTO viby.versions (
-          id, tenant_id, user_id, chat_id, generation_id, parent_version_id,
-          number, origin, framework, title, summary
-        ) VALUES (
-          ${input.versionId}, ${scope.tenantId}, ${scope.userId}, ${input.chatId}, NULL, NULL,
-          1, 'imported', ${input.framework}, ${input.title}, ${input.summary}
-        )
-        RETURNING *
-      `;
-      if (!version) throw new Error("Postgres did not return the imported version.");
-
-      for (const file of input.files) {
-        await sql`
-          INSERT INTO viby.version_files (
-            id, tenant_id, user_id, version_id, path, content, media_type, size, checksum, locked
-          ) VALUES (
-            ${createId()}, ${scope.tenantId}, ${scope.userId}, ${input.versionId}, ${file.path},
-            ${file.content}, ${file.mediaType}, ${file.size}, ${file.checksum}, ${file.locked}
+    const artifacts = await this.#storeProjectArtifacts(scope, input.artifacts ?? []);
+    try {
+      const result = await this.#sql.begin(async (sql) => {
+        const [chat] = await sql<ChatRow[]>`
+          INSERT INTO viby.chats (id, tenant_id, user_id, title, metadata, framework)
+          VALUES (
+            ${input.chatId}, ${scope.tenantId}, ${scope.userId}, ${input.title},
+            ${sql.json(JSON.parse(JSON.stringify(input.metadata)))}, ${input.framework}
           )
+          RETURNING *
         `;
-      }
-      return { chat, version };
-    });
+        if (!chat) throw new Error("Postgres did not return the imported chat.");
 
-    return {
-      chat: mapChat<Framework>(result.chat),
-      version: mapVersion<Framework>(result.version),
-    };
+        const [version] = await sql<VersionRow[]>`
+          INSERT INTO viby.versions (
+            id, tenant_id, user_id, chat_id, generation_id, parent_version_id,
+            number, origin, framework, title, summary
+          ) VALUES (
+            ${input.versionId}, ${scope.tenantId}, ${scope.userId}, ${input.chatId}, NULL, NULL,
+            1, 'imported', ${input.framework}, ${input.title}, ${input.summary}
+          )
+          RETURNING *
+        `;
+        if (!version) throw new Error("Postgres did not return the imported version.");
+        await insertProjectArtifacts(sql, scope, artifacts);
+        await insertVersionEntries(sql, scope, input.versionId, input.files, artifacts);
+        return { chat, version };
+      });
+
+      return {
+        chat: mapChat<Framework>(result.chat),
+        version: mapVersion<Framework>(result.version),
+      };
+    } catch (error) {
+      await this.#cleanupProjectArtifacts(scope, artifacts);
+      throw error;
+    }
   }
 
   async createSourceVersion<Framework extends FrameworkId>(
@@ -525,16 +549,7 @@ export class PostgresRepository implements Repository {
       `;
       if (!version) throw new Error("Postgres did not return the source version.");
 
-      for (const file of input.files) {
-        await sql`
-          INSERT INTO viby.version_files (
-            id, tenant_id, user_id, version_id, path, content, media_type, size, checksum, locked
-          ) VALUES (
-            ${createId()}, ${scope.tenantId}, ${scope.userId}, ${input.id}, ${file.path},
-            ${file.content}, ${file.mediaType}, ${file.size}, ${file.checksum}, ${file.locked}
-          )
-        `;
-      }
+      await insertVersionEntries(sql, scope, input.id, input.files, input.artifacts ?? []);
 
       for (const [position, change] of input.changes.entries()) {
         await sql`
@@ -571,7 +586,7 @@ export class PostgresRepository implements Repository {
       if (!source) throw new NotFoundError("Source version");
 
       const files = await sql<VersionFileRow[]>`
-        SELECT path, content, media_type, size, checksum, locked
+        SELECT path, kind, content, artifact_id, media_type, size, checksum, locked
         FROM viby.version_files
         WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
           AND version_id = ${source.id}
@@ -597,16 +612,7 @@ export class PostgresRepository implements Repository {
         RETURNING *
       `;
       if (!version) throw new Error("Postgres did not return the forked version.");
-      for (const file of files) {
-        await sql`
-          INSERT INTO viby.version_files (
-            id, tenant_id, user_id, version_id, path, content, media_type, size, checksum, locked
-          ) VALUES (
-            ${createId()}, ${scope.tenantId}, ${scope.userId}, ${input.versionId}, ${file.path},
-            ${file.content}, ${file.media_type}, ${file.size}, ${file.checksum}, ${file.locked}
-          )
-        `;
-      }
+      await copyVersionEntryRows(sql, scope, input.versionId, files);
       return { chat, version };
     });
     return {
@@ -636,7 +642,7 @@ export class PostgresRepository implements Repository {
       `;
       if (!source) throw new NotFoundError("Source version");
       const files = await sql<VersionFileRow[]>`
-        SELECT path, content, media_type, size, checksum, locked
+        SELECT path, kind, content, artifact_id, media_type, size, checksum, locked
         FROM viby.version_files
         WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
           AND version_id = ${source.id}
@@ -660,16 +666,7 @@ export class PostgresRepository implements Repository {
         RETURNING *
       `;
       if (!version) throw new Error("Postgres did not return the restored version.");
-      for (const file of files) {
-        await sql`
-          INSERT INTO viby.version_files (
-            id, tenant_id, user_id, version_id, path, content, media_type, size, checksum, locked
-          ) VALUES (
-            ${createId()}, ${scope.tenantId}, ${scope.userId}, ${input.id}, ${file.path},
-            ${file.content}, ${file.media_type}, ${file.size}, ${file.checksum}, ${file.locked}
-          )
-        `;
-      }
+      await copyVersionEntryRows(sql, scope, input.id, files);
       await sql`
         UPDATE viby.chats SET updated_at = now()
         WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
@@ -795,13 +792,34 @@ export class PostgresRepository implements Repository {
         WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
           AND chat_id = ANY(${sql.array(ids)}::uuid[])
       `;
+      const projectArtifactIds = await sql<{ id: string }[]>`
+        SELECT DISTINCT entry.artifact_id AS id
+        FROM viby.version_files AS entry
+        JOIN viby.versions AS version ON version.id = entry.version_id
+        WHERE entry.tenant_id = ${scope.tenantId} AND entry.user_id = ${scope.userId}
+          AND version.chat_id = ANY(${sql.array(ids)}::uuid[])
+          AND entry.artifact_id IS NOT NULL
+      `;
       const deleted = await sql<{ id: string }[]>`
         DELETE FROM viby.chats
         WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
           AND id = ANY(${sql.array(ids)}::uuid[])
         RETURNING id
       `;
-      return { count: deleted.length, artifacts };
+      const projectArtifacts = projectArtifactIds.length === 0
+        ? []
+        : await sql<StoredArtifactLocation[]>`
+            DELETE FROM viby.project_artifacts AS artifact
+            WHERE artifact.tenant_id = ${scope.tenantId} AND artifact.user_id = ${scope.userId}
+              AND artifact.id = ANY(${sql.array(projectArtifactIds.map(({ id }) => id))}::uuid[])
+              AND NOT EXISTS (
+                SELECT 1 FROM viby.version_files AS entry
+                WHERE entry.artifact_id = artifact.id
+              )
+            RETURNING artifact.id, artifact.artifact_store, artifact.artifact_key,
+              'project'::text AS kind
+          `;
+      return { count: deleted.length, artifacts: [...artifacts, ...projectArtifacts] };
     });
     await Promise.allSettled(result.artifacts.map((artifact) => (
       this.#deleteStoredArtifact(scope, artifact)
@@ -1473,16 +1491,13 @@ export class PostgresRepository implements Repository {
       `;
       if (!version) throw new Error("Postgres did not return the created version.");
 
-      for (const file of input.files) {
-        await sql`
-          INSERT INTO viby.version_files (
-            id, tenant_id, user_id, version_id, path, content, media_type, size, checksum, locked
-          ) VALUES (
-            ${createId()}, ${scope.tenantId}, ${scope.userId}, ${versionId}, ${file.path},
-            ${file.content}, ${file.mediaType}, ${file.size}, ${file.checksum}, ${file.locked}
-          )
-        `;
-      }
+      await insertVersionEntries(
+        sql,
+        scope,
+        versionId,
+        input.files,
+        input.projectArtifacts ?? [],
+      );
 
       for (const [position, change] of (input.changes ?? []).entries()) {
         await sql`
@@ -2512,19 +2527,67 @@ export class PostgresRepository implements Repository {
   async getVersionFiles(scope: UserScope, versionId: string): Promise<VersionFile[]> {
     await this.assertReady();
     const rows = await this.#sql<VersionFileRow[]>`
-      SELECT path, content, media_type, size, checksum, locked
+      SELECT path, kind, content, artifact_id, media_type, size, checksum, locked
       FROM viby.version_files
-      WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId} AND version_id = ${versionId}
+      WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+        AND version_id = ${versionId} AND kind = 'text'
       ORDER BY path
     `;
-    return rows.map((row) => ({
-      path: row.path,
-      content: row.content,
-      mediaType: row.media_type,
-      size: row.size,
-      checksum: row.checksum,
-      locked: row.locked,
-    }));
+    return rows.map(mapVersionEntry).map((entry) => {
+      if (entry.type === "artifact") throw new Error("Text source query returned an artifact entry.");
+      const { type: _type, ...file } = entry;
+      return file;
+    });
+  }
+
+  async getVersionEntries(scope: UserScope, versionId: string): Promise<VersionEntry[]> {
+    await this.assertReady();
+    const rows = await this.#sql<VersionFileRow[]>`
+      SELECT entry.path, entry.kind, entry.content, entry.artifact_id, entry.media_type,
+        entry.size, entry.checksum, entry.locked
+      FROM viby.version_files AS entry
+      JOIN viby.versions AS version ON version.id = entry.version_id
+      JOIN viby.chats AS chat ON chat.id = version.chat_id
+      WHERE entry.tenant_id = ${scope.tenantId} AND entry.user_id = ${scope.userId}
+        AND entry.version_id = ${versionId} AND chat.deleted_at IS NULL
+      ORDER BY entry.path
+    `;
+    return rows.map(mapVersionEntry);
+  }
+
+  async getProjectArtifact(
+    scope: UserScope,
+    versionId: string,
+    artifactId: string,
+  ): Promise<ProjectArtifactContent | null> {
+    await this.assertReady();
+    const [row] = await this.#sql<ProjectArtifactRow[]>`
+      SELECT artifact.id, artifact.media_type, artifact.size, artifact.checksum,
+        artifact.artifact_store, artifact.artifact_key, artifact.created_at
+      FROM viby.project_artifacts AS artifact
+      JOIN viby.version_files AS entry ON entry.artifact_id = artifact.id
+      JOIN viby.versions AS version ON version.id = entry.version_id
+      JOIN viby.chats AS chat ON chat.id = version.chat_id
+      WHERE artifact.tenant_id = ${scope.tenantId} AND artifact.user_id = ${scope.userId}
+        AND version.id = ${versionId} AND artifact.id = ${artifactId}
+        AND chat.deleted_at IS NULL
+      LIMIT 1
+    `;
+    if (!row) return null;
+    if (!this.#artifactStore || this.#artifactStore.id !== row.artifact_store) {
+      throw new ConfigurationError(
+        `Artifact store ${row.artifact_store} is required to read project artifact ${row.id}.`,
+      );
+    }
+    const bytes = await this.#artifactStore.get(
+      row.artifact_key,
+      projectArtifactContext(scope, row.id),
+    );
+    if (!bytes) throw new NotFoundError("Project artifact content");
+    if (bytes.byteLength !== row.size || sha256(bytes) !== row.checksum) {
+      throw new Error(`Project artifact ${row.id} failed its persisted size or checksum validation.`);
+    }
+    return { ...mapProjectArtifact(row), bytes: Uint8Array.from(bytes) };
   }
 
   async getVersionChanges(scope: UserScope, versionId: string): Promise<SourceChange[]> {
@@ -2673,6 +2736,58 @@ export class PostgresRepository implements Repository {
     }
   }
 
+  async #storeProjectArtifacts(
+    scope: UserScope,
+    artifacts: readonly CreateProjectArtifactRecord[],
+  ): Promise<StoredProjectArtifactInput[]> {
+    if (artifacts.length === 0) return [];
+    if (!this.#artifactStore) {
+      throw new ConfigurationError(
+        "artifactStore is required when a project contains binary artifacts.",
+      );
+    }
+    const stored: StoredProjectArtifactInput[] = [];
+    try {
+      for (const artifact of artifacts) {
+        const artifactKey = `project/${artifact.artifactId}-${artifact.checksum}`;
+        await this.#artifactStore.put({
+          key: artifactKey,
+          bytes: Uint8Array.from(artifact.bytes),
+          mediaType: artifact.mediaType,
+          checksum: artifact.checksum,
+        }, projectArtifactContext(scope, artifact.artifactId));
+        stored.push({
+          type: "artifact",
+          path: artifact.path,
+          artifactId: artifact.artifactId,
+          mediaType: artifact.mediaType,
+          size: artifact.size,
+          checksum: artifact.checksum,
+          locked: artifact.locked,
+          artifactStore: this.#artifactStore.id,
+          artifactKey,
+        });
+      }
+      return stored;
+    } catch (error) {
+      await this.#cleanupProjectArtifacts(scope, stored);
+      throw error;
+    }
+  }
+
+  async #cleanupProjectArtifacts(
+    scope: UserScope,
+    artifacts: readonly StoredProjectArtifactInput[],
+  ): Promise<void> {
+    if (!this.#artifactStore) return;
+    await Promise.allSettled(artifacts.map((artifact) => (
+      this.#artifactStore!.delete(
+        artifact.artifactKey,
+        projectArtifactContext(scope, artifact.artifactId),
+      )
+    )));
+  }
+
   async #cleanupGeneratedArtifacts(
     scope: UserScope,
     artifacts: readonly StoredGeneratedArtifactInput[],
@@ -2722,7 +2837,9 @@ export class PostgresRepository implements Repository {
         ? attachmentContext(scope, row.id)
         : row.kind === "generated"
           ? generatedArtifactContext(scope, row.id)
-          : visualArtifactContext(scope, row.id),
+          : row.kind === "project"
+            ? projectArtifactContext(scope, row.id)
+            : visualArtifactContext(scope, row.id),
     );
   }
 }
@@ -2733,6 +2850,10 @@ function attachmentContext(scope: UserScope, ownerId: string): ArtifactStoreCont
 
 function generatedArtifactContext(scope: UserScope, ownerId: string): ArtifactStoreContext {
   return { ...scope, kind: "generated", ownerId };
+}
+
+function projectArtifactContext(scope: UserScope, ownerId: string): ArtifactStoreContext {
+  return { ...scope, kind: "project", ownerId };
 }
 
 function visualArtifactContext(scope: UserScope, ownerId: string): ArtifactStoreContext {
@@ -2945,6 +3066,42 @@ function mapGeneratedArtifact(row: GeneratedArtifactRow): GeneratedArtifactData 
   };
 }
 
+function mapProjectArtifact(row: ProjectArtifactRow): Omit<ProjectArtifactContent, "bytes"> {
+  return {
+    id: row.id,
+    mediaType: row.media_type,
+    size: row.size,
+    checksum: row.checksum,
+    artifact: { store: row.artifact_store, key: row.artifact_key },
+    createdAt: row.created_at,
+  };
+}
+
+function mapVersionEntry(row: VersionFileRow): VersionEntry {
+  if (row.kind === "artifact") {
+    if (!row.artifact_id) throw new Error(`Artifact-backed entry ${row.path} has no artifact id.`);
+    return {
+      type: "artifact",
+      path: row.path,
+      artifactId: row.artifact_id,
+      mediaType: row.media_type,
+      size: row.size,
+      checksum: row.checksum,
+      locked: row.locked,
+    };
+  }
+  if (row.content === null) throw new Error(`Text entry ${row.path} has no content.`);
+  return {
+    type: "text",
+    path: row.path,
+    content: row.content,
+    mediaType: row.media_type,
+    size: row.size,
+    checksum: row.checksum,
+    locked: row.locked,
+  };
+}
+
 function mapVisualArtifact(row: VisualArtifactRow): VisualArtifactData {
   return {
     id: row.id,
@@ -3017,6 +3174,79 @@ async function insertGeneratedArtifacts(
           size: row.size,
           checksum: row.checksum,
         })}
+      )
+    `;
+  }
+}
+
+async function insertProjectArtifacts(
+  sql: postgres.TransactionSql,
+  scope: UserScope,
+  artifacts: readonly StoredProjectArtifactInput[],
+): Promise<void> {
+  for (const artifact of artifacts) {
+    await sql`
+      INSERT INTO viby.project_artifacts (
+        id, tenant_id, user_id, media_type, size, checksum, artifact_store, artifact_key
+      ) VALUES (
+        ${artifact.artifactId}, ${scope.tenantId}, ${scope.userId}, ${artifact.mediaType},
+        ${artifact.size}, ${artifact.checksum}, ${artifact.artifactStore}, ${artifact.artifactKey}
+      )
+    `;
+  }
+}
+
+async function insertVersionEntries(
+  sql: postgres.TransactionSql,
+  scope: UserScope,
+  versionId: string,
+  files: readonly VersionFile[],
+  artifacts: readonly VersionArtifact[],
+): Promise<void> {
+  for (const file of files) {
+    await sql`
+      INSERT INTO viby.version_files (
+        id, tenant_id, user_id, version_id, path, kind, content, artifact_id,
+        media_type, size, checksum, locked
+      ) VALUES (
+        ${createId()}, ${scope.tenantId}, ${scope.userId}, ${versionId}, ${file.path},
+        'text', ${file.content}, NULL, ${file.mediaType}, ${file.size}, ${file.checksum}, ${file.locked}
+      )
+    `;
+  }
+  for (const entry of artifacts) {
+    const [inserted] = await sql<{ id: string }[]>`
+      INSERT INTO viby.version_files (
+        id, tenant_id, user_id, version_id, path, kind, content, artifact_id,
+        media_type, size, checksum, locked
+      )
+      SELECT ${createId()}, ${scope.tenantId}, ${scope.userId}, ${versionId}, ${entry.path},
+        'artifact', NULL, artifact.id, artifact.media_type, artifact.size,
+        artifact.checksum, ${entry.locked}
+      FROM viby.project_artifacts AS artifact
+      WHERE artifact.tenant_id = ${scope.tenantId} AND artifact.user_id = ${scope.userId}
+        AND artifact.id = ${entry.artifactId}
+      RETURNING id
+    `;
+    if (!inserted) throw new NotFoundError("Project artifact");
+  }
+}
+
+async function copyVersionEntryRows(
+  sql: postgres.TransactionSql,
+  scope: UserScope,
+  versionId: string,
+  entries: readonly VersionFileRow[],
+): Promise<void> {
+  for (const entry of entries) {
+    await sql`
+      INSERT INTO viby.version_files (
+        id, tenant_id, user_id, version_id, path, kind, content, artifact_id,
+        media_type, size, checksum, locked
+      ) VALUES (
+        ${createId()}, ${scope.tenantId}, ${scope.userId}, ${versionId}, ${entry.path},
+        ${entry.kind}, ${entry.content}, ${entry.artifact_id}, ${entry.media_type},
+        ${entry.size}, ${entry.checksum}, ${entry.locked}
       )
     `;
   }

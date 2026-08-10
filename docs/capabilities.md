@@ -77,6 +77,7 @@ Preview URLs exist only when the configured adapter exposes port URLs and the ho
 | Generation configuration | durable per-request model aliases, host instructions, categorized skill overlays, and JSON metadata |
 | Multimodal input | immutable attachment bytes in an external artifact store, lightweight PostgreSQL metadata, scoped retrieval, and standard AI SDK file parts |
 | Generated artifacts | durable images, audio, video, documents, and binary outputs with ownership, checksums, artifact-store references, and resumable creation events |
+| Binary project entries | immutable artifact-backed source paths with scoped external bytes across import, edits, history, sandbox materialization, and ZIP downloads |
 | Design evaluation | immutable version-bound rubric results, criterion scores, validated source/attachment/visual-artifact evidence, metadata, and cursor pagination |
 
 Authentication, OAuth connection registries, event scheduling, and transport infrastructure remain host-owned. Viby stores delivery state but does not run a hidden queue or scheduler.

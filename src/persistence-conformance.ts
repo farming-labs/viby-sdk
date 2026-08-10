@@ -1,4 +1,5 @@
 import type { LanguageModelUsage } from "ai";
+import { unzipSync } from "fflate";
 import { createVibyWithDependencies } from "./client.js";
 import { ConfigurationError, NotFoundError } from "./errors.js";
 import type { GeneratorOutput } from "./generator.js";
@@ -18,6 +19,7 @@ export interface PersistenceConformanceReport {
     | "durable-generation"
     | "event-cursors"
     | "source-history"
+    | "binary-projects"
     | "generated-artifacts"
     | "visual-artifacts"
     | "design-evaluations"
@@ -126,6 +128,56 @@ export async function verifyPersistenceAdapter(
     assertConformance((await chat.listVersions()).items.length === 2, "Version history was not durable.");
     checks.push("source-history");
 
+    const binaryBytes = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 7]);
+    const binaryChat = await owner.chats.import({
+      title: "Binary persistence fixture",
+      source: {
+        type: "files",
+        files: [
+          { path: "index.html", content: "<img src=\"/logo.png\">\n" },
+          { type: "artifact", path: "public/logo.png", bytes: binaryBytes, mediaType: "image/png" },
+        ],
+      },
+    });
+    const binaryVersion = await binaryChat.latestVersion();
+    assertConformance(binaryVersion, "Binary import did not create a version.");
+    const binaryEntry = (await binaryVersion.entries()).find((entry) => entry.type === "artifact");
+    assertConformance(binaryEntry?.type === "artifact", "Binary entry metadata was not durable.");
+    assertConformance(
+      (await binaryVersion.projectArtifact(binaryEntry.artifactId)).checksum === binaryEntry.checksum,
+      "Binary project bytes did not roundtrip.",
+    );
+    assertConformance(
+      (await binaryVersion.files()).length === 1,
+      "The compatible text file view exposed a binary entry.",
+    );
+    assertConformance(
+      unzipSync((await binaryVersion.download()).bytes)["public/logo.png"]?.byteLength
+        === binaryBytes.byteLength,
+      "The binary ZIP entry was not materialized.",
+    );
+    const binaryChild = await binaryVersion.apply({
+      changes: [{ type: "move", from: "public/logo.png", to: "assets/logo.png" }],
+    });
+    assertConformance(
+      (await binaryChild.entries()).some((entry) => (
+        entry.type === "artifact" && entry.path === "assets/logo.png"
+      )),
+      "A binary move did not preserve its artifact entry.",
+    );
+    const binaryFork = await binaryChild.fork({ title: "Binary persistence fork" });
+    const binaryForkVersion = await binaryFork.latestVersion();
+    assertConformance(
+      (await binaryForkVersion!.entries()).some((entry) => entry.type === "artifact"),
+      "A fork did not preserve its binary entry.",
+    );
+    const binaryRestored = await binaryVersion.restore();
+    assertConformance(
+      (await binaryRestored.entries()).some((entry) => entry.path === "public/logo.png"),
+      "A restore did not preserve its original binary path.",
+    );
+    checks.push("binary-projects");
+
     const [artifact] = await generation.artifacts();
     assertConformance(artifact?.versionId === outcome.version.id, "Artifact ownership is incomplete.");
     assertConformance(
@@ -190,10 +242,20 @@ export async function verifyPersistenceAdapter(
         if (!(error instanceof NotFoundError)) throw error;
       },
     );
+    assertConformance(
+      await persistence.getProjectArtifact(
+        { tenantId: scope.tenantId, userId: `other-${suffix}` },
+        binaryVersion.id,
+        binaryEntry.artifactId,
+      ) === null,
+      "Adapter exposed another user's project artifact.",
+    );
     checks.push("tenant-isolation");
 
     await chat.delete({ retentionMs: 0 });
-    assertConformance(await owner.chats.purgeDeleted() === 1, "Retention purge did not remove the chat.");
+    await binaryChat.delete({ retentionMs: 0 });
+    await binaryFork.delete({ retentionMs: 0 });
+    assertConformance(await owner.chats.purgeDeleted() === 3, "Retention purge did not remove every chat.");
     checks.push("retention-purge");
     await viby.close();
     closed = true;

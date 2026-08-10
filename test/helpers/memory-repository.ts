@@ -17,11 +17,13 @@ import type {
   MessagePart,
   MessagePartInput,
   JsonValue,
+  ProjectArtifactContent,
   ResolvedSkill,
   SourceChange,
   ToolCallData,
   UserScope,
   VersionData,
+  VersionEntry,
   VersionFile,
   VisualArtifactContent,
   VisualArtifactData,
@@ -109,7 +111,8 @@ export class MemoryRepository implements Repository {
   readonly attachments = new Map<string, AttachmentContent & ScopedRecord>();
   readonly generatedArtifacts = new Map<string, GeneratedArtifactContent & ScopedRecord>();
   readonly visualArtifacts = new Map<string, VisualArtifactContent & ScopedRecord>();
-  readonly files = new Map<string, VersionFile[]>();
+  readonly files = new Map<string, VersionEntry[]>();
+  readonly projectArtifacts = new Map<string, ProjectArtifactContent & ScopedRecord>();
   readonly changes = new Map<string, SourceChange[]>();
   readonly events: Array<GenerationEvent & ScopedRecord> = [];
   readonly tasks = new Map<string, GenerationTaskData & ScopedRecord>();
@@ -171,7 +174,23 @@ export class MemoryRepository implements Repository {
       ...scope,
     };
     this.versions.set(version.id, version);
-    this.files.set(version.id, [...input.files]);
+    const artifacts = input.artifacts ?? [];
+    this.files.set(version.id, [
+      ...input.files.map((file) => ({ ...file, type: "text" as const })),
+      ...artifacts.map(({ bytes: _bytes, ...entry }) => entry),
+    ]);
+    for (const artifact of artifacts) {
+      this.projectArtifacts.set(artifact.artifactId, {
+        id: artifact.artifactId,
+        mediaType: artifact.mediaType,
+        size: artifact.size,
+        checksum: artifact.checksum,
+        artifact: { store: "memory", key: `project/${artifact.artifactId}` },
+        bytes: Uint8Array.from(artifact.bytes),
+        createdAt: new Date(),
+        ...scope,
+      });
+    }
     return { chat, version };
   }
 
@@ -200,7 +219,10 @@ export class MemoryRepository implements Repository {
       ...scope,
     };
     this.versions.set(version.id, version);
-    this.files.set(version.id, [...input.files]);
+    this.files.set(version.id, [
+      ...input.files.map((file) => ({ ...file, type: "text" as const })),
+      ...(input.artifacts ?? []),
+    ]);
     this.changes.set(version.id, input.changes.map((change) => ({ ...change })));
     this.chats.set(chat.id, {
       ...chat,
@@ -383,6 +405,13 @@ export class MemoryRepository implements Repository {
         this.versions.delete(versionId);
         this.files.delete(versionId);
         this.changes.delete(versionId);
+      }
+      for (const [artifactId, artifact] of this.projectArtifacts) {
+        if (!inScope(artifact, scope)) continue;
+        const referenced = [...this.files.values()].some((entries) => entries.some((entry) => (
+          entry.type === "artifact" && entry.artifactId === artifactId
+        )));
+        if (!referenced) this.projectArtifacts.delete(artifactId);
       }
       for (const [evaluationId, evaluation] of this.designEvaluations) {
         if (versionIds.includes(evaluation.versionId)) this.designEvaluations.delete(evaluationId);
@@ -885,7 +914,10 @@ export class MemoryRepository implements Repository {
     };
     const completedAt = new Date();
     this.versions.set(version.id, version);
-    this.files.set(version.id, [...input.files]);
+    this.files.set(version.id, [
+      ...input.files.map((file) => ({ ...file, type: "text" as const })),
+      ...(input.projectArtifacts ?? []),
+    ]);
     if (input.changes) {
       this.changes.set(version.id, input.changes.map((change) => ({ ...change })));
     }
@@ -1582,7 +1614,35 @@ export class MemoryRepository implements Repository {
 
   async getVersionFiles(scope: UserScope, versionId: string): Promise<VersionFile[]> {
     const version = await this.getVersion(scope, versionId);
-    return version ? [...(this.files.get(versionId) ?? [])] : [];
+    return version
+      ? (this.files.get(versionId) ?? [])
+          .filter((entry) => entry.type === "text")
+          .map(({ type: _type, ...entry }) => entry)
+      : [];
+  }
+
+  async getVersionEntries(scope: UserScope, versionId: string): Promise<VersionEntry[]> {
+    const version = await this.getVersion(scope, versionId);
+    return version
+      ? (this.files.get(versionId) ?? [])
+          .map((entry) => ({ ...entry }))
+          .sort((left, right) => left.path.localeCompare(right.path))
+      : [];
+  }
+
+  async getProjectArtifact(
+    scope: UserScope,
+    versionId: string,
+    artifactId: string,
+  ): Promise<ProjectArtifactContent | null> {
+    const version = await this.getVersion(scope, versionId);
+    const referenced = version && (this.files.get(versionId) ?? []).some((entry) => (
+      entry.type === "artifact" && entry.artifactId === artifactId
+    ));
+    const artifact = referenced ? this.projectArtifacts.get(artifactId) : undefined;
+    return artifact && inScope(artifact, scope)
+      ? { ...artifact, bytes: Uint8Array.from(artifact.bytes) }
+      : null;
   }
 
   async getVersionChanges(scope: UserScope, versionId: string): Promise<SourceChange[]> {

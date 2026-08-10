@@ -141,7 +141,7 @@ version = await version.iterate({
 
 ## Import an existing project
 
-Create a durable chat and first immutable version directly from UTF-8 source files or ZIP bytes. Importing never invokes the model.
+Create a durable chat and first immutable version directly from text and binary source entries or ZIP bytes. Importing never invokes the model.
 
 ```ts
 const imported = await userViby.chats.import({
@@ -152,14 +152,18 @@ const imported = await userViby.chats.import({
     files: [
       { path: "package.json", content: packageJson },
       { path: "src/index.ts", content: source },
+      { type: "artifact", path: "public/logo.png", bytes: logoBytes, mediaType: "image/png" },
     ],
   },
 });
 
 const importedVersion = await imported.latestVersion();
+const entries = await importedVersion?.entries();
+const logo = entries?.find((entry) => entry.type === "artifact");
+const logoContent = logo ? await importedVersion?.projectArtifact(logo.artifactId) : null;
 ```
 
-Use `{ type: "zip", bytes }` for a ZIP archive. Imports reject unsafe paths, duplicate files, encrypted or oversized archives, symbolic links, binary content, and ZIP bombs before persistence.
+Use `{ type: "artifact", path, bytes, mediaType }` for images, fonts, video, and other binary entries, or `{ type: "zip", bytes }` for a complete archive. Imports reject unsafe paths, duplicates, encrypted or oversized archives, symbolic links, and ZIP bombs before persistence. Binary bytes live in the configured artifact store; immutable versions retain scoped references and lightweight metadata.
 
 `filePolicy.locked` accepts `"all"` or normalized project paths. File-list imports may also set `locked: true` on individual files. A lock becomes immutable version metadata: direct changes, generated changes, and agent workspace tools cannot write, delete, or move the file. Forks, restores, and child snapshots preserve it.
 
@@ -776,7 +780,7 @@ download.contentType;
 download.bytes;
 ```
 
-The ZIP is the raw framework-native source project. It contains no deployment vendor configuration, credentials, dependency folders, or build output.
+The ZIP is the raw framework-native source project, including text and artifact-backed binary entries. It contains no deployment vendor configuration, credentials, dependency folders, or build output.
 
 ## Resume history
 

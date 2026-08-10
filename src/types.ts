@@ -155,11 +155,22 @@ export interface CursorPage<Item> {
 }
 
 export interface SourceFileInput {
+  readonly type?: "text";
   readonly path: string;
   readonly content: string;
   readonly mediaType?: string;
   readonly locked?: boolean;
 }
+
+export interface SourceArtifactInput {
+  readonly type: "artifact";
+  readonly path: string;
+  readonly bytes: Uint8Array;
+  readonly mediaType?: string;
+  readonly locked?: boolean;
+}
+
+export type SourceEntryInput = SourceFileInput | SourceArtifactInput;
 
 export interface ImportFilePolicy {
   readonly locked?: "all" | readonly string[];
@@ -168,7 +179,7 @@ export interface ImportFilePolicy {
 export type ImportProjectSource =
   | {
       readonly type: "files";
-      readonly files: readonly SourceFileInput[];
+      readonly files: readonly SourceEntryInput[];
     }
   | {
       readonly type: "zip";
@@ -770,6 +781,35 @@ export interface VersionFile {
   readonly size: number;
   readonly checksum: string;
   readonly locked: boolean;
+}
+
+export interface VersionTextEntry extends VersionFile {
+  readonly type: "text";
+}
+
+export interface VersionArtifact {
+  readonly type: "artifact";
+  readonly path: string;
+  readonly artifactId: string;
+  readonly mediaType: string;
+  readonly size: number;
+  readonly checksum: string;
+  readonly locked: boolean;
+}
+
+export type VersionEntry = VersionTextEntry | VersionArtifact;
+
+export interface ProjectArtifactData {
+  readonly id: string;
+  readonly mediaType: string;
+  readonly size: number;
+  readonly checksum: string;
+  readonly artifact: ArtifactReference;
+  readonly createdAt: Date;
+}
+
+export interface ProjectArtifactContent extends ProjectArtifactData {
+  readonly bytes: Uint8Array;
 }
 
 export interface SkillFile {

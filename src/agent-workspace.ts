@@ -1,6 +1,6 @@
 import { ConfigurationError } from "./errors.js";
-import { applySourceChanges, normalizeSourceChanges } from "./source-changes.js";
-import type { SourceChange, VersionFile } from "./types.js";
+import { applyVersionEntryChanges, normalizeSourceChanges } from "./source-changes.js";
+import type { SourceChange, VersionEntry, VersionFile } from "./types.js";
 import { normalizeProjectPath } from "./utils.js";
 
 const DEFAULT_SEARCH_LIMIT = 50;
@@ -8,7 +8,9 @@ const MAX_SEARCH_LIMIT = 200;
 const MAX_SEARCH_QUERY_LENGTH = 500;
 
 export interface AgentWorkspaceFile {
+  readonly type: "text" | "artifact";
   readonly path: string;
+  readonly artifactId?: string;
   readonly mediaType: string;
   readonly size: number;
   readonly checksum: string;
@@ -50,25 +52,27 @@ export interface AgentWorkspaceTools {
 
 export class AgentWorkspace<Result = unknown> {
   readonly tools: AgentWorkspaceTools;
-  readonly #baseFiles: readonly VersionFile[];
+  readonly #baseFiles: readonly VersionEntry[];
   readonly #commit: (
     changes: readonly SourceChange[],
     input: AgentWorkspaceCommitInput,
   ) => Promise<Result>;
-  #files: readonly VersionFile[];
+  #files: readonly VersionEntry[];
   #changes: SourceChange[] = [];
   #committed = false;
   #commitPromise: Promise<Result> | null = null;
 
   constructor(
-    files: readonly VersionFile[],
+    files: readonly (VersionFile | VersionEntry)[],
     commit: (
       changes: readonly SourceChange[],
       input: AgentWorkspaceCommitInput,
     ) => Promise<Result>,
   ) {
-    this.#baseFiles = cloneFiles(files);
-    this.#files = cloneFiles(files);
+    this.#baseFiles = cloneFiles(files.map((file): VersionEntry => (
+      "type" in file ? file : { ...file, type: "text" }
+    )));
+    this.#files = cloneFiles(this.#baseFiles);
     this.#commit = commit;
     const tools: AgentWorkspaceTools = {
       listFiles: (input) => this.list(input),
@@ -92,12 +96,14 @@ export class AgentWorkspace<Result = unknown> {
     const prefix = normalizePrefix(input.prefix);
     return this.#files
       .filter((file) => !prefix || file.path === prefix || file.path.startsWith(`${prefix}/`))
-      .map(({ path, mediaType, size, checksum, locked }) => ({
-        path,
-        mediaType,
-        size,
-        checksum,
-        locked,
+      .map((file) => ({
+        type: file.type === "artifact" ? "artifact" as const : "text" as const,
+        path: file.path,
+        ...(file.type === "artifact" ? { artifactId: file.artifactId } : {}),
+        mediaType: file.mediaType,
+        size: file.size,
+        checksum: file.checksum,
+        locked: file.locked,
       }));
   }
 
@@ -105,7 +111,11 @@ export class AgentWorkspace<Result = unknown> {
     const path = normalizeWorkspacePath(input?.path, "read path");
     const file = this.#files.find((candidate) => candidate.path === path);
     if (!file) throw new ConfigurationError(`Workspace source file was not found: ${path}`);
-    return { ...file };
+    if (file.type === "artifact") {
+      throw new ConfigurationError(`Workspace source entry is binary and cannot be read as text: ${path}`);
+    }
+    const { type: _type, ...text } = file;
+    return text;
   }
 
   async search(input: {
@@ -140,6 +150,7 @@ export class AgentWorkspace<Result = unknown> {
     const results: AgentWorkspaceSearchResult[] = [];
     for (const file of this.#files) {
       if (prefix && file.path !== prefix && !file.path.startsWith(`${prefix}/`)) continue;
+      if (file.type === "artifact") continue;
       for (const [index, line] of file.content.split("\n").entries()) {
         const haystack = input.caseSensitive ? line : line.toLocaleLowerCase();
         const column = haystack.indexOf(needle);
@@ -200,6 +211,12 @@ export class AgentWorkspace<Result = unknown> {
   }
 
   files(): readonly VersionFile[] {
+    return this.#files
+      .filter((entry) => entry.type === "text")
+      .map(({ type: _type, ...entry }) => entry);
+  }
+
+  entries(): readonly VersionEntry[] {
     return cloneFiles(this.#files);
   }
 
@@ -230,7 +247,7 @@ export class AgentWorkspace<Result = unknown> {
       throw new ConfigurationError("The agent workspace cannot change while or after it commits.");
     }
     const changes = normalizeSourceChanges([...this.#changes, change]);
-    this.#files = applySourceChanges(this.#baseFiles, changes);
+    this.#files = applyVersionEntryChanges(this.#baseFiles, changes);
     this.#changes = changes;
     return { ...changes[changes.length - 1]! };
   }
@@ -267,6 +284,6 @@ function normalizeMediaType(value: unknown): string | undefined {
   return value.trim() || undefined;
 }
 
-function cloneFiles(files: readonly VersionFile[]): VersionFile[] {
+function cloneFiles(files: readonly VersionEntry[]): VersionEntry[] {
   return files.map((file) => ({ ...file })).sort((left, right) => left.path.localeCompare(right.path));
 }

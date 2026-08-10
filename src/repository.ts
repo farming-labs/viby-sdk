@@ -32,6 +32,9 @@ import type {
   JsonValue,
   ToolCallData,
   ToolCallEffect,
+  ProjectArtifactContent,
+  VersionArtifact,
+  VersionEntry,
   VisualArtifactContent,
   VisualArtifactData,
 } from "./types.js";
@@ -54,6 +57,7 @@ export interface ImportChatRecord<Framework extends FrameworkId = FrameworkId> {
   readonly summary: string;
   readonly framework: Framework;
   readonly files: readonly VersionFile[];
+  readonly artifacts?: readonly CreateProjectArtifactRecord[];
 }
 
 export interface ImportedChat<Framework extends FrameworkId = FrameworkId> {
@@ -70,6 +74,7 @@ export interface CreateSourceVersionRecord<Framework extends FrameworkId = Frame
   readonly title: string;
   readonly summary: string;
   readonly files: readonly VersionFile[];
+  readonly artifacts?: readonly VersionArtifact[];
   readonly changes: readonly SourceChange[];
 }
 
@@ -172,6 +177,10 @@ export interface CreateGeneratedArtifactRecord {
   readonly checksum: string;
 }
 
+export interface CreateProjectArtifactRecord extends VersionArtifact {
+  readonly bytes: Uint8Array;
+}
+
 export interface CreateVisualArtifactRecord {
   readonly id: string;
   readonly chatId: string;
@@ -208,6 +217,7 @@ export interface CompleteGenerationRecord<Framework extends FrameworkId = Framew
   readonly title: string;
   readonly summary: string;
   readonly files: readonly VersionFile[];
+  readonly projectArtifacts?: readonly VersionArtifact[];
   readonly changes: readonly SourceChange[] | null;
   readonly assistantMessage: string;
   readonly assistantParts: readonly MessagePartInput[];
@@ -548,6 +558,12 @@ export interface Repository {
     after: MessagePageCursor | null,
   ): Promise<RepositoryPage<MessageData>>;
   getVersionFiles(scope: UserScope, versionId: string): Promise<VersionFile[]>;
+  getVersionEntries(scope: UserScope, versionId: string): Promise<VersionEntry[]>;
+  getProjectArtifact(
+    scope: UserScope,
+    versionId: string,
+    artifactId: string,
+  ): Promise<ProjectArtifactContent | null>;
   getVersionChanges(scope: UserScope, versionId: string): Promise<SourceChange[]>;
   createSandboxLease<Framework extends FrameworkId>(
     scope: UserScope,
