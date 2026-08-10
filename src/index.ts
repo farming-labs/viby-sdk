@@ -14,6 +14,14 @@ export { AgentWorkspace } from "./agent-workspace.js";
 export { AgentProjectGenerator } from "./agent-runner.js";
 export { defineGenerationEngine } from "./generation-engine.js";
 export type {
+  ArtifactKind,
+  ArtifactReference,
+  ArtifactStore,
+  ArtifactStoreContext,
+  ArtifactStorePutInput,
+  ArtifactStoreReadOptions,
+} from "./artifact-store.js";
+export type {
   DefineGenerationEngineInput,
   GenerationEngine,
   GenerationEngineIdentity,

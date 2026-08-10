@@ -1,5 +1,6 @@
 import type { LanguageModel } from "ai";
 import type { GenerationEngine } from "./generation-engine.js";
+import type { ArtifactReference, ArtifactStore } from "./artifact-store.js";
 import type { OutboundEventSink } from "./outbound-events.js";
 import type {
   SandboxAdapter,
@@ -51,6 +52,8 @@ export type SkillGroups = {
 
 interface VibyBaseConfig<Framework extends FrameworkId = FrameworkId> {
   readonly framework: Framework;
+  /** External byte storage for attachments and generated binary artifacts. */
+  readonly artifactStore?: ArtifactStore;
   readonly skills?: SkillGroups;
   readonly sandbox?: SandboxAdapter;
   readonly sandboxPolicy?: SandboxCommandPolicy;
@@ -280,6 +283,7 @@ export interface AttachmentData {
   readonly mediaType: string;
   readonly size: number;
   readonly checksum: string;
+  readonly artifact: ArtifactReference;
   readonly createdAt: Date;
 }
 

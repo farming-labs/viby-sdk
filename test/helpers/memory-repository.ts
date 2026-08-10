@@ -1641,6 +1641,7 @@ function createMemoryMessage(
     mediaType: attachment.mediaType,
     size: attachment.size,
     checksum: attachment.checksum,
+    artifact: { store: "memory", key: `attachments/${attachment.id}` },
     createdAt: input.createdAt,
   }));
   return {

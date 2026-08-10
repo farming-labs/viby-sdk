@@ -1,4 +1,9 @@
 import postgres from "postgres";
+import {
+  normalizeArtifactStoreId,
+  type ArtifactStore,
+  type ArtifactStoreContext,
+} from "./artifact-store.js";
 import type {
   OutboundEventDeliveryData,
   OutboundEventDeliveryStatus,
@@ -76,7 +81,7 @@ import type {
   UpdateChatRecord,
   VersionPageCursor,
 } from "./repository.js";
-import { createId } from "./utils.js";
+import { createId, sha256 } from "./utils.js";
 import { normalizeAndRedactToolPayload } from "./redaction.js";
 import {
   ConfigurationError,
@@ -252,8 +257,20 @@ interface AttachmentRow {
   media_type: string;
   size: number;
   checksum: string;
+  artifact_store: string;
+  artifact_key: string;
   content?: Uint8Array;
   created_at: Date;
+}
+
+interface StoredAttachmentInput {
+  readonly id: string;
+  readonly filename: string;
+  readonly mediaType: string;
+  readonly size: number;
+  readonly checksum: string;
+  readonly artifactStore: string;
+  readonly artifactKey: string;
 }
 
 interface ToolCallRow {
@@ -301,9 +318,12 @@ interface SandboxLeaseRow {
 
 export class PostgresRepository implements Repository {
   readonly #sql: ReturnType<typeof postgres>;
+  readonly #artifactStore: ArtifactStore | undefined;
   #ready = false;
 
-  constructor(databaseUrl: string) {
+  constructor(databaseUrl: string, artifactStore?: ArtifactStore) {
+    if (artifactStore) normalizeArtifactStoreId(artifactStore.id);
+    this.#artifactStore = artifactStore;
     this.#sql = postgres(databaseUrl, {
       max: 10,
       idle_timeout: 20,
@@ -325,6 +345,11 @@ export class PostgresRepository implements Repository {
         AND to_regclass('viby.message_parts') IS NOT NULL
         AND to_regclass('viby.tool_calls') IS NOT NULL
         AND to_regclass('viby.outbound_event_deliveries') IS NOT NULL
+        AND EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_schema = 'viby' AND table_name = 'attachments'
+            AND column_name = 'artifact_key'
+        )
         AND EXISTS (
           SELECT 1 FROM information_schema.columns
           WHERE table_schema = 'viby' AND table_name = 'generations'
@@ -687,23 +712,36 @@ export class PostgresRepository implements Repository {
 
   async purgeDeletedChats(scope: UserScope, now: Date, limit: number): Promise<number> {
     await this.assertReady();
-    const [row] = await this.#sql<{ count: number }[]>`
-      WITH candidates AS (
+    const result = await this.#sql.begin(async (sql) => {
+      const candidates = await sql<{ id: string }[]>`
         SELECT id FROM viby.chats
         WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
           AND deleted_at IS NOT NULL AND purge_after IS NOT NULL AND purge_after <= ${now}
         ORDER BY purge_after, id
         LIMIT ${limit}
         FOR UPDATE SKIP LOCKED
-      ), deleted AS (
-        DELETE FROM viby.chats AS chats
-        USING candidates
-        WHERE chats.id = candidates.id
-        RETURNING chats.id
-      )
-      SELECT count(*)::integer AS count FROM deleted
-    `;
-    return row?.count ?? 0;
+      `;
+      if (candidates.length === 0) return { count: 0, artifacts: [] as AttachmentRow[] };
+      const ids = candidates.map(({ id }) => id);
+      const artifacts = await sql<AttachmentRow[]>`
+        SELECT id, chat_id, message_id, generation_id, filename, media_type,
+          size, checksum, artifact_store, artifact_key, created_at
+        FROM viby.attachments
+        WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+          AND chat_id = ANY(${sql.array(ids)}::uuid[])
+      `;
+      const deleted = await sql<{ id: string }[]>`
+        DELETE FROM viby.chats
+        WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+          AND id = ANY(${sql.array(ids)}::uuid[])
+        RETURNING id
+      `;
+      return { count: deleted.length, artifacts };
+    });
+    await Promise.allSettled(result.artifacts.map((artifact) => (
+      this.#deleteStoredAttachment(scope, artifact)
+    )));
+    return result.count;
   }
 
   async listChats<Framework extends FrameworkId>(
@@ -761,7 +799,10 @@ export class PostgresRepository implements Repository {
     input: CreateGenerationRecord,
   ): Promise<CreatedGeneration> {
     await this.assertReady();
-    const result = await this.#sql.begin(async (sql) => {
+    const attachments = await this.#storeAttachments(scope, input);
+    let result: { generation: GenerationRow; attempt: GenerationAttemptRow };
+    try {
+      result = await this.#sql.begin(async (sql) => {
       const [generation] = await sql<GenerationRow[]>`
         INSERT INTO viby.generations (
           id, tenant_id, user_id, chat_id, base_version_id, active_attempt_id,
@@ -797,7 +838,7 @@ export class PostgresRepository implements Repository {
         role: "user",
         content: input.prompt,
         parts: [{ type: "text", data: { text: input.prompt } }],
-        attachments: input.attachments ?? [],
+        attachments,
       });
       await sql`
         INSERT INTO viby.generation_events (
@@ -815,8 +856,17 @@ export class PostgresRepository implements Repository {
           'attempt.queued', ${sql.json({ number: 1, reason: "initial" })}
         )
       `;
-      return { generation, attempt };
-    });
+        return { generation, attempt };
+      });
+    } catch (error) {
+      await Promise.allSettled(attachments.map((attachment) => (
+        this.#artifactStore!.delete(
+          attachment.artifactKey,
+          attachmentContext(scope, attachment.id),
+        )
+      )));
+      throw error;
+    }
 
     return {
       generation: mapGeneration(result.generation),
@@ -2123,13 +2173,13 @@ export class PostgresRepository implements Repository {
     await this.assertReady();
     const [row] = await this.#sql<AttachmentRow[]>`
       SELECT id, chat_id, message_id, generation_id, filename, media_type,
-        size, checksum, content, created_at
+        size, checksum, artifact_store, artifact_key, content, created_at
       FROM viby.attachments
       WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
         AND chat_id = ${chatId} AND id = ${id}
       LIMIT 1
     `;
-    return row ? mapAttachmentContent(row) : null;
+    return row ? this.#loadAttachmentContent(scope, row) : null;
   }
 
   async listGenerationAttachments(
@@ -2139,13 +2189,13 @@ export class PostgresRepository implements Repository {
     await this.assertReady();
     const rows = await this.#sql<AttachmentRow[]>`
       SELECT id, chat_id, message_id, generation_id, filename, media_type,
-        size, checksum, content, created_at
+        size, checksum, artifact_store, artifact_key, content, created_at
       FROM viby.attachments
       WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
         AND generation_id = ${generationId}
       ORDER BY created_at, id
     `;
-    return rows.map(mapAttachmentContent);
+    return Promise.all(rows.map((row) => this.#loadAttachmentContent(scope, row)));
   }
 
   async listMessagePage(
@@ -2194,7 +2244,7 @@ export class PostgresRepository implements Repository {
     `;
     const attachmentRows = await this.#sql<AttachmentRow[]>`
       SELECT id, chat_id, message_id, generation_id, filename, media_type,
-        size, checksum, created_at
+        size, checksum, artifact_store, artifact_key, created_at
       FROM viby.attachments
       WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
         AND message_id = ANY(${this.#sql.array(messageIds)}::uuid[])
@@ -2300,6 +2350,88 @@ export class PostgresRepository implements Repository {
         AND id = ${id} AND status = 'active'
     `;
   }
+
+  async #storeAttachments(
+    scope: UserScope,
+    input: CreateGenerationRecord,
+  ): Promise<StoredAttachmentInput[]> {
+    if (!input.attachments || input.attachments.length === 0) return [];
+    if (!this.#artifactStore) {
+      throw new ConfigurationError(
+        "artifactStore is required when a generation includes binary attachments.",
+      );
+    }
+    const stored: StoredAttachmentInput[] = [];
+    try {
+      for (const attachment of input.attachments) {
+        const artifactKey = `attachments/${input.id}/${attachment.id}-${attachment.checksum}`;
+        await this.#artifactStore.put({
+          key: artifactKey,
+          bytes: Uint8Array.from(attachment.bytes),
+          mediaType: attachment.mediaType,
+          checksum: attachment.checksum,
+        }, attachmentContext(scope, attachment.id));
+        stored.push({
+          id: attachment.id,
+          filename: attachment.filename,
+          mediaType: attachment.mediaType,
+          size: attachment.size,
+          checksum: attachment.checksum,
+          artifactStore: this.#artifactStore.id,
+          artifactKey,
+        });
+      }
+      return stored;
+    } catch (error) {
+      await Promise.allSettled(stored.map((attachment) => (
+        this.#artifactStore!.delete(
+          attachment.artifactKey,
+          attachmentContext(scope, attachment.id),
+        )
+      )));
+      throw error;
+    }
+  }
+
+  async #loadAttachmentContent(
+    scope: UserScope,
+    row: AttachmentRow,
+  ): Promise<AttachmentContent> {
+    if (row.artifact_store === "postgres-legacy") {
+      if (!row.content) throw new Error(`Legacy attachment ${row.id} has no content.`);
+      return { ...mapAttachment(row), bytes: Uint8Array.from(row.content) };
+    }
+    if (!this.#artifactStore || this.#artifactStore.id !== row.artifact_store) {
+      throw new ConfigurationError(
+        `Artifact store ${row.artifact_store} is required to read attachment ${row.id}.`,
+      );
+    }
+    const bytes = await this.#artifactStore.get(
+      row.artifact_key,
+      attachmentContext(scope, row.id),
+    );
+    if (!bytes) throw new NotFoundError("Attachment content");
+    if (bytes.byteLength !== row.size || sha256(bytes) !== row.checksum) {
+      throw new Error(`Attachment ${row.id} failed its persisted size or checksum validation.`);
+    }
+    return { ...mapAttachment(row), bytes: Uint8Array.from(bytes) };
+  }
+
+  async #deleteStoredAttachment(scope: UserScope, row: AttachmentRow): Promise<void> {
+    if (
+      row.artifact_store === "postgres-legacy"
+      || !this.#artifactStore
+      || this.#artifactStore.id !== row.artifact_store
+    ) return;
+    await this.#artifactStore.delete(
+      row.artifact_key,
+      attachmentContext(scope, row.id),
+    );
+  }
+}
+
+function attachmentContext(scope: UserScope, ownerId: string): ArtifactStoreContext {
+  return { ...scope, kind: "attachment", ownerId };
 }
 
 function mapChat<Framework extends FrameworkId>(row: ChatRow): ChatData<Framework> {
@@ -2485,13 +2617,9 @@ function mapAttachment(row: AttachmentRow): AttachmentData {
     mediaType: row.media_type,
     size: row.size,
     checksum: row.checksum,
+    artifact: { store: row.artifact_store, key: row.artifact_key },
     createdAt: row.created_at,
   };
-}
-
-function mapAttachmentContent(row: AttachmentRow): AttachmentContent {
-  if (!row.content) throw new Error(`Attachment ${row.id} content was not selected.`);
-  return { ...mapAttachment(row), bytes: Uint8Array.from(row.content) };
 }
 
 function mapMessagePart(row: MessagePartRow): MessagePart {
@@ -2517,7 +2645,7 @@ async function insertMessage(
     readonly role: "user" | "assistant";
     readonly content: string;
     readonly parts: readonly MessagePartInput[];
-    readonly attachments?: CreateGenerationRecord["attachments"];
+    readonly attachments?: readonly StoredAttachmentInput[];
   },
 ): Promise<void> {
   const messageId = createId();
@@ -2545,12 +2673,12 @@ async function insertMessage(
     await sql`
       INSERT INTO viby.attachments (
         id, tenant_id, user_id, chat_id, message_id, generation_id,
-        filename, media_type, size, checksum, content
+        filename, media_type, size, checksum, artifact_store, artifact_key, content
       ) VALUES (
         ${attachment.id}, ${scope.tenantId}, ${scope.userId}, ${input.chatId},
         ${messageId}, ${input.generationId}, ${attachment.filename},
         ${attachment.mediaType}, ${attachment.size}, ${attachment.checksum},
-        ${Buffer.from(attachment.bytes)}
+        ${attachment.artifactStore}, ${attachment.artifactKey}, NULL
       )
     `;
   }

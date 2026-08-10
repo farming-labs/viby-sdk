@@ -333,7 +333,7 @@ export function createViby<const Framework extends FrameworkId>(
   }
 
   return createVibyWithDependencies(config, {
-    repository: new PostgresRepository(databaseUrl),
+    repository: new PostgresRepository(databaseUrl, config.artifactStore),
     ...(!config.engine ? {
       generator: new AgentProjectGenerator(config.model, config.agent),
       generators: Object.fromEntries(Object.entries(config.models ?? {}).map(([alias, model]) => (
