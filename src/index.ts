@@ -13,6 +13,15 @@ export { DownloadArtifact } from "./download.js";
 export { AgentWorkspace } from "./agent-workspace.js";
 export { AgentProjectGenerator } from "./agent-runner.js";
 export { MESSAGE_PART_TYPES } from "./types.js";
+export {
+  generationEventCursor,
+  generationEventStream,
+  generationEventStreamResponse,
+} from "./http.js";
+export type {
+  GenerationEventStreamResponseOptions,
+  GenerationEventStreamSource,
+} from "./http.js";
 export type {
   AgentWorkspaceCommitInput,
   AgentWorkspaceFile,
