@@ -140,7 +140,7 @@ Visual evaluation workflows are shipped on the provider-neutral browser contract
 
 Persistence is also provider-neutral: `DATABASE_URL` selects the built-in PostgreSQL implementation, while `persistence` accepts a host-owned durable adapter verified by the reusable conformance suite. Custom adapters retain responsibility for their own transactions, migrations, credentials, and binary-store integration.
 
-1. GitHub and Bitbucket adapters for the shipped repository workflows, plus provider-neutral deployment workflows and vendor adapters.
+1. A Bitbucket adapter for the shipped repository workflows, plus provider-neutral deployment workflows and vendor adapters. The GitHub App adapter is shipped.
 
 ## Persistence rules
 

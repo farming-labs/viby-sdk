@@ -73,6 +73,8 @@ try {
     "dist/integration-store-conformance.d.ts",
     "dist/repository-integration-conformance.js",
     "dist/repository-integration-conformance.d.ts",
+    "dist/integration-github.js",
+    "dist/integration-github.d.ts",
     "migrations/0001_initial.sql",
     "migrations/0002_durable_generations.sql",
     "migrations/0013_generation_costs.sql",
@@ -128,6 +130,20 @@ try {
         'if (typeof IntegrationOperationError !== "function") throw new Error("IntegrationOperationError export is missing");',
         'if (typeof RepositoryIntegrationHandle !== "function") throw new Error("RepositoryIntegrationHandle export is missing");',
         'if (skillRead("./skills").source !== "file") throw new Error("skillRead export is invalid");',
+      ].join("\n"),
+    ],
+    { cwd: consumer },
+  );
+  await execute(
+    node,
+    [
+      "--input-type=module",
+      "--eval",
+      [
+        'import { github, githubRepository, GitHubRepositoryError } from "@viby/sdk/integrations/github";',
+        'if (typeof github !== "function") throw new Error("GitHub repository adapter export is missing");',
+        'if (githubRepository !== github) throw new Error("GitHub repository alias is invalid");',
+        'if (typeof GitHubRepositoryError !== "function") throw new Error("GitHub repository error export is missing");',
       ].join("\n"),
     ],
     { cwd: consumer },
