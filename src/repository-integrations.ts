@@ -69,6 +69,8 @@ export interface PushVersionRepositoryInput<PushOptions = never, PullRequestOpti
     readonly providerOptions?: PullRequestOptions;
   };
   readonly providerOptions?: PushOptions;
+  /** Defaults to a stable key derived from the immutable version and repository target. */
+  readonly idempotencyKey?: string;
   readonly signal?: AbortSignal;
 }
 

@@ -51,6 +51,11 @@ import type {
   VisualArtifactContent,
   VisualArtifactData,
 } from "./types.js";
+import type {
+  RepositoryCommitData,
+  RepositoryPullRequestData,
+  RepositoryVisibility,
+} from "./integrations.js";
 import type { GenerationCostData } from "./telemetry.js";
 import type {
   CreateSandboxLeaseRecord,
@@ -92,6 +97,14 @@ import type {
   UpdateChatRecord,
   VersionPageCursor,
 } from "./repository.js";
+import type {
+  BeginRepositoryPushRecord,
+  CompleteRepositoryPushRecord,
+  FailRepositoryPushRecord,
+  RepositoryLinkData,
+  RepositoryPushData,
+  RepositoryPushStatus,
+} from "./repository-history.js";
 import { createId, sha256 } from "./utils.js";
 import { normalizeAndRedactToolPayload } from "./redaction.js";
 import {
@@ -391,6 +404,47 @@ interface SandboxLeaseRow {
   updated_at: Date;
 }
 
+interface RepositoryLinkRow {
+  id: string;
+  chat_id: string;
+  integration_id: string;
+  connection_id: string;
+  provider: string;
+  provider_repository_id: string;
+  owner: string;
+  name: string;
+  default_branch: string;
+  visibility: RepositoryVisibility;
+  url: string;
+  created_at: Date;
+  updated_at: Date;
+}
+
+interface RepositoryPushRow {
+  id: string;
+  chat_id: string;
+  version_id: string;
+  repository_link_id: string | null;
+  integration_id: string;
+  connection_id: string;
+  provider: string;
+  repository_owner: string;
+  repository_name: string;
+  branch: string;
+  commit_message: string;
+  expected_head: string | null;
+  status: RepositoryPushStatus;
+  commit: RepositoryCommitData | null;
+  changed_files: number | null;
+  pull_request: RepositoryPullRequestData | null;
+  actual_head: string | null;
+  error: string | null;
+  idempotency_key: string;
+  created_at: Date;
+  updated_at: Date;
+  completed_at: Date | null;
+}
+
 export class PostgresRepository implements Repository {
   readonly #sql: ReturnType<typeof postgres>;
   readonly #artifactStore: ArtifactStore | undefined;
@@ -423,6 +477,8 @@ export class PostgresRepository implements Repository {
         AND to_regclass('viby.generated_artifacts') IS NOT NULL
         AND to_regclass('viby.visual_artifacts') IS NOT NULL
         AND to_regclass('viby.project_artifacts') IS NOT NULL
+        AND to_regclass('viby.repository_links') IS NOT NULL
+        AND to_regclass('viby.repository_pushes') IS NOT NULL
         AND EXISTS (
           SELECT 1 FROM information_schema.columns
           WHERE table_schema = 'viby' AND table_name = 'attachments'
@@ -2601,6 +2657,166 @@ export class PostgresRepository implements Repository {
     return rows.map((row) => row.change);
   }
 
+  async beginRepositoryPush(
+    scope: UserScope,
+    input: BeginRepositoryPushRecord,
+  ): Promise<RepositoryPushData> {
+    await this.assertReady();
+    const [inserted] = await this.#sql<RepositoryPushRow[]>`
+      INSERT INTO viby.repository_pushes (
+        id, tenant_id, user_id, chat_id, version_id, integration_id, connection_id,
+        provider, repository_owner, repository_name, branch, commit_message,
+        expected_head, status, idempotency_key, created_at, updated_at
+      )
+      SELECT
+        ${input.id}, ${scope.tenantId}, ${scope.userId}, version.chat_id, version.id,
+        ${input.integrationId}, ${input.connectionId}, ${input.provider},
+        ${input.target.owner}, ${input.target.name}, ${input.branch}, ${input.commitMessage},
+        ${input.expectedHead}, 'pending', ${input.idempotencyKey}, ${input.now}, ${input.now}
+      FROM viby.versions AS version
+      JOIN viby.chats AS chat ON chat.id = version.chat_id
+      WHERE version.tenant_id = ${scope.tenantId} AND version.user_id = ${scope.userId}
+        AND version.id = ${input.versionId} AND version.chat_id = ${input.chatId}
+        AND chat.deleted_at IS NULL
+      ON CONFLICT (tenant_id, user_id, idempotency_key) DO NOTHING
+      RETURNING *
+    `;
+    if (inserted) return mapRepositoryPush(inserted);
+    const [existing] = await this.#sql<RepositoryPushRow[]>`
+      SELECT * FROM viby.repository_pushes
+      WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+        AND idempotency_key = ${input.idempotencyKey}
+      LIMIT 1
+    `;
+    if (existing) return mapRepositoryPush(existing);
+    throw new NotFoundError("Repository push version");
+  }
+
+  async completeRepositoryPush(
+    scope: UserScope,
+    input: CompleteRepositoryPushRecord,
+  ): Promise<RepositoryPushData> {
+    await this.assertReady();
+    const row = await this.#sql.begin(async (sql) => {
+      const [push] = await sql<RepositoryPushRow[]>`
+        SELECT * FROM viby.repository_pushes
+        WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+          AND id = ${input.id}
+        FOR UPDATE
+      `;
+      if (!push) throw new NotFoundError("Repository push");
+      const [link] = await sql<RepositoryLinkRow[]>`
+        INSERT INTO viby.repository_links (
+          id, tenant_id, user_id, chat_id, integration_id, connection_id, provider,
+          provider_repository_id, owner, name, default_branch, visibility, url,
+          created_at, updated_at
+        ) VALUES (
+          ${createId()}, ${scope.tenantId}, ${scope.userId}, ${push.chat_id},
+          ${push.integration_id}, ${push.connection_id}, ${push.provider},
+          ${input.repository.id}, ${input.repository.owner}, ${input.repository.name},
+          ${input.repository.defaultBranch}, ${input.repository.visibility}, ${input.repository.url},
+          ${input.completedAt}, ${input.completedAt}
+        )
+        ON CONFLICT (
+          tenant_id, user_id, chat_id, integration_id, connection_id, provider_repository_id
+        ) DO UPDATE SET
+          provider = EXCLUDED.provider,
+          owner = EXCLUDED.owner,
+          name = EXCLUDED.name,
+          default_branch = EXCLUDED.default_branch,
+          visibility = EXCLUDED.visibility,
+          url = EXCLUDED.url,
+          updated_at = EXCLUDED.updated_at
+        RETURNING *
+      `;
+      if (!link) throw new Error("Postgres did not return the linked repository.");
+      const pushed = input.result.status === "pushed";
+      const [completed] = await sql<RepositoryPushRow[]>`
+        UPDATE viby.repository_pushes SET
+          repository_link_id = ${link.id},
+          status = ${input.result.status},
+          commit = ${pushed
+            ? sql.json(JSON.parse(JSON.stringify(input.result.commit)))
+            : null},
+          changed_files = ${pushed ? input.result.changedFiles : null},
+          pull_request = ${pushed && input.result.pullRequest
+            ? sql.json(JSON.parse(JSON.stringify(input.result.pullRequest)))
+            : null},
+          actual_head = ${pushed ? null : input.result.actualHead},
+          error = NULL,
+          updated_at = ${input.completedAt},
+          completed_at = ${input.completedAt}
+        WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+          AND id = ${input.id}
+        RETURNING *
+      `;
+      if (!completed) throw new NotFoundError("Repository push");
+      return completed;
+    });
+    return mapRepositoryPush(row);
+  }
+
+  async failRepositoryPush(
+    scope: UserScope,
+    input: FailRepositoryPushRecord,
+  ): Promise<RepositoryPushData> {
+    await this.assertReady();
+    const [failed] = await this.#sql<RepositoryPushRow[]>`
+      UPDATE viby.repository_pushes SET
+        status = 'failed', commit = NULL, changed_files = NULL, pull_request = NULL,
+        actual_head = NULL, error = ${input.error}, updated_at = ${input.completedAt},
+        completed_at = ${input.completedAt}
+      WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+        AND id = ${input.id} AND status = 'pending'
+      RETURNING *
+    `;
+    if (failed) return mapRepositoryPush(failed);
+    const [existing] = await this.#sql<RepositoryPushRow[]>`
+      SELECT * FROM viby.repository_pushes
+      WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+        AND id = ${input.id}
+      LIMIT 1
+    `;
+    if (!existing) throw new NotFoundError("Repository push");
+    return mapRepositoryPush(existing);
+  }
+
+  async listRepositoryLinks(scope: UserScope, chatId: string): Promise<RepositoryLinkData[]> {
+    await this.assertReady();
+    const rows = await this.#sql<RepositoryLinkRow[]>`
+      SELECT link.* FROM viby.repository_links AS link
+      JOIN viby.chats AS chat ON chat.id = link.chat_id
+      WHERE link.tenant_id = ${scope.tenantId} AND link.user_id = ${scope.userId}
+        AND link.chat_id = ${chatId} AND chat.deleted_at IS NULL
+      ORDER BY link.updated_at DESC, link.id DESC
+    `;
+    return rows.map(mapRepositoryLink);
+  }
+
+  async listRepositoryPushes(
+    scope: UserScope,
+    input: { readonly chatId: string; readonly versionId?: string },
+  ): Promise<RepositoryPushData[]> {
+    await this.assertReady();
+    const rows = input.versionId
+      ? await this.#sql<RepositoryPushRow[]>`
+          SELECT push.* FROM viby.repository_pushes AS push
+          JOIN viby.chats AS chat ON chat.id = push.chat_id
+          WHERE push.tenant_id = ${scope.tenantId} AND push.user_id = ${scope.userId}
+            AND push.chat_id = ${input.chatId} AND push.version_id = ${input.versionId}
+            AND chat.deleted_at IS NULL
+          ORDER BY push.created_at DESC, push.id DESC
+        `
+      : await this.#sql<RepositoryPushRow[]>`
+          SELECT push.* FROM viby.repository_pushes AS push
+          JOIN viby.chats AS chat ON chat.id = push.chat_id
+          WHERE push.tenant_id = ${scope.tenantId} AND push.user_id = ${scope.userId}
+            AND push.chat_id = ${input.chatId} AND chat.deleted_at IS NULL
+          ORDER BY push.created_at DESC, push.id DESC
+        `;
+    return rows.map(mapRepositoryPush);
+  }
+
   async createSandboxLease<Framework extends FrameworkId>(
     scope: UserScope,
     input: CreateSandboxLeaseRecord<Framework>,
@@ -2996,6 +3212,50 @@ function mapVersion<Framework extends FrameworkId>(row: VersionRow): VersionData
     title: row.title,
     summary: row.summary,
     createdAt: row.created_at,
+  };
+}
+
+function mapRepositoryLink(row: RepositoryLinkRow): RepositoryLinkData {
+  return {
+    id: row.id,
+    chatId: row.chat_id,
+    integrationId: row.integration_id,
+    connectionId: row.connection_id,
+    provider: row.provider,
+    repositoryId: row.provider_repository_id,
+    owner: row.owner,
+    name: row.name,
+    defaultBranch: row.default_branch,
+    visibility: row.visibility,
+    url: row.url,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function mapRepositoryPush(row: RepositoryPushRow): RepositoryPushData {
+  return {
+    id: row.id,
+    chatId: row.chat_id,
+    versionId: row.version_id,
+    repositoryLinkId: row.repository_link_id,
+    integrationId: row.integration_id,
+    connectionId: row.connection_id,
+    provider: row.provider,
+    target: { owner: row.repository_owner, name: row.repository_name },
+    branch: row.branch,
+    commitMessage: row.commit_message,
+    expectedHead: row.expected_head,
+    status: row.status,
+    commit: row.commit,
+    changedFiles: row.changed_files,
+    pullRequest: row.pull_request,
+    actualHead: row.actual_head,
+    error: row.error,
+    idempotencyKey: row.idempotency_key,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    completedAt: row.completed_at,
   };
 }
 

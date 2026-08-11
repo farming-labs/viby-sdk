@@ -74,6 +74,13 @@ import type {
   OutboundEventDeliveryData,
   OutboundEventDeliveryStatus,
 } from "../../src/outbound-events.js";
+import type {
+  BeginRepositoryPushRecord,
+  CompleteRepositoryPushRecord,
+  FailRepositoryPushRecord,
+  RepositoryLinkData,
+  RepositoryPushData,
+} from "../../src/repository-history.js";
 
 interface ScopedRecord {
   tenantId: string;
@@ -120,6 +127,8 @@ export class MemoryRepository implements Repository {
   readonly sandboxLeases = new Map<string, SandboxLeaseData & ScopedRecord>();
   readonly outboundDeliveries = new Map<string, MemoryOutboundEventDelivery>();
   readonly toolCalls = new Map<string, ToolCallData & ScopedRecord>();
+  readonly repositoryLinks = new Map<string, RepositoryLinkData & ScopedRecord>();
+  readonly repositoryPushes = new Map<string, RepositoryPushData & ScopedRecord>();
   readonly workerLeaseTokens = new Map<string, string>();
   closed = false;
   #cursor = 0;
@@ -1650,6 +1659,147 @@ export class MemoryRepository implements Repository {
     return version ? (this.changes.get(versionId) ?? []).map((change) => ({ ...change })) : [];
   }
 
+  async beginRepositoryPush(
+    scope: UserScope,
+    input: BeginRepositoryPushRecord,
+  ): Promise<RepositoryPushData> {
+    const version = await this.getVersion(scope, input.versionId);
+    if (!version || version.chatId !== input.chatId) throw new NotFoundError("Repository push version");
+    const existing = [...this.repositoryPushes.values()].find((push) => (
+      inScope(push, scope) && push.idempotencyKey === input.idempotencyKey
+    ));
+    if (existing) return publicRepositoryPush(existing);
+    const push: RepositoryPushData & ScopedRecord = {
+      id: input.id,
+      chatId: input.chatId,
+      versionId: input.versionId,
+      repositoryLinkId: null,
+      integrationId: input.integrationId,
+      connectionId: input.connectionId,
+      provider: input.provider,
+      target: { ...input.target },
+      branch: input.branch,
+      commitMessage: input.commitMessage,
+      expectedHead: input.expectedHead,
+      status: "pending",
+      commit: null,
+      changedFiles: null,
+      pullRequest: null,
+      actualHead: null,
+      error: null,
+      idempotencyKey: input.idempotencyKey,
+      createdAt: input.now,
+      updatedAt: input.now,
+      completedAt: null,
+      ...scope,
+    };
+    this.repositoryPushes.set(push.id, push);
+    return publicRepositoryPush(push);
+  }
+
+  async completeRepositoryPush(
+    scope: UserScope,
+    input: CompleteRepositoryPushRecord,
+  ): Promise<RepositoryPushData> {
+    const push = this.repositoryPushes.get(input.id);
+    if (!push || !inScope(push, scope)) throw new NotFoundError("Repository push");
+    const existingLink = [...this.repositoryLinks.values()].find((link) => (
+      inScope(link, scope)
+      && link.chatId === push.chatId
+      && link.integrationId === push.integrationId
+      && link.connectionId === push.connectionId
+      && link.repositoryId === input.repository.id
+    ));
+    const now = input.completedAt;
+    const link: RepositoryLinkData & ScopedRecord = {
+      id: existingLink?.id ?? createId(),
+      chatId: push.chatId,
+      integrationId: push.integrationId,
+      connectionId: push.connectionId,
+      provider: push.provider,
+      repositoryId: input.repository.id,
+      owner: input.repository.owner,
+      name: input.repository.name,
+      defaultBranch: input.repository.defaultBranch,
+      visibility: input.repository.visibility,
+      url: input.repository.url,
+      createdAt: existingLink?.createdAt ?? now,
+      updatedAt: now,
+      ...scope,
+    };
+    this.repositoryLinks.set(link.id, link);
+    const completed: RepositoryPushData & ScopedRecord = input.result.status === "pushed"
+      ? {
+          ...push,
+          repositoryLinkId: link.id,
+          status: "pushed",
+          commit: { ...input.result.commit },
+          changedFiles: input.result.changedFiles,
+          pullRequest: input.result.pullRequest ? { ...input.result.pullRequest } : null,
+          actualHead: null,
+          error: null,
+          updatedAt: now,
+          completedAt: now,
+        }
+      : {
+          ...push,
+          repositoryLinkId: link.id,
+          status: "conflict",
+          commit: null,
+          changedFiles: null,
+          pullRequest: null,
+          actualHead: input.result.actualHead,
+          error: null,
+          updatedAt: now,
+          completedAt: now,
+        };
+    this.repositoryPushes.set(push.id, completed);
+    return publicRepositoryPush(completed);
+  }
+
+  async failRepositoryPush(
+    scope: UserScope,
+    input: FailRepositoryPushRecord,
+  ): Promise<RepositoryPushData> {
+    const push = this.repositoryPushes.get(input.id);
+    if (!push || !inScope(push, scope)) throw new NotFoundError("Repository push");
+    if (push.status !== "pending") return publicRepositoryPush(push);
+    const failed: RepositoryPushData & ScopedRecord = {
+      ...push,
+      status: "failed",
+      error: input.error,
+      updatedAt: input.completedAt,
+      completedAt: input.completedAt,
+    };
+    this.repositoryPushes.set(push.id, failed);
+    return publicRepositoryPush(failed);
+  }
+
+  async listRepositoryLinks(scope: UserScope, chatId: string): Promise<RepositoryLinkData[]> {
+    const chat = await this.getChat(scope, chatId);
+    if (!chat) throw new NotFoundError("Chat");
+    return [...this.repositoryLinks.values()]
+      .filter((link) => inScope(link, scope) && link.chatId === chatId)
+      .sort((left, right) => right.updatedAt.getTime() - left.updatedAt.getTime())
+      .map(publicRepositoryLink);
+  }
+
+  async listRepositoryPushes(
+    scope: UserScope,
+    input: { readonly chatId: string; readonly versionId?: string },
+  ): Promise<RepositoryPushData[]> {
+    const chat = await this.getChat(scope, input.chatId);
+    if (!chat) throw new NotFoundError("Chat");
+    return [...this.repositoryPushes.values()]
+      .filter((push) => (
+        inScope(push, scope)
+        && push.chatId === input.chatId
+        && (input.versionId === undefined || push.versionId === input.versionId)
+      ))
+      .sort((left, right) => right.createdAt.getTime() - left.createdAt.getTime())
+      .map(publicRepositoryPush);
+  }
+
   async createSandboxLease<Framework extends FrameworkId>(
     scope: UserScope,
     input: CreateSandboxLeaseRecord<Framework>,
@@ -1808,6 +1958,21 @@ export class MemoryRepository implements Repository {
 
 function inScope(record: ScopedRecord, scope: UserScope): boolean {
   return record.tenantId === scope.tenantId && record.userId === scope.userId;
+}
+
+function publicRepositoryLink(record: RepositoryLinkData & ScopedRecord): RepositoryLinkData {
+  const { tenantId: _tenantId, userId: _userId, ...data } = record;
+  return { ...data };
+}
+
+function publicRepositoryPush(record: RepositoryPushData & ScopedRecord): RepositoryPushData {
+  const { tenantId: _tenantId, userId: _userId, ...data } = record;
+  return {
+    ...data,
+    target: { ...data.target },
+    commit: data.commit ? { ...data.commit } : null,
+    pullRequest: data.pullRequest ? { ...data.pullRequest } : null,
+  };
 }
 
 function sortChats<Item extends ChatData>(chats: Item[]): Item[] {

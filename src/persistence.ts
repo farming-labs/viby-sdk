@@ -40,3 +40,11 @@ export type {
   UpdateChatRecord,
   VersionPageCursor,
 } from "./repository.js";
+export type {
+  BeginRepositoryPushRecord,
+  CompleteRepositoryPushRecord,
+  FailRepositoryPushRecord,
+  RepositoryLinkData,
+  RepositoryPushData,
+  RepositoryPushStatus,
+} from "./repository-history.js";

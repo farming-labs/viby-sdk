@@ -174,6 +174,7 @@ import {
   type PushVersionRepositoryInput,
   type PushVersionRepositoryResult,
 } from "./repository-integrations.js";
+import type { RepositoryLinkData, RepositoryPushData } from "./repository-history.js";
 import {
   EncryptedPostgresSecretStore,
   PostgresIntegrationConnectionStore,
@@ -853,6 +854,22 @@ export class Chat<Framework extends FrameworkId = FrameworkId> {
     };
   }
 
+  async repositoryLinks(): Promise<readonly RepositoryLinkData[]> {
+    await this.#assertActive();
+    return this.#dependencies.repository.listRepositoryLinks(
+      this.#dependencies.scope,
+      this.id,
+    );
+  }
+
+  async repositoryPushes(): Promise<readonly RepositoryPushData[]> {
+    await this.#assertActive();
+    return this.#dependencies.repository.listRepositoryPushes(
+      this.#dependencies.scope,
+      { chatId: this.id },
+    );
+  }
+
   async listMessages(options: PageOptions = {}): Promise<CursorPage<MessageData>> {
     await this.#assertActive();
     const limit = normalizePageLimit(options.limit);
@@ -1462,12 +1479,91 @@ export class Version<Framework extends FrameworkId = FrameworkId> {
     input: PushVersionRepositoryInput<PushOptions, PullRequestOptions>,
   ): Promise<PushVersionRepositoryResult> {
     if (!input) throw new ConfigurationError("A repository push target is required.");
-    return pushVersionSource(await materializeVersionSourceFiles(
+    const branch = typeof input.branch === "string" ? input.branch : input.branch.name;
+    const context = await input.using.operationContext(input.signal);
+    const idempotencyKey = input.idempotencyKey?.trim()
+      ? assertIdentifier(input.idempotencyKey, "Repository push idempotency key")
+      : `viby-${sha256([
+          this.id,
+          input.using.id,
+          context.connectionId,
+          input.repository.owner,
+          input.repository.name,
+          branch,
+          input.commit.message,
+          input.pullRequest?.base ?? "",
+          input.pullRequest?.title ?? "",
+        ].join("\0")).slice(0, 48)}`;
+    const pushId = createId();
+    const started = await this.#dependencies.repository.beginRepositoryPush(
+      this.#dependencies.scope,
+      {
+        id: pushId,
+        chatId: this.chatId,
+        versionId: this.id,
+        integrationId: input.using.id,
+        connectionId: context.connectionId,
+        provider: input.using.provider,
+        target: { owner: input.repository.owner, name: input.repository.name },
+        branch,
+        commitMessage: input.commit.message,
+        expectedHead: input.commit.expectedHead ?? null,
+        idempotencyKey,
+        now: new Date(),
+      },
+    );
+    const replay = await storedRepositoryPushResult(
       this.#dependencies.repository,
       this.#dependencies.scope,
-      this.id,
-      await this.entries(),
-    ), input);
+      started,
+    );
+    if (replay) return replay;
+    try {
+      const result = await pushVersionSource(await materializeVersionSourceFiles(
+        this.#dependencies.repository,
+        this.#dependencies.scope,
+        this.id,
+        await this.entries(),
+      ), input);
+      await this.#dependencies.repository.completeRepositoryPush(
+        this.#dependencies.scope,
+        {
+          id: started.id,
+          repository: result.repository,
+          result: result.status === "pushed"
+            ? {
+                status: "pushed",
+                commit: result.commit,
+                changedFiles: result.changedFiles,
+                pullRequest: result.pullRequest,
+              }
+            : { status: "conflict", actualHead: result.actualHead },
+          completedAt: new Date(),
+        },
+      );
+      return result;
+    } catch (error) {
+      try {
+        await this.#dependencies.repository.failRepositoryPush(
+          this.#dependencies.scope,
+          { id: started.id, error: errorMessage(error), completedAt: new Date() },
+        );
+      } catch (historyError) {
+        throw new AggregateError(
+          [error, historyError],
+          "Repository push failed and its durable history could not be updated.",
+        );
+      }
+      throw error;
+    }
+  }
+
+  async repositoryPushes(): Promise<readonly RepositoryPushData[]> {
+    await assertActiveChat(this.#dependencies, this.chatId);
+    return this.#dependencies.repository.listRepositoryPushes(
+      this.#dependencies.scope,
+      { chatId: this.chatId, versionId: this.id },
+    );
   }
 
   /** Deploys this immutable source snapshot through a connected deployment integration. */
@@ -1662,6 +1758,47 @@ function splitVersionEntries(entries: readonly VersionEntry[]): {
       .filter((entry) => entry.type === "text")
       .map(({ type: _type, ...file }) => file),
     artifacts: entries.filter((entry): entry is VersionArtifact => entry.type === "artifact"),
+  };
+}
+
+async function storedRepositoryPushResult(
+  repository: Repository,
+  scope: UserScope,
+  push: RepositoryPushData,
+): Promise<PushVersionRepositoryResult | null> {
+  if (push.status !== "pushed" && push.status !== "conflict") return null;
+  if (!push.repositoryLinkId) {
+    throw new Error(`Completed repository push ${push.id} has no repository link.`);
+  }
+  const link = (await repository.listRepositoryLinks(scope, push.chatId))
+    .find((candidate) => candidate.id === push.repositoryLinkId);
+  if (!link) throw new Error(`Repository link ${push.repositoryLinkId} is unavailable.`);
+  const remote = {
+    id: link.repositoryId,
+    owner: link.owner,
+    name: link.name,
+    defaultBranch: link.defaultBranch,
+    visibility: link.visibility,
+    url: link.url,
+  };
+  if (push.status === "conflict") {
+    if (push.actualHead === null) throw new Error(`Repository conflict ${push.id} has no actual head.`);
+    return {
+      status: "conflict",
+      repository: remote,
+      expectedHead: push.expectedHead,
+      actualHead: push.actualHead,
+    };
+  }
+  if (!push.commit || push.changedFiles === null) {
+    throw new Error(`Completed repository push ${push.id} has no commit result.`);
+  }
+  return {
+    status: "pushed",
+    repository: remote,
+    commit: push.commit,
+    changedFiles: push.changedFiles,
+    pullRequest: push.pullRequest,
   };
 }
 
