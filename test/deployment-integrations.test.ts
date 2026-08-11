@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { LanguageModel } from "ai";
+import { unzipSync } from "fflate";
 import { createViby, type ScopedViby, type Viby } from "../src/client.js";
 import { verifyDeploymentIntegration } from "../src/deployment-integration-conformance.js";
 import type {
@@ -9,13 +10,21 @@ import type {
   DeploymentProjectData,
   IntegrationSourceFile,
 } from "../src/integrations.js";
+import {
+  sandboxCapabilities,
+  type SandboxAdapter,
+  type SandboxCommand,
+  type SandboxCreateInput,
+  type SandboxFile,
+  type SandboxInstance,
+} from "../src/sandbox.js";
 import { MemoryRepository } from "./helpers/memory-repository.js";
 import {
   MemoryIntegrationConnectionStore,
   MemorySecretStore,
 } from "./helpers/memory-integration-store.js";
 
-function deploymentFixture() {
+function deploymentFixture(source?: DeploymentIntegration["source"]) {
   const projects = new Map<string, DeploymentProjectData>();
   const deployments = new Map<string, DeploymentData>();
   const effects = new Map<string, string>();
@@ -25,6 +34,7 @@ function deploymentFixture() {
   const adapter: DeploymentIntegration = {
     provider: "fixture-deployment",
     displayName: "Fixture Deployment",
+    ...(source ? { source } : {}),
     connection: {
       async startAuthorization(input) {
         const url = new URL("https://deploy.example/authorize");
@@ -105,6 +115,67 @@ function deploymentFixture() {
     },
   };
   return { adapter, projects, deployments, effects, sources };
+}
+
+class BuildSandboxInstance implements SandboxInstance {
+  readonly id: string;
+  readonly files = new Map<string, Uint8Array>();
+  readonly commands: SandboxCommand[] = [];
+  stopCalls = 0;
+
+  constructor(id: string) {
+    this.id = id;
+  }
+
+  async writeFiles(files: readonly SandboxFile[]): Promise<void> {
+    for (const file of files) {
+      this.files.set(
+        file.path,
+        typeof file.content === "string" ? new TextEncoder().encode(file.content) : file.content,
+      );
+    }
+  }
+
+  async run(command: SandboxCommand) {
+    this.commands.push(command);
+    if (command.command === "pnpm" && command.args?.[0] === "build") {
+      this.files.set("dist/index.html", new TextEncoder().encode("<h1>Prepared</h1>"));
+      this.files.set("dist/assets/app.js", new TextEncoder().encode("console.log('prepared')"));
+    }
+    if (command.command === "node" && command.args?.[0] === "-e") {
+      const manifest = command.args[3];
+      assert.ok(manifest);
+      this.files.set(
+        manifest,
+        new TextEncoder().encode(JSON.stringify(["assets/app.js", "index.html"])),
+      );
+    }
+    return { exitCode: 0, stdout: "", stderr: "", durationMs: 1 };
+  }
+
+  async readFile(path: string): Promise<Uint8Array> {
+    const file = this.files.get(path);
+    if (!file) throw new Error(`Missing sandbox file ${path}`);
+    return Uint8Array.from(file);
+  }
+
+  async stop(): Promise<void> {
+    this.stopCalls += 1;
+  }
+}
+
+class BuildSandboxAdapter implements SandboxAdapter {
+  readonly provider = "fixture-sandbox";
+  readonly capabilities = sandboxCapabilities({ files: true, commands: true });
+  readonly creates: SandboxCreateInput[] = [];
+  readonly instances: BuildSandboxInstance[] = [];
+
+  async create(input: SandboxCreateInput): Promise<SandboxInstance> {
+    this.creates.push(input);
+    const instance = new BuildSandboxInstance(`build-${this.instances.length + 1}`);
+    this.instances.push(instance);
+    return instance;
+  }
 }
 
 async function authorize(
@@ -263,6 +334,116 @@ test("passes the reusable deployment adapter conformance suite", async () => {
     "get-deployment",
     "cancel-deployment",
   ]);
+});
+
+test("prepares prebuilt deployment files in a sandbox and preserves raw downloads", async () => {
+  const fixture = deploymentFixture({ mode: "prebuilt", outputDirectory: "dist" });
+  const sandbox = new BuildSandboxAdapter();
+  const persistence = new MemoryRepository();
+  const viby = createViby({
+    framework: "farm",
+    model: "test/mock" as LanguageModel,
+    persistence,
+    sandbox,
+    deployment: {
+      preparation: { build: { command: "pnpm", args: ["build"] } },
+    },
+    connectionStore: new MemoryIntegrationConnectionStore(),
+    secretStore: new MemorySecretStore(),
+    integrations: { deployment: { preview: fixture.adapter } },
+  });
+  const user = viby.forUser({ tenantId: "tenant", userId: "user" });
+  await authorize(viby, user);
+  const chat = await user.chats.import({
+    title: "Farm deployment",
+    source: {
+      type: "files",
+      files: [
+        { path: "package.json", content: '{"scripts":{"build":"farm build"}}\n' },
+        { path: "src/index.ts", content: "export const source = true;\n" },
+      ],
+    },
+  });
+  const version = await chat.latestVersion();
+  assert.ok(version);
+  const provider = user.integrations.deployment.use("preview");
+  assert.equal(provider.sourceMode, "prebuilt");
+  assert.equal(provider.outputDirectory, "dist");
+
+  const result = await version.deploy({
+    using: provider,
+    project: { name: "prepared-app", createIfMissing: true },
+    environment: "preview",
+    preparation: { env: { PUBLIC_API_ORIGIN: "https://api.example" } },
+  });
+  assert.deepEqual(fixture.sources.get(result.id)?.map((file) => file.path), [
+    "dist/assets/app.js",
+    "dist/index.html",
+  ]);
+  assert.equal(sandbox.instances.length, 1);
+  assert.equal(sandbox.instances[0]?.stopCalls, 1);
+  assert.deepEqual(sandbox.creates[0]?.env, { PUBLIC_API_ORIGIN: "https://api.example" });
+  assert.equal(sandbox.instances[0]?.commands[0]?.command, "pnpm");
+  assert.deepEqual(sandbox.instances[0]?.commands[0]?.args, ["build"]);
+  assert.deepEqual(sandbox.instances[0]?.commands[0]?.env, {
+    PUBLIC_API_ORIGIN: "https://api.example",
+  });
+  assert.equal(sandbox.instances[0]?.commands[1]?.command, "node");
+  assert.equal(sandbox.instances[0]?.commands[1]?.args?.[2], "dist");
+
+  const [history] = await version.deployments();
+  assert.ok(history?.preparationArtifactId);
+  const artifact = await version.deploymentArtifact(history.id);
+  assert.ok(artifact);
+  assert.equal(artifact.sandboxProvider, "fixture-sandbox");
+  assert.equal(artifact.outputDirectory, "dist");
+  assert.deepEqual(artifact.commands[0]?.environment, ["PUBLIC_API_ORIGIN"]);
+  assert.deepEqual(Object.keys(unzipSync(artifact.bytes)).sort(), [
+    "dist/assets/app.js",
+    "dist/index.html",
+  ]);
+
+  const rawDownload = unzipSync((await version.download()).bytes);
+  assert.deepEqual(Object.keys(rawDownload).sort(), ["package.json", "src/index.ts"]);
+  assert.equal(rawDownload["dist/index.html"], undefined);
+
+  const replay = await version.deploy({
+    using: provider,
+    project: { name: "prepared-app", createIfMissing: true },
+    environment: "preview",
+  });
+  assert.equal(replay.id, result.id);
+  assert.equal(sandbox.instances.length, 1);
+  await viby.close();
+});
+
+test("records an actionable failure when a prebuilt provider has no preparation contract", async () => {
+  const fixture = deploymentFixture({ mode: "prebuilt", outputDirectory: "dist" });
+  const persistence = new MemoryRepository();
+  const viby = createViby({
+    framework: "farm",
+    model: "test/mock" as LanguageModel,
+    persistence,
+    connectionStore: new MemoryIntegrationConnectionStore(),
+    secretStore: new MemorySecretStore(),
+    integrations: { deployment: { preview: fixture.adapter } },
+  });
+  const user = viby.forUser({ tenantId: "tenant", userId: "user" });
+  await authorize(viby, user);
+  const chat = await user.chats.import({
+    title: "Missing preparation",
+    source: { type: "files", files: [{ path: "index.html", content: "raw" }] },
+  });
+  const version = await chat.latestVersion();
+  assert.ok(version);
+  await assert.rejects(() => version.deploy({
+    using: user.integrations.deployment.use("preview"),
+    project: { name: "missing-preparation", createIfMissing: true },
+    environment: "preview",
+  }), /requires prebuilt files.*deployment\.preparation/i);
+  assert.equal((await version.deployments())[0]?.status, "failed");
+  assert.equal(fixture.sources.size, 0);
+  await viby.close();
 });
 
 function assertCredential(value: Uint8Array): void {

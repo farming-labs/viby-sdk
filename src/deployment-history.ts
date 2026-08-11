@@ -5,6 +5,11 @@ import type {
   DeploymentStatus,
 } from "./integrations.js";
 import type { UserScope } from "./types.js";
+import type {
+  CreateDeploymentArtifactRecord,
+  DeploymentArtifactContent,
+  DeploymentArtifactData,
+} from "./deployment-preparation.js";
 
 export type DeploymentHistoryStatus = "pending" | DeploymentStatus;
 
@@ -35,6 +40,7 @@ export interface DeploymentRecordData {
   readonly chatId: string;
   readonly versionId: string;
   readonly projectLinkId: string | null;
+  readonly preparationArtifactId: string | null;
   readonly integrationId: string;
   readonly connectionId: string;
   readonly provider: string;
@@ -105,4 +111,13 @@ export interface DeploymentHistoryStore {
     scope: UserScope,
     input: { readonly chatId: string; readonly versionId?: string },
   ): Promise<DeploymentRecordData[]>;
+  createDeploymentArtifact(
+    scope: UserScope,
+    input: CreateDeploymentArtifactRecord,
+  ): Promise<DeploymentArtifactData>;
+  getDeploymentArtifact(
+    scope: UserScope,
+    deploymentId: string,
+    artifactId: string,
+  ): Promise<DeploymentArtifactContent | null>;
 }

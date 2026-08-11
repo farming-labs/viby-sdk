@@ -8,7 +8,13 @@ export interface ArtifactReference {
   readonly key: string;
 }
 
-export type ArtifactKind = "attachment" | "generated" | "project" | "screenshot" | (string & {});
+export type ArtifactKind =
+  | "attachment"
+  | "generated"
+  | "project"
+  | "screenshot"
+  | "deployment"
+  | (string & {});
 
 export interface ArtifactStoreContext extends UserScope {
   readonly kind: ArtifactKind;

@@ -17,6 +17,7 @@ export { BrowserSession, openBrowserSession } from "./browser.js";
 export { openSandboxPreview } from "./browser-preview.js";
 export { accessibilityGate, consoleErrorGate } from "./visual-evaluation.js";
 export { configuredIntegrations } from "./integrations.js";
+export { deploymentFilesFromArtifact, prepareDeploymentSource } from "./deployment-preparation.js";
 export {
   IntegrationClient,
   ScopedIntegrationCategory,
@@ -45,6 +46,15 @@ export type {
   DeploySourceInput,
   VersionDeployInput,
 } from "./deployment-integrations.js";
+export type {
+  CreateDeploymentArtifactRecord,
+  DeploymentArtifactCommand,
+  DeploymentArtifactContent,
+  DeploymentArtifactData,
+  DeploymentPreparationConfig,
+  DeploymentPreparationInput,
+  PreparedDeploymentSource,
+} from "./deployment-preparation.js";
 export type {
   PushVersionRepositoryInput,
   PushVersionRepositoryResult,
@@ -88,6 +98,7 @@ export type {
   DeploymentIntegrationMap,
   DeploymentProjectData,
   DeploymentStatus,
+  DeploymentSourceContract,
   GetDeploymentInput,
   GetRepositoryBranchInput,
   IntegrationAuthorizationCompleteInput,

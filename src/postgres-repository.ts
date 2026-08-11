@@ -116,6 +116,12 @@ import type {
   FailDeploymentRecord,
   ObserveDeploymentRecord,
 } from "./deployment-history.js";
+import type {
+  CreateDeploymentArtifactRecord,
+  DeploymentArtifactCommand,
+  DeploymentArtifactContent,
+  DeploymentArtifactData,
+} from "./deployment-preparation.js";
 import { createId, sha256 } from "./utils.js";
 import { normalizeAndRedactToolPayload } from "./redaction.js";
 import {
@@ -367,7 +373,7 @@ interface StoredArtifactLocation {
   readonly id: string;
   readonly artifact_store: string;
   readonly artifact_key: string;
-  readonly kind: "attachment" | "generated" | "project" | "visual";
+  readonly kind: "attachment" | "generated" | "project" | "visual" | "deployment";
 }
 
 interface ToolCallRow {
@@ -474,6 +480,7 @@ interface DeploymentRow {
   chat_id: string;
   version_id: string;
   project_link_id: string | null;
+  preparation_artifact_id: string | null;
   integration_id: string;
   connection_id: string;
   provider: string;
@@ -488,6 +495,24 @@ interface DeploymentRow {
   created_at: Date;
   updated_at: Date;
   completed_at: Date | null;
+}
+
+interface DeploymentArtifactRow {
+  id: string;
+  chat_id: string;
+  version_id: string;
+  deployment_id: string;
+  framework: FrameworkId;
+  sandbox_provider: string;
+  output_directory: string;
+  commands: DeploymentArtifactCommand[];
+  file_count: number;
+  media_type: "application/zip";
+  size: number;
+  checksum: string;
+  artifact_store: string;
+  artifact_key: string;
+  created_at: Date;
 }
 
 interface DeploymentStatusTransitionRow {
@@ -536,6 +561,7 @@ export class PostgresRepository implements Repository {
         AND to_regclass('viby.deployment_project_links') IS NOT NULL
         AND to_regclass('viby.deployments') IS NOT NULL
         AND to_regclass('viby.deployment_status_transitions') IS NOT NULL
+        AND to_regclass('viby.deployment_artifacts') IS NOT NULL
         AND EXISTS (
           SELECT 1 FROM information_schema.columns
           WHERE table_schema = 'viby' AND table_name = 'attachments'
@@ -545,6 +571,11 @@ export class PostgresRepository implements Repository {
           SELECT 1 FROM information_schema.columns
           WHERE table_schema = 'viby' AND table_name = 'version_files'
             AND column_name = 'artifact_id'
+        )
+        AND EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_schema = 'viby' AND table_name = 'deployments'
+            AND column_name = 'preparation_artifact_id'
         )
         AND EXISTS (
           SELECT 1 FROM information_schema.columns
@@ -902,6 +933,11 @@ export class PostgresRepository implements Repository {
         UNION ALL
         SELECT id, artifact_store, artifact_key, 'visual'::text AS kind
         FROM viby.visual_artifacts
+        WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+          AND chat_id = ANY(${sql.array(ids)}::uuid[])
+        UNION ALL
+        SELECT id, artifact_store, artifact_key, 'deployment'::text AS kind
+        FROM viby.deployment_artifacts
         WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
           AND chat_id = ANY(${sql.array(ids)}::uuid[])
       `;
@@ -3097,6 +3133,125 @@ export class PostgresRepository implements Repository {
     return this.#deploymentsWithTransitions(scope, rows);
   }
 
+  async createDeploymentArtifact(
+    scope: UserScope,
+    input: CreateDeploymentArtifactRecord,
+  ): Promise<DeploymentArtifactData> {
+    await this.assertReady();
+    if (!this.#artifactStore) {
+      throw new ConfigurationError(
+        "artifactStore is required to persist prepared deployment output.",
+      );
+    }
+    if (input.bytes.byteLength !== input.size || sha256(input.bytes) !== input.checksum) {
+      throw new ConfigurationError("Deployment artifact size or checksum is invalid.");
+    }
+    const [existing] = await this.#sql<DeploymentArtifactRow[]>`
+      SELECT artifact.* FROM viby.deployment_artifacts AS artifact
+      JOIN viby.chats AS chat ON chat.id = artifact.chat_id
+      WHERE artifact.tenant_id = ${scope.tenantId} AND artifact.user_id = ${scope.userId}
+        AND artifact.deployment_id = ${input.deploymentId} AND chat.deleted_at IS NULL
+      LIMIT 1
+    `;
+    if (existing) return mapDeploymentArtifact(existing);
+
+    const artifactKey = `deployments/${input.deploymentId}/${input.id}-${input.checksum}.zip`;
+    await this.#artifactStore.put({
+      key: artifactKey,
+      bytes: Uint8Array.from(input.bytes),
+      mediaType: "application/zip",
+      checksum: input.checksum,
+    }, deploymentArtifactContext(scope, input.id));
+    try {
+      const result = await this.#sql.begin(async (sql) => {
+        const [inserted] = await sql<DeploymentArtifactRow[]>`
+          INSERT INTO viby.deployment_artifacts (
+            id, tenant_id, user_id, chat_id, version_id, deployment_id, framework,
+            sandbox_provider, output_directory, commands, file_count, size, checksum,
+            artifact_store, artifact_key, created_at
+          )
+          SELECT
+            ${input.id}, ${scope.tenantId}, ${scope.userId}, deployment.chat_id,
+            deployment.version_id, deployment.id, ${input.framework}, ${input.sandboxProvider},
+            ${input.outputDirectory},
+            ${sql.json(JSON.parse(JSON.stringify(input.commands)))}, ${input.fileCount},
+            ${input.size}, ${input.checksum}, ${this.#artifactStore!.id}, ${artifactKey}, now()
+          FROM viby.deployments AS deployment
+          JOIN viby.chats AS chat ON chat.id = deployment.chat_id
+          WHERE deployment.tenant_id = ${scope.tenantId}
+            AND deployment.user_id = ${scope.userId}
+            AND deployment.id = ${input.deploymentId}
+            AND deployment.chat_id = ${input.chatId}
+            AND deployment.version_id = ${input.versionId}
+            AND chat.deleted_at IS NULL
+          ON CONFLICT (tenant_id, user_id, deployment_id) DO NOTHING
+          RETURNING *
+        `;
+        const row = inserted ?? (await sql<DeploymentArtifactRow[]>`
+          SELECT * FROM viby.deployment_artifacts
+          WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+            AND deployment_id = ${input.deploymentId}
+          LIMIT 1
+        `)[0];
+        if (!row) throw new NotFoundError("Deployment");
+        await sql`
+          UPDATE viby.deployments SET
+            preparation_artifact_id = ${row.id},
+            updated_at = GREATEST(updated_at, ${row.created_at})
+          WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+            AND id = ${input.deploymentId}
+        `;
+        return { row, created: inserted !== undefined };
+      });
+      if (!result.created && result.row.artifact_key !== artifactKey) {
+        await this.#artifactStore.delete(
+          artifactKey,
+          deploymentArtifactContext(scope, input.id),
+        ).catch(() => undefined);
+      }
+      return mapDeploymentArtifact(result.row);
+    } catch (error) {
+      await this.#artifactStore.delete(
+        artifactKey,
+        deploymentArtifactContext(scope, input.id),
+      ).catch(() => undefined);
+      throw error;
+    }
+  }
+
+  async getDeploymentArtifact(
+    scope: UserScope,
+    deploymentId: string,
+    artifactId: string,
+  ): Promise<DeploymentArtifactContent | null> {
+    await this.assertReady();
+    const [row] = await this.#sql<DeploymentArtifactRow[]>`
+      SELECT artifact.* FROM viby.deployment_artifacts AS artifact
+      JOIN viby.deployments AS deployment ON deployment.id = artifact.deployment_id
+      JOIN viby.chats AS chat ON chat.id = artifact.chat_id
+      WHERE artifact.tenant_id = ${scope.tenantId} AND artifact.user_id = ${scope.userId}
+        AND artifact.deployment_id = ${deploymentId} AND artifact.id = ${artifactId}
+        AND deployment.tenant_id = ${scope.tenantId} AND deployment.user_id = ${scope.userId}
+        AND chat.deleted_at IS NULL
+      LIMIT 1
+    `;
+    if (!row) return null;
+    if (!this.#artifactStore || this.#artifactStore.id !== row.artifact_store) {
+      throw new ConfigurationError(
+        `Artifact store ${row.artifact_store} is required to read deployment artifact ${row.id}.`,
+      );
+    }
+    const bytes = await this.#artifactStore.get(
+      row.artifact_key,
+      deploymentArtifactContext(scope, row.id),
+    );
+    if (!bytes) throw new NotFoundError("Deployment artifact content");
+    if (bytes.byteLength !== row.size || sha256(bytes) !== row.checksum) {
+      throw new Error(`Deployment artifact ${row.id} failed its persisted size or checksum validation.`);
+    }
+    return { ...mapDeploymentArtifact(row), bytes: Uint8Array.from(bytes) };
+  }
+
   async #deploymentsWithTransitions(
     scope: UserScope,
     rows: readonly DeploymentRow[],
@@ -3356,7 +3511,9 @@ export class PostgresRepository implements Repository {
           ? generatedArtifactContext(scope, row.id)
           : row.kind === "project"
             ? projectArtifactContext(scope, row.id)
-            : visualArtifactContext(scope, row.id),
+            : row.kind === "visual"
+              ? visualArtifactContext(scope, row.id)
+              : deploymentArtifactContext(scope, row.id),
     );
   }
 }
@@ -3375,6 +3532,10 @@ function projectArtifactContext(scope: UserScope, ownerId: string): ArtifactStor
 
 function visualArtifactContext(scope: UserScope, ownerId: string): ArtifactStoreContext {
   return { ...scope, kind: "screenshot", ownerId };
+}
+
+function deploymentArtifactContext(scope: UserScope, ownerId: string): ArtifactStoreContext {
+  return { ...scope, kind: "deployment", ownerId };
 }
 
 function mapChat<Framework extends FrameworkId>(row: ChatRow): ChatData<Framework> {
@@ -3597,6 +3758,7 @@ function mapDeployment(
     chatId: row.chat_id,
     versionId: row.version_id,
     projectLinkId: row.project_link_id,
+    preparationArtifactId: row.preparation_artifact_id,
     integrationId: row.integration_id,
     connectionId: row.connection_id,
     provider: row.provider,
@@ -3612,6 +3774,29 @@ function mapDeployment(
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     completedAt: row.completed_at,
+  };
+}
+
+function mapDeploymentArtifact(row: DeploymentArtifactRow): DeploymentArtifactData {
+  return {
+    id: row.id,
+    chatId: row.chat_id,
+    versionId: row.version_id,
+    deploymentId: row.deployment_id,
+    framework: row.framework,
+    sandboxProvider: row.sandbox_provider,
+    outputDirectory: row.output_directory,
+    commands: row.commands.map((command) => ({
+      ...command,
+      args: [...command.args],
+      environment: [...command.environment],
+    })),
+    fileCount: row.file_count,
+    mediaType: row.media_type,
+    size: row.size,
+    checksum: row.checksum,
+    artifact: { store: row.artifact_store, key: row.artifact_key },
+    createdAt: row.created_at,
   };
 }
 

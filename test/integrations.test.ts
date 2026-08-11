@@ -148,4 +148,20 @@ test("rejects invalid aliases and incomplete adapters", () => {
     }),
     /deployment\.broken must provide deployVersion\(\)/,
   );
+  assert.throws(
+    () => configuredIntegrations({
+      deployment: {
+        unsafe: { ...deploymentIntegration(), source: { mode: "prebuilt", outputDirectory: "../dist" } },
+      },
+    }),
+    /outputDirectory must be a safe relative directory/,
+  );
+  assert.throws(
+    () => configuredIntegrations({
+      deployment: {
+        source: { ...deploymentIntegration(), source: { mode: "source", outputDirectory: "dist" } },
+      },
+    }),
+    /outputDirectory is valid only for prebuilt source mode/,
+  );
 });

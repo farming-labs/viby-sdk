@@ -59,3 +59,9 @@ export type {
   FailDeploymentRecord,
   ObserveDeploymentRecord,
 } from "./deployment-history.js";
+export type {
+  CreateDeploymentArtifactRecord,
+  DeploymentArtifactCommand,
+  DeploymentArtifactContent,
+  DeploymentArtifactData,
+} from "./deployment-preparation.js";

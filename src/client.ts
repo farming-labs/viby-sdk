@@ -180,6 +180,12 @@ import type {
   DeploymentRecordData,
 } from "./deployment-history.js";
 import {
+  deploymentFilesFromArtifact,
+  prepareDeploymentSource,
+  type DeploymentArtifactContent,
+  type DeploymentPreparationConfig,
+} from "./deployment-preparation.js";
+import {
   EncryptedPostgresSecretStore,
   PostgresIntegrationConnectionStore,
 } from "./integration-store-postgres.js";
@@ -419,6 +425,7 @@ class VibyClient<Framework extends FrameworkId> implements Viby<Framework> {
   readonly #models: GenerationModelRegistry<Framework>;
   readonly #skills: SkillGroups;
   readonly #sandbox: SandboxAdapter | undefined;
+  readonly #deploymentPreparation: DeploymentPreparationConfig<Framework> | undefined;
   readonly #browser: BrowserAdapter | undefined;
   readonly #registry = new GenerationRunRegistry();
   readonly #sandboxes: SandboxRegistry;
@@ -434,6 +441,7 @@ class VibyClient<Framework extends FrameworkId> implements Viby<Framework> {
     this.framework = config.framework;
     this.integrations = dependencies.integrations ?? new IntegrationClient(undefined, null, null);
     this.#sandbox = config.sandbox;
+    this.#deploymentPreparation = config.deployment?.preparation;
     this.#browser = config.browser;
     this.#repository = dependencies.repository;
     this.#deletedChatsMs = normalizeChatRetentionConfig(config.retention);
@@ -471,6 +479,7 @@ class VibyClient<Framework extends FrameworkId> implements Viby<Framework> {
       models: this.#models,
       skills: this.#skills,
       sandbox: this.#sandbox,
+      deploymentPreparation: this.#deploymentPreparation,
       browser: this.#browser,
       sandboxes: this.#sandboxes,
       deletedChatsMs: this.#deletedChatsMs,
@@ -578,6 +587,7 @@ interface ScopedDependencies<Framework extends FrameworkId> {
   readonly models: GenerationModelRegistry<Framework>;
   readonly skills: SkillGroups;
   readonly sandbox: SandboxAdapter | undefined;
+  readonly deploymentPreparation: DeploymentPreparationConfig<Framework> | undefined;
   readonly browser: BrowserAdapter | undefined;
   readonly sandboxes: SandboxRegistry;
   readonly deletedChatsMs: number | null;
@@ -1625,12 +1635,15 @@ export class Version<Framework extends FrameworkId = FrameworkId> {
     );
     if (replay) return replay;
     try {
-      const deployment = await deployVersionSource(await materializeVersionSourceFiles(
-        this.#dependencies.repository,
-        this.#dependencies.scope,
-        this.id,
-        await this.entries(),
-      ), { ...input, idempotencyKey });
+      const sourceFiles = input.using.sourceMode === "prebuilt"
+        ? await this.#preparedDeploymentFiles(started, input)
+        : await materializeVersionSourceFiles(
+            this.#dependencies.repository,
+            this.#dependencies.scope,
+            this.id,
+            await this.entries(),
+          );
+      const deployment = await deployVersionSource(sourceFiles, { ...input, idempotencyKey });
       const project = await input.using.projects.get({ id: deployment.projectId }, input.signal);
       if (!project) throw new NotFoundError("Deployed project");
       await this.#dependencies.repository.completeDeployment(
@@ -1660,6 +1673,74 @@ export class Version<Framework extends FrameworkId = FrameworkId> {
       this.#dependencies.scope,
       { chatId: this.chatId, versionId: this.id },
     );
+  }
+
+  async deploymentArtifact(deploymentId: string): Promise<DeploymentArtifactContent | null> {
+    const id = assertIdentifier(deploymentId, "Deployment id");
+    const deployment = (await this.deployments()).find((candidate) => candidate.id === id);
+    if (!deployment) throw new NotFoundError("Deployment");
+    if (!deployment.preparationArtifactId) return null;
+    const artifact = await this.#dependencies.repository.getDeploymentArtifact(
+      this.#dependencies.scope,
+      deployment.id,
+      deployment.preparationArtifactId,
+    );
+    if (!artifact) throw new NotFoundError("Deployment artifact");
+    return artifact;
+  }
+
+  async #preparedDeploymentFiles<ProjectOptions, DeployOptions>(
+    deployment: DeploymentRecordData,
+    input: VersionDeployInput<ProjectOptions, DeployOptions>,
+  ): Promise<readonly IntegrationSourceFile[]> {
+    if (deployment.preparationArtifactId) {
+      const artifact = await this.#dependencies.repository.getDeploymentArtifact(
+        this.#dependencies.scope,
+        deployment.id,
+        deployment.preparationArtifactId,
+      );
+      if (!artifact) throw new NotFoundError("Deployment artifact");
+      return deploymentFilesFromArtifact(artifact);
+    }
+    const config = this.#dependencies.deploymentPreparation;
+    if (!config) {
+      throw new ConfigurationError(
+        `${input.using.displayName} requires prebuilt files. Configure deployment.preparation with the framework build command.`,
+      );
+    }
+    const sandbox = await this.sandbox({
+      ...(input.preparation?.env ? { env: input.preparation.env } : {}),
+      ...(input.signal ? { signal: input.signal } : {}),
+    });
+    try {
+      const prepared = await prepareDeploymentSource(
+        sandbox,
+        config,
+        input.using.outputDirectory,
+        input.preparation,
+        input.signal,
+      );
+      await this.#dependencies.repository.createDeploymentArtifact(
+        this.#dependencies.scope,
+        {
+          id: createId(),
+          chatId: this.chatId,
+          versionId: this.id,
+          deploymentId: deployment.id,
+          framework: this.framework,
+          sandboxProvider: sandbox.provider,
+          outputDirectory: prepared.outputDirectory,
+          commands: prepared.commands,
+          fileCount: prepared.files.length,
+          bytes: prepared.archive,
+          size: prepared.archive.byteLength,
+          checksum: sha256(prepared.archive),
+        },
+      );
+      return prepared.files;
+    } finally {
+      await sandbox.stop();
+    }
   }
 
   async sandbox(options: SandboxOpenOptions = {}): Promise<SandboxSession> {

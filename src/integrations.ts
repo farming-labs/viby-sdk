@@ -1,5 +1,6 @@
 import { ConfigurationError } from "./errors.js";
 import type { JsonValue, UserScope } from "./types.js";
+import { normalizeProjectPath } from "./utils.js";
 
 export type IntegrationCategory = "repository" | "deployment";
 
@@ -308,6 +309,12 @@ export interface DeploymentData {
   readonly createdAt: Date;
 }
 
+export interface DeploymentSourceContract {
+  readonly mode: "source" | "prebuilt";
+  /** Conventional build output used when the host preparation config omits one. */
+  readonly outputDirectory?: string;
+}
+
 export interface ListDeploymentProjectsInput {
   readonly search?: string;
   readonly cursor?: string;
@@ -340,6 +347,7 @@ export interface DeploymentIntegration<
   ProjectOptions = never,
   DeployOptions = never,
 > extends IntegrationIdentity {
+  readonly source?: DeploymentSourceContract;
   readonly connection: IntegrationConnectionAdapter;
   listProjects(
     input: ListDeploymentProjectsInput,
@@ -462,7 +470,44 @@ function assertIntegrationContract(
     "deployVersion",
     "getDeployment",
   ]);
+  assertDeploymentSourceContract(id, adapter.source);
   assertOptionalIntegrationMethod(category, id, adapter, "cancelDeployment");
+}
+
+function assertDeploymentSourceContract(id: string, value: unknown): void {
+  if (value === undefined) return;
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new ConfigurationError(`Integration deployment.${id} source must be an object.`);
+  }
+  const source = value as Readonly<Record<string, unknown>>;
+  if (source.mode !== "source" && source.mode !== "prebuilt") {
+    throw new ConfigurationError(
+      `Integration deployment.${id} source mode must be source or prebuilt.`,
+    );
+  }
+  if (source.outputDirectory !== undefined && (
+    typeof source.outputDirectory !== "string"
+    || source.outputDirectory.trim().length === 0
+    || source.outputDirectory.length > 500
+  )) {
+    throw new ConfigurationError(
+      `Integration deployment.${id} outputDirectory must contain 1-500 characters.`,
+    );
+  }
+  if (source.mode === "source" && source.outputDirectory !== undefined) {
+    throw new ConfigurationError(
+      `Integration deployment.${id} outputDirectory is valid only for prebuilt source mode.`,
+    );
+  }
+  if (typeof source.outputDirectory === "string") {
+    try {
+      normalizeProjectPath(source.outputDirectory);
+    } catch {
+      throw new ConfigurationError(
+        `Integration deployment.${id} outputDirectory must be a safe relative directory.`,
+      );
+    }
+  }
 }
 
 function assertIntegrationMethods(

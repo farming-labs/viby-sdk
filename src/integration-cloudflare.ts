@@ -184,6 +184,7 @@ export function cloudflare(
   return {
     provider: "cloudflare",
     displayName: "Cloudflare",
+    source: { mode: "prebuilt", outputDirectory: "dist" },
     connection: {
       async startAuthorization(input) {
         input.signal?.throwIfAborted();

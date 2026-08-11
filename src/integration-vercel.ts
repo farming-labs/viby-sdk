@@ -173,6 +173,7 @@ export function vercel(
   return {
     provider: "vercel",
     displayName: "Vercel",
+    source: { mode: "source" },
     connection: {
       async startAuthorization(input) {
         input.signal?.throwIfAborted();

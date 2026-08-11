@@ -77,6 +77,15 @@ import { vercel } from "@viby/sdk/integrations/vercel";
 const viby = createViby({
   framework: "farm",
   model,
+  sandbox,
+  artifactStore,
+  deployment: {
+    preparation: {
+      install: { command: "pnpm", args: ["install", "--frozen-lockfile"] },
+      build: { command: "pnpm", args: ["build"] },
+      outputDirectory: "dist",
+    },
+  },
   integrations: {
     repository: {
       github: github({
@@ -161,9 +170,11 @@ deployment.status;
 deployment.url; // null until the provider has a URL
 ```
 
-`version.deploy(...)` sends the selected immutable text and binary source snapshot. Its default idempotency key is stable for the version, integration, project, and environment, so a safe retry does not create another provider effect. Project creation remains explicit through `createIfMissing`. Use `provider.projects` and `provider.deployments.get(...)` for the common lifecycle; cancellation is available only when the selected adapter supports it. Adapter authors can run `verifyDeploymentIntegration` from `@viby/sdk/integrations/deployment/conformance`.
+`version.deploy(...)` reads the adapter's provider-neutral source contract. Source providers receive the complete immutable text and binary snapshot. Prebuilt providers cause Viby to materialize that same version in the configured sandbox, run `deployment.preparation`, capture the output as an immutable ZIP in the artifact store, and send only those built files. Build environment values passed with `preparation.env` are runtime-only; durable command metadata retains environment variable names, never values.
 
-The included [Vercel adapter](./docs/integrations/vercel.md) accepts complete framework source and provider build settings. The included [Cloudflare adapter](./docs/integrations/cloudflare.md) uses Pages Direct Upload and therefore selects prebuilt assets from `dist` by default; it never publishes raw framework source in place of a build.
+The default idempotency key is stable for the version, integration, project, and environment. A safe retry reuses the persisted provider result or preparation artifact instead of rebuilding or creating another provider effect. Project creation remains explicit through `createIfMissing`. Use `version.deployments()` to reload durable history and `version.deploymentArtifact(deploymentId)` to retrieve a prepared artifact. The normal `version.download()` remains raw framework-native source and is never replaced by build output. Use `provider.projects` and `provider.deployments.get(...)` for the common lifecycle; cancellation is available only when the selected adapter supports it. Adapter authors can run `verifyDeploymentIntegration` from `@viby/sdk/integrations/deployment/conformance`.
+
+The included [Vercel adapter](./docs/integrations/vercel.md) accepts complete framework source and provider build settings. The included [Cloudflare adapter](./docs/integrations/cloudflare.md) declares prebuilt input and selects `dist` by default, so Viby prepares it automatically and never publishes raw framework source in place of a build. Prebuilt deployment requires both `sandbox` and `artifactStore`; either can be any conforming adapter.
 
 Binary attachments use a separate provider-neutral artifact store so PostgreSQL retains only queryable ownership, media metadata, checksums, and opaque storage references. The filesystem adapter is a reference implementation for development or hosts with a durable mounted volume:
 
@@ -1000,12 +1011,13 @@ Included now:
 - provider-neutral repository discovery, source import, immutable pushes, branches, pull requests, and conformance
 - GitHub and Bitbucket provider adapters behind the provider-neutral repository contract
 - Vercel and Cloudflare provider adapters behind the provider-neutral deployment contract
+- automatic sandbox preparation and immutable deployment artifacts for prebuilt providers
 - migration immutability plus schema-upgrade and public-API compatibility fixtures
 - a complete framework-neutral reference host for chat, stream, preview, iteration, and download
 
 Planned as separate capabilities later:
 
-- provider-neutral deployment preparation and additional deployment providers
+- additional deployment providers
 - managed Viby infrastructure
 
 ## Development
