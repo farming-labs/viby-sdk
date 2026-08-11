@@ -118,6 +118,10 @@
       "types": "./dist/integration-github.d.ts",
       "import": "./dist/integration-github.js"
     },
+    "./integrations/vercel": {
+      "types": "./dist/integration-vercel.d.ts",
+      "import": "./dist/integration-vercel.js"
+    },
     "./mcp": {
       "types": "./dist/mcp.d.ts",
       "import": "./dist/mcp.js"

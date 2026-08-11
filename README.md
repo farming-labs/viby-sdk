@@ -71,6 +71,7 @@ External account connections use the same tenant and user scope while keeping pr
 
 ```ts
 import { github } from "@viby/sdk/integrations/github";
+import { vercel } from "@viby/sdk/integrations/vercel";
 
 const viby = createViby({
   framework: "farm",
@@ -85,7 +86,13 @@ const viby = createViby({
         slug: "viby",
       }),
     },
-    deployment: { vercel: vercelIntegration },
+    deployment: {
+      vercel: vercel({
+        clientId: env.VERCEL_CLIENT_ID,
+        clientSecret: env.VERCEL_CLIENT_SECRET,
+        slug: "viby",
+      }),
+    },
   },
 });
 
@@ -148,7 +155,7 @@ deployment.status;
 deployment.url; // null until the provider has a URL
 ```
 
-`version.deploy(...)` sends the selected immutable text and binary source snapshot. Its default idempotency key is stable for the version, integration, project, and environment, so a safe retry does not create another provider effect. Project creation remains explicit through `createIfMissing`. Use `provider.projects`, `provider.deployments.get(...)`, and `provider.deployments.cancel(...)` for the rest of the lifecycle. Adapter authors can run `verifyDeploymentIntegration` from `@viby/sdk/integrations/deployment/conformance`.
+`version.deploy(...)` sends the selected immutable text and binary source snapshot. Its default idempotency key is stable for the version, integration, project, and environment, so a safe retry does not create another provider effect. Project creation remains explicit through `createIfMissing`. Use `provider.projects`, `provider.deployments.get(...)`, and `provider.deployments.cancel(...)` for the rest of the lifecycle. Adapter authors can run `verifyDeploymentIntegration` from `@viby/sdk/integrations/deployment/conformance`. The included Vercel adapter uses an external Vercel Integration and is documented in [Vercel integration setup](./docs/integrations/vercel.md).
 
 Binary attachments use a separate provider-neutral artifact store so PostgreSQL retains only queryable ownership, media metadata, checksums, and opaque storage references. The filesystem adapter is a reference implementation for development or hosts with a durable mounted volume:
 
@@ -989,7 +996,7 @@ Included now:
 Planned as separate capabilities later:
 
 - Bitbucket repository provider adapter
-- Vercel and Cloudflare deployment provider adapters
+- Cloudflare deployment provider adapter
 - managed Viby infrastructure
 
 ## Development
