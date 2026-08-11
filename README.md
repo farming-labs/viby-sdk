@@ -86,7 +86,43 @@ const result = await user.integrations.repository.connect("github", {
 });
 ```
 
-`connect` returns an existing healthy connection or a single-use authorization URL. Complete every provider through one Web-standard callback with `viby.integrations.callback(request)`. Viby persists connection metadata and hashed authorization state in PostgreSQL; the default secret store encrypts OAuth/installation credentials with AES-256-GCM. Advanced products can provide `connectionStore` and `secretStore` implementations instead. Repository and deployment execution methods arrive through their provider-neutral category contracts; no provider token is returned to application UI objects, generation events, or the model.
+`connect` returns an existing healthy connection or a single-use authorization URL. Complete every provider through one Web-standard callback with `viby.integrations.callback(request)`. Viby persists connection metadata and hashed authorization state in PostgreSQL; the default secret store encrypts OAuth/installation credentials with AES-256-GCM. Advanced products can provide `connectionStore` and `secretStore` implementations instead. No provider token is returned to application UI objects, generation events, or the model.
+
+After authorization, one reusable repository handle covers discovery, import, immutable-version pushes, branches, and pull requests:
+
+```ts
+const github = user.integrations.repository.use("github");
+
+const imported = await user.chats.import({
+  source: github.source({
+    repository: { owner: "farming-labs", name: "starter" },
+    ref: { branch: "main" },
+  }),
+});
+
+const version = await imported.latestVersion();
+const pushed = await version!.push({
+  using: github,
+  repository: {
+    owner: "farming-labs",
+    name: "generated-app",
+    createIfMissing: true,
+  },
+  branch: { name: "feat/dashboard", from: "main", createIfMissing: true },
+  commit: { message: "feat: add generated dashboard" },
+  pullRequest: {
+    base: "main",
+    title: "feat: add generated dashboard",
+    draft: true,
+  },
+});
+
+if (pushed.status === "conflict") {
+  console.log(pushed.expectedHead, pushed.actualHead);
+}
+```
+
+Adapters receive a complete immutable source snapshot, including artifact-backed binary files. `expectedHead` provides portable optimistic concurrency for later iterations. Adapter authors can run `verifyRepositoryIntegration` from `@viby/sdk/integrations/repository/conformance` against a disposable provider repository.
 
 Binary attachments use a separate provider-neutral artifact store so PostgreSQL retains only queryable ownership, media metadata, checksums, and opaque storage references. The filesystem adapter is a reference implementation for development or hosts with a durable mounted volume:
 
@@ -920,12 +956,13 @@ Included now:
 - categorized provider-neutral repository and deployment integration contracts
 - durable tenant-scoped integration authorization, refresh, reconnect, and disconnect lifecycle
 - encrypted PostgreSQL integration secret storage with custom store overrides
+- provider-neutral repository discovery, source import, immutable pushes, branches, pull requests, and conformance
 - migration immutability plus schema-upgrade and public-API compatibility fixtures
 - a complete framework-neutral reference host for chat, stream, preview, iteration, and download
 
 Planned as separate capabilities later:
 
-- repository push and pull-request implementations on the categorized integration contracts
+- GitHub and Bitbucket repository provider adapters
 - deployment implementations on the categorized integration contracts
 - managed Viby infrastructure
 

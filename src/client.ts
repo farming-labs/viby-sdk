@@ -161,6 +161,11 @@ import {
 import { configuredIntegrations } from "./integrations.js";
 import { IntegrationClient } from "./integration-client.js";
 import {
+  pushVersionSource,
+  type PushVersionRepositoryInput,
+  type PushVersionRepositoryResult,
+} from "./repository-integrations.js";
+import {
   EncryptedPostgresSecretStore,
   PostgresIntegrationConnectionStore,
 } from "./integration-store-postgres.js";
@@ -1441,6 +1446,31 @@ export class Version<Framework extends FrameworkId = FrameworkId> {
       await this.entries(),
       (changes, input: AgentWorkspaceCommitInput) => this.apply({ ...input, changes }),
     );
+  }
+
+  /** Pushes this complete immutable source snapshot through a connected repository integration. */
+  async push<PushOptions = never, PullRequestOptions = never>(
+    input: PushVersionRepositoryInput<PushOptions, PullRequestOptions>,
+  ): Promise<PushVersionRepositoryResult> {
+    if (!input) throw new ConfigurationError("A repository push target is required.");
+    const entries = await this.entries();
+    const materialized = await materializeVersionEntries(
+      this.#dependencies.repository,
+      this.#dependencies.scope,
+      this.id,
+      entries,
+    );
+    const mediaTypes = new Map(entries.map((entry) => [entry.path, entry.mediaType]));
+    return pushVersionSource(materialized.map((file) => {
+      const mediaType = mediaTypes.get(file.path);
+      return {
+        path: file.path,
+        content: typeof file.content === "string"
+          ? new TextEncoder().encode(file.content)
+          : new Uint8Array(file.content),
+        ...(mediaType ? { mediaType } : {}),
+      };
+    }), input);
   }
 
   async sandbox(options: SandboxOpenOptions = {}): Promise<SandboxSession> {

@@ -71,6 +71,8 @@ try {
     "dist/integration-store-postgres.d.ts",
     "dist/integration-store-conformance.js",
     "dist/integration-store-conformance.d.ts",
+    "dist/repository-integration-conformance.js",
+    "dist/repository-integration-conformance.d.ts",
     "migrations/0001_initial.sql",
     "migrations/0002_durable_generations.sql",
     "migrations/0013_generation_costs.sql",
@@ -107,7 +109,7 @@ try {
       "--input-type=module",
       "--eval",
       [
-        'import { accessibilityGate, configuredIntegrations, consoleErrorGate, createViby, BrowserSession, DownloadArtifact, IntegrationAuthorizationError, IntegrationClient, SandboxSession, SourceImportError, generationEventStreamResponse, openBrowserSession, openTelemetry, signedOutboundEventSink, verifySignedOutboundEvent, skillRead } from "@viby/sdk";',
+        'import { accessibilityGate, configuredIntegrations, consoleErrorGate, createViby, BrowserSession, DownloadArtifact, IntegrationAuthorizationError, IntegrationClient, IntegrationOperationError, RepositoryIntegrationHandle, SandboxSession, SourceImportError, generationEventStreamResponse, openBrowserSession, openTelemetry, signedOutboundEventSink, verifySignedOutboundEvent, skillRead } from "@viby/sdk";',
         'if (typeof createViby !== "function") throw new Error("createViby export is missing");',
         'if (typeof BrowserSession !== "function") throw new Error("BrowserSession export is missing");',
         'if (typeof openBrowserSession !== "function") throw new Error("openBrowserSession export is missing");',
@@ -123,7 +125,21 @@ try {
         'if (typeof configuredIntegrations !== "function") throw new Error("configuredIntegrations export is missing");',
         'if (typeof IntegrationClient !== "function") throw new Error("IntegrationClient export is missing");',
         'if (typeof IntegrationAuthorizationError !== "function") throw new Error("IntegrationAuthorizationError export is missing");',
+        'if (typeof IntegrationOperationError !== "function") throw new Error("IntegrationOperationError export is missing");',
+        'if (typeof RepositoryIntegrationHandle !== "function") throw new Error("RepositoryIntegrationHandle export is missing");',
         'if (skillRead("./skills").source !== "file") throw new Error("skillRead export is invalid");',
+      ].join("\n"),
+    ],
+    { cwd: consumer },
+  );
+  await execute(
+    node,
+    [
+      "--input-type=module",
+      "--eval",
+      [
+        'import { verifyRepositoryIntegration } from "@viby/sdk/integrations/repository/conformance";',
+        'if (typeof verifyRepositoryIntegration !== "function") throw new Error("repository integration conformance export is missing");',
       ].join("\n"),
     ],
     { cwd: consumer },

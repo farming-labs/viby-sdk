@@ -122,6 +122,29 @@ export class IntegrationConnectionRequiredError extends VibyError {
   }
 }
 
+export class IntegrationOperationError extends VibyError {
+  readonly category: "repository" | "deployment";
+  readonly provider: string;
+  readonly operation: string;
+
+  constructor(
+    category: "repository" | "deployment",
+    provider: string,
+    operation: string,
+    options?: ErrorOptions,
+  ) {
+    super(
+      "integration_operation_failed",
+      `${provider} could not complete the ${category} ${operation} operation.`,
+      options,
+    );
+    this.name = "IntegrationOperationError";
+    this.category = category;
+    this.provider = provider;
+    this.operation = operation;
+  }
+}
+
 export class OutboundEventSinkError extends VibyError {
   readonly sinkId: string;
   readonly eventId: string;

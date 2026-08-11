@@ -750,7 +750,22 @@ test("persists encrypted integration connections and single-use authorization se
       };
     },
     async listBranches() { return { items: [], nextCursor: null }; },
+    async getBranch() { return null; },
     async createBranch(input) { return { name: input.name, head: input.from, protected: false }; },
+    async readSource(input) {
+      return {
+        repository: {
+          id: "repository",
+          ...input.repository,
+          defaultBranch: "main",
+          visibility: "private",
+          url: `https://git.example/${input.repository.owner}/${input.repository.name}`,
+        },
+        ref: input.ref,
+        commit: "commit",
+        files: [],
+      };
+    },
     async pushVersion(input) {
       return {
         status: "pushed",

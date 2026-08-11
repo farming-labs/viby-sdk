@@ -137,7 +137,25 @@ export interface RepositoryPullRequestData {
 export interface IntegrationSourceFile {
   readonly path: string;
   readonly content: Uint8Array;
+  readonly mediaType?: string;
   readonly executable?: boolean;
+}
+
+export type RepositorySourceReference =
+  | { readonly branch: string }
+  | { readonly tag: string }
+  | { readonly commit: string };
+
+export interface ReadRepositorySourceInput {
+  readonly repository: RepositoryReference;
+  readonly ref: RepositorySourceReference;
+}
+
+export interface RepositorySourceData {
+  readonly repository: RepositoryData;
+  readonly ref: RepositorySourceReference;
+  readonly commit: string;
+  readonly files: readonly IntegrationSourceFile[];
 }
 
 export interface ListRepositoryOwnersInput {
@@ -165,6 +183,11 @@ export interface CreateRepositoryBranchInput {
   readonly repository: RepositoryReference;
   readonly name: string;
   readonly from: string;
+}
+
+export interface GetRepositoryBranchInput {
+  readonly repository: RepositoryReference;
+  readonly name: string;
 }
 
 export interface PushRepositoryVersionInput<ProviderOptions = never> {
@@ -236,10 +259,18 @@ export interface RepositoryIntegration<
     input: ListRepositoryBranchesInput,
     context: IntegrationOperationContext,
   ): Promise<IntegrationPage<RepositoryBranchData>>;
+  getBranch(
+    input: GetRepositoryBranchInput,
+    context: IntegrationOperationContext,
+  ): Promise<RepositoryBranchData | null>;
   createBranch(
     input: CreateRepositoryBranchInput,
     context: IntegrationOperationContext,
   ): Promise<RepositoryBranchData>;
+  readSource(
+    input: ReadRepositorySourceInput,
+    context: IntegrationOperationContext,
+  ): Promise<RepositorySourceData>;
   pushVersion(
     input: PushRepositoryVersionInput<PushOptions>,
     context: IntegrationOperationContext,
@@ -415,7 +446,9 @@ function assertIntegrationContract(
       "getRepository",
       "createRepository",
       "listBranches",
+      "getBranch",
       "createBranch",
+      "readSource",
       "pushVersion",
       "createPullRequest",
     ]);
