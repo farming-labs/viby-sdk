@@ -158,6 +158,7 @@ import {
   type TelemetrySpan,
   type VibyTelemetry,
 } from "./telemetry.js";
+import { configuredIntegrations } from "./integrations.js";
 
 const DEFAULT_POLL_INTERVAL_MS = 100;
 const DEFAULT_EVENT_LIMIT = 100;
@@ -371,6 +372,7 @@ export function createVibyWithDependencies<const Framework extends FrameworkId>(
   if (typeof config.framework !== "string" || config.framework.trim().length === 0) {
     throw new ConfigurationError("framework must be a non-empty string value.");
   }
+  configuredIntegrations(config.integrations);
   return new VibyClient(config, dependencies);
 }
 

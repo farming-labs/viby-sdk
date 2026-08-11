@@ -102,7 +102,7 @@ try {
       "--input-type=module",
       "--eval",
       [
-        'import { accessibilityGate, consoleErrorGate, createViby, BrowserSession, DownloadArtifact, SandboxSession, SourceImportError, generationEventStreamResponse, openBrowserSession, openTelemetry, signedOutboundEventSink, verifySignedOutboundEvent, skillRead } from "@viby/sdk";',
+        'import { accessibilityGate, configuredIntegrations, consoleErrorGate, createViby, BrowserSession, DownloadArtifact, SandboxSession, SourceImportError, generationEventStreamResponse, openBrowserSession, openTelemetry, signedOutboundEventSink, verifySignedOutboundEvent, skillRead } from "@viby/sdk";',
         'if (typeof createViby !== "function") throw new Error("createViby export is missing");',
         'if (typeof BrowserSession !== "function") throw new Error("BrowserSession export is missing");',
         'if (typeof openBrowserSession !== "function") throw new Error("openBrowserSession export is missing");',
@@ -115,6 +115,7 @@ try {
         'if (typeof openTelemetry !== "function") throw new Error("openTelemetry export is missing");',
         'if (typeof consoleErrorGate !== "function") throw new Error("consoleErrorGate export is missing");',
         'if (typeof accessibilityGate !== "function") throw new Error("accessibilityGate export is missing");',
+        'if (typeof configuredIntegrations !== "function") throw new Error("configuredIntegrations export is missing");',
         'if (skillRead("./skills").source !== "file") throw new Error("skillRead export is invalid");',
       ].join("\n"),
     ],
