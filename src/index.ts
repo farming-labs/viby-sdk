@@ -17,6 +17,33 @@ export { BrowserSession, openBrowserSession } from "./browser.js";
 export { openSandboxPreview } from "./browser-preview.js";
 export { accessibilityGate, consoleErrorGate } from "./visual-evaluation.js";
 export { configuredIntegrations } from "./integrations.js";
+export {
+  IntegrationClient,
+  ScopedIntegrationCategory,
+  ScopedIntegrations,
+} from "./integration-client.js";
+export type {
+  IntegrationConnectionStore,
+  SecretStore,
+} from "./integration-store.js";
+export type {
+  ConfiguredIntegrationStatus,
+  ConnectIntegrationInput,
+  ConnectIntegrationResult,
+  CompleteIntegrationAuthorizationResult,
+  DisconnectIntegrationResult,
+} from "./integration-client.js";
+export type {
+  CreateIntegrationAuthorizationSessionRecord,
+  IntegrationAuthorizationSessionData,
+  IntegrationConnectionData,
+  IntegrationConnectionStatus,
+  SecretStorePutInput,
+  StoredIntegrationConnection,
+  UpdateIntegrationConnectionRecord,
+  UpsertIntegrationConnectionRecord,
+  UpsertIntegrationConnectionResult,
+} from "./integration-store.js";
 export type {
   CancelDeploymentInput,
   ConfiguredIntegration,
@@ -156,6 +183,8 @@ export {
   GenerationError,
   GenerationStateError,
   GenerationTaskRequiredError,
+  IntegrationAuthorizationError,
+  IntegrationConnectionRequiredError,
   NotFoundError,
   OutboundEventDeliveryError,
   OutboundEventSignatureError,

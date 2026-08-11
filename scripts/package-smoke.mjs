@@ -67,6 +67,10 @@ try {
     "dist/browser-playwright.d.ts",
     "dist/visual-evaluation.js",
     "dist/visual-evaluation.d.ts",
+    "dist/integration-store-postgres.js",
+    "dist/integration-store-postgres.d.ts",
+    "dist/integration-store-conformance.js",
+    "dist/integration-store-conformance.d.ts",
     "migrations/0001_initial.sql",
     "migrations/0002_durable_generations.sql",
     "migrations/0013_generation_costs.sql",
@@ -75,6 +79,7 @@ try {
     "migrations/0019_generated_artifacts.sql",
     "migrations/0020_visual_artifacts.sql",
     "migrations/0021_project_artifacts.sql",
+    "migrations/0022_integration_connections.sql",
   ]) {
     assert.ok(paths.has(path), `packed package is missing ${path}`);
   }
@@ -102,7 +107,7 @@ try {
       "--input-type=module",
       "--eval",
       [
-        'import { accessibilityGate, configuredIntegrations, consoleErrorGate, createViby, BrowserSession, DownloadArtifact, SandboxSession, SourceImportError, generationEventStreamResponse, openBrowserSession, openTelemetry, signedOutboundEventSink, verifySignedOutboundEvent, skillRead } from "@viby/sdk";',
+        'import { accessibilityGate, configuredIntegrations, consoleErrorGate, createViby, BrowserSession, DownloadArtifact, IntegrationAuthorizationError, IntegrationClient, SandboxSession, SourceImportError, generationEventStreamResponse, openBrowserSession, openTelemetry, signedOutboundEventSink, verifySignedOutboundEvent, skillRead } from "@viby/sdk";',
         'if (typeof createViby !== "function") throw new Error("createViby export is missing");',
         'if (typeof BrowserSession !== "function") throw new Error("BrowserSession export is missing");',
         'if (typeof openBrowserSession !== "function") throw new Error("openBrowserSession export is missing");',
@@ -116,7 +121,34 @@ try {
         'if (typeof consoleErrorGate !== "function") throw new Error("consoleErrorGate export is missing");',
         'if (typeof accessibilityGate !== "function") throw new Error("accessibilityGate export is missing");',
         'if (typeof configuredIntegrations !== "function") throw new Error("configuredIntegrations export is missing");',
+        'if (typeof IntegrationClient !== "function") throw new Error("IntegrationClient export is missing");',
+        'if (typeof IntegrationAuthorizationError !== "function") throw new Error("IntegrationAuthorizationError export is missing");',
         'if (skillRead("./skills").source !== "file") throw new Error("skillRead export is invalid");',
+      ].join("\n"),
+    ],
+    { cwd: consumer },
+  );
+  await execute(
+    node,
+    [
+      "--input-type=module",
+      "--eval",
+      [
+        'import { verifyIntegrationStores } from "@viby/sdk/integrations/conformance";',
+        'if (typeof verifyIntegrationStores !== "function") throw new Error("integration store conformance export is missing");',
+      ].join("\n"),
+    ],
+    { cwd: consumer },
+  );
+  await execute(
+    node,
+    [
+      "--input-type=module",
+      "--eval",
+      [
+        'import { EncryptedPostgresSecretStore, PostgresIntegrationConnectionStore } from "@viby/sdk/integrations/postgres";',
+        'if (typeof PostgresIntegrationConnectionStore !== "function") throw new Error("Postgres connection store export is missing");',
+        'if (typeof EncryptedPostgresSecretStore !== "function") throw new Error("Postgres secret store export is missing");',
       ].join("\n"),
     ],
     { cwd: consumer },
