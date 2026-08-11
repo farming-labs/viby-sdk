@@ -159,6 +159,11 @@ import {
   type VibyTelemetry,
 } from "./telemetry.js";
 import { configuredIntegrations } from "./integrations.js";
+import { IntegrationClient } from "./integration-client.js";
+import {
+  EncryptedPostgresSecretStore,
+  PostgresIntegrationConnectionStore,
+} from "./integration-store-postgres.js";
 
 const DEFAULT_POLL_INTERVAL_MS = 100;
 const DEFAULT_EVENT_LIMIT = 100;
@@ -217,6 +222,7 @@ export interface GenerationWorkerRunOptions {
 
 export interface Viby<Framework extends FrameworkId = FrameworkId> {
   readonly framework: Framework;
+  readonly integrations: IntegrationClient;
   forUser(scope: UserScope): ScopedViby<Framework>;
   worker(options: GenerationWorkerOptions): GenerationWorker<Framework>;
   close(): Promise<void>;
@@ -249,6 +255,7 @@ interface ClientDependencies<Framework extends FrameworkId> {
   readonly generator?: ProjectGenerator<Framework>;
   readonly generators?: Readonly<Record<string, ProjectGenerator<Framework>>>;
   readonly skillResolver: SkillResolver;
+  readonly integrations?: IntegrationClient;
 }
 
 interface GenerationModelBinding<Framework extends FrameworkId> {
@@ -372,12 +379,22 @@ export function createVibyWithDependencies<const Framework extends FrameworkId>(
   if (typeof config.framework !== "string" || config.framework.trim().length === 0) {
     throw new ConfigurationError("framework must be a non-empty string value.");
   }
-  configuredIntegrations(config.integrations);
-  return new VibyClient(config, dependencies);
+  const integrationCount = configuredIntegrations(config.integrations).length;
+  const integrations = dependencies.integrations ?? new IntegrationClient(
+    config.integrations,
+    config.connectionStore ?? (integrationCount > 0
+      ? new PostgresIntegrationConnectionStore()
+      : null),
+    config.secretStore ?? (integrationCount > 0
+      ? new EncryptedPostgresSecretStore()
+      : null),
+  );
+  return new VibyClient(config, { ...dependencies, integrations });
 }
 
 class VibyClient<Framework extends FrameworkId> implements Viby<Framework> {
   readonly framework: Framework;
+  readonly integrations: IntegrationClient;
   readonly #repository: Repository;
   readonly #skillResolver: SkillResolver;
   readonly #models: GenerationModelRegistry<Framework>;
@@ -396,6 +413,7 @@ class VibyClient<Framework extends FrameworkId> implements Viby<Framework> {
     dependencies: ClientDependencies<Framework>,
   ) {
     this.framework = config.framework;
+    this.integrations = dependencies.integrations ?? new IntegrationClient(undefined, null, null);
     this.#sandbox = config.sandbox;
     this.#browser = config.browser;
     this.#repository = dependencies.repository;
@@ -438,6 +456,7 @@ class VibyClient<Framework extends FrameworkId> implements Viby<Framework> {
       sandboxes: this.#sandboxes,
       deletedChatsMs: this.#deletedChatsMs,
       eventSinks: this.#eventSinks,
+      integrations: this.integrations,
     });
   }
 
@@ -450,11 +469,13 @@ class VibyClient<Framework extends FrameworkId> implements Viby<Framework> {
   async close(): Promise<void> {
     await Promise.allSettled([...this.#workers].map((worker) => worker.stop()));
     await this.#registry.abortAll("Viby client closed.");
-    const [sandboxes, repository] = await Promise.allSettled([
+    const [sandboxes, integrations, repository] = await Promise.allSettled([
       this.#sandboxes.stopAll(),
+      this.integrations.close(),
       this.#repository.close(),
     ]);
     if (sandboxes.status === "rejected") throw sandboxes.reason;
+    if (integrations.status === "rejected") throw integrations.reason;
     if (repository.status === "rejected") throw repository.reason;
   }
 }
@@ -542,6 +563,7 @@ interface ScopedDependencies<Framework extends FrameworkId> {
   readonly sandboxes: SandboxRegistry;
   readonly deletedChatsMs: number | null;
   readonly eventSinks: ReadonlyMap<string, OutboundEventSink>;
+  readonly integrations: IntegrationClient;
 }
 
 export class ScopedViby<Framework extends FrameworkId = FrameworkId> {
@@ -549,12 +571,14 @@ export class ScopedViby<Framework extends FrameworkId = FrameworkId> {
   readonly chats: ChatCollection<Framework>;
   readonly generations: GenerationCollection<Framework>;
   readonly sandboxes: SandboxCollection<Framework>;
+  readonly integrations: ReturnType<IntegrationClient["forUser"]>;
 
   constructor(dependencies: ScopedDependencies<Framework>) {
     this.scope = dependencies.scope;
     this.chats = new ChatCollection(dependencies);
     this.generations = new GenerationCollection(dependencies);
     this.sandboxes = new SandboxCollection(dependencies);
+    this.integrations = dependencies.integrations.forUser(dependencies.scope);
   }
 }
 

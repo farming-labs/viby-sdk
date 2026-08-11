@@ -97,6 +97,31 @@ export class SourceImportError extends VibyError {
   }
 }
 
+export class IntegrationAuthorizationError extends VibyError {
+  readonly provider: string | null;
+
+  constructor(message: string, provider: string | null = null, options?: ErrorOptions) {
+    super("integration_authorization_failed", message, options);
+    this.name = "IntegrationAuthorizationError";
+    this.provider = provider;
+  }
+}
+
+export class IntegrationConnectionRequiredError extends VibyError {
+  readonly category: "repository" | "deployment";
+  readonly integrationId: string;
+
+  constructor(category: "repository" | "deployment", integrationId: string) {
+    super(
+      "integration_connection_required",
+      `Integration ${category}.${integrationId} requires an active connection.`,
+    );
+    this.name = "IntegrationConnectionRequiredError";
+    this.category = category;
+    this.integrationId = integrationId;
+  }
+}
+
 export class OutboundEventSinkError extends VibyError {
   readonly sinkId: string;
   readonly eventId: string;

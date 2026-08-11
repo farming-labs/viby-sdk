@@ -17,6 +17,12 @@ import { PostgresRepository } from "../src/postgres-repository.js";
 import { SkillResolver } from "../src/skills.js";
 import type { VersionFile } from "../src/types.js";
 import { sha256 } from "../src/utils.js";
+import { IntegrationClient } from "../src/integration-client.js";
+import {
+  EncryptedPostgresSecretStore,
+  PostgresIntegrationConnectionStore,
+} from "../src/integration-store-postgres.js";
+import type { RepositoryIntegration } from "../src/integrations.js";
 
 const databaseUrl = process.env.TEST_DATABASE_URL;
 
@@ -701,5 +707,114 @@ test("passes the persistence adapter conformance suite in Postgres", {
     assert.equal(report.checks.at(-1), "close");
   } finally {
     await rm(artifactDirectory, { recursive: true, force: true });
+  }
+});
+
+test("persists encrypted integration connections and single-use authorization sessions", {
+  skip: databaseUrl ? false : "TEST_DATABASE_URL is not configured",
+}, async () => {
+  assert.ok(databaseUrl);
+  await migrateDatabase(databaseUrl);
+  const encryptionKey = new Uint8Array(32).fill(7);
+  const integration: RepositoryIntegration = {
+    provider: "fixture-git",
+    displayName: "Fixture Git",
+    connection: {
+      async startAuthorization(input) {
+        const url = new URL("https://git.example/authorize");
+        url.searchParams.set("state", input.state);
+        return { url: url.href, expiresAt: null };
+      },
+      async completeAuthorization() {
+        return {
+          account: { id: "installation-1", name: "Postgres fixture" },
+          credential: {
+            secret: new TextEncoder().encode("postgres-encrypted-token"),
+            expiresAt: null,
+            scopes: ["contents:write"],
+          },
+        };
+      },
+    },
+    async listOwners() { return { items: [], nextCursor: null }; },
+    async listRepositories() { return { items: [], nextCursor: null }; },
+    async getRepository() { return null; },
+    async createRepository(input) {
+      return {
+        id: "repository",
+        owner: input.owner,
+        name: input.name,
+        defaultBranch: "main",
+        visibility: input.visibility ?? "private",
+        url: `https://git.example/${input.owner}/${input.name}`,
+      };
+    },
+    async listBranches() { return { items: [], nextCursor: null }; },
+    async createBranch(input) { return { name: input.name, head: input.from, protected: false }; },
+    async pushVersion(input) {
+      return {
+        status: "pushed",
+        commit: { id: "commit", message: input.message, branch: input.branch, url: null },
+        changedFiles: input.files.length,
+      };
+    },
+    async createPullRequest(input) {
+      return {
+        id: "pull-request",
+        number: 1,
+        title: input.title,
+        head: input.head,
+        base: input.base,
+        status: "open",
+        url: "https://git.example/pull/1",
+      };
+    },
+  };
+  const scope = {
+    tenantId: `connection-${randomUUID()}`,
+    userId: `connection-${randomUUID()}`,
+  };
+
+  const first = new IntegrationClient(
+    { repository: { fixture: integration } },
+    new PostgresIntegrationConnectionStore({ databaseUrl }),
+    new EncryptedPostgresSecretStore({ databaseUrl, encryptionKey }),
+  );
+  const started = await first.forUser(scope).repository.connect("fixture", {
+    callbackUrl: "https://app.example/integrations/callback",
+    returnTo: "/project",
+  });
+  assert.equal(started.status, "authorization-required");
+  const state = new URL(started.url).searchParams.get("state");
+  assert.ok(state);
+  const completed = await first.callback(
+    `https://app.example/integrations/callback?state=${encodeURIComponent(state)}&code=ok`,
+  );
+  await first.close();
+
+  const restarted = new IntegrationClient(
+    { repository: { fixture: integration } },
+    new PostgresIntegrationConnectionStore({ databaseUrl }),
+    new EncryptedPostgresSecretStore({ databaseUrl, encryptionKey }),
+  );
+  try {
+    const [configured] = await restarted.forUser(scope).repository.list();
+    assert.equal(configured?.connected, true);
+    const context = await restarted.operationContext(
+      scope,
+      "repository",
+      "fixture",
+      completed.connection.id,
+    );
+    assert.equal(new TextDecoder().decode(context.credential), "postgres-encrypted-token");
+    assert.deepEqual(await restarted.forUser({
+      tenantId: `other-${randomUUID()}`,
+      userId: scope.userId,
+    }).repository.connections(), []);
+    await assert.rejects(() => restarted.callback(
+      `https://app.example/integrations/callback?state=${encodeURIComponent(state)}&code=ok`,
+    ));
+  } finally {
+    await restarted.close();
   }
 });

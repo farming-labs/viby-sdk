@@ -151,7 +151,7 @@ Every portable parity feature follows these rules:
 3. Work claims, external actions, state transitions, failures, and cancellations are durably auditable.
 4. Successful source changes are stored in order and create immutable full snapshots with parent lineage.
 5. Exact resolved skills are content-addressed and linked to the generation that used them.
-6. Model, sandbox, Git, deployment, and tool credentials are never persisted in the Viby schema.
+6. Model, sandbox, and tool credentials are never persisted by Viby. Integration credentials exist only through the explicit secret-store boundary; the PostgreSQL reference encrypts them with a caller-owned key and ordinary records retain only opaque references.
 7. Provider-specific capabilities are discovered explicitly and never inferred from a provider name.
 8. Framework behavior comes from source and skills, not a hard-coded framework registry.
 

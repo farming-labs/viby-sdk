@@ -98,6 +98,14 @@
       "types": "./dist/browser-playwright.d.ts",
       "import": "./dist/browser-playwright.js"
     },
+    "./integrations/postgres": {
+      "types": "./dist/integration-store-postgres.d.ts",
+      "import": "./dist/integration-store-postgres.js"
+    },
+    "./integrations/conformance": {
+      "types": "./dist/integration-store-conformance.d.ts",
+      "import": "./dist/integration-store-conformance.js"
+    },
     "./mcp": {
       "types": "./dist/mcp.d.ts",
       "import": "./dist/mcp.js"

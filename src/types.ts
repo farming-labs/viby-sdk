@@ -5,6 +5,7 @@ import type { BrowserAdapter } from "./browser.js";
 import type { PersistenceAdapter } from "./persistence.js";
 import type { OutboundEventSink } from "./outbound-events.js";
 import type { VibyIntegrations } from "./integrations.js";
+import type { IntegrationConnectionStore, SecretStore } from "./integration-store.js";
 import type {
   SandboxAdapter,
   SandboxCommandPolicy,
@@ -57,6 +58,10 @@ interface VibyBaseConfig<Framework extends FrameworkId = FrameworkId> {
   readonly framework: Framework;
   /** Optional external capabilities grouped by their provider-neutral product category. */
   readonly integrations?: VibyIntegrations;
+  /** Advanced durable connection-state override. Omit to use PostgreSQL through DATABASE_URL. */
+  readonly connectionStore?: IntegrationConnectionStore;
+  /** Advanced provider-secret override. Omit to use encrypted PostgreSQL through VIBY_SECRET_KEY. */
+  readonly secretStore?: SecretStore;
   /** Custom durable state implementation. Omit to use PostgreSQL through DATABASE_URL. */
   readonly persistence?: PersistenceAdapter;
   /** External byte storage for attachments and generated binary artifacts. */

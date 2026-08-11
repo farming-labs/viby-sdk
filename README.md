@@ -67,6 +67,27 @@ const viby = createViby({
 
 Custom persistence adapters own transactions, tenant isolation, durable event cursors, leases, retention, and artifact references; Viby never assumes their database, query language, or migration system. The interface and operation record types are exported from `@viby/sdk/persistence`, and adapter authors can run `verifyPersistenceAdapter` from `@viby/sdk/persistence/conformance` against a fresh isolated adapter. To configure PostgreSQL explicitly instead of using the environment shortcut, use `postgresPersistence` from `@viby/sdk/persistence/postgres`. When supplying custom persistence, pass its artifact store into the adapter itself; the top-level `artifactStore` option configures only the default PostgreSQL path.
 
+External account connections use the same tenant and user scope while keeping provider credentials out of ordinary records. Configure adapters under capability categories, set a separate 32-byte `VIBY_SECRET_KEY`, and run the normal migrations:
+
+```ts
+const viby = createViby({
+  framework: "farm",
+  model,
+  integrations: {
+    repository: { github: githubIntegration },
+    deployment: { vercel: vercelIntegration },
+  },
+});
+
+const user = viby.forUser({ tenantId, userId });
+const result = await user.integrations.repository.connect("github", {
+  callbackUrl: "https://app.example/api/integrations/callback",
+  returnTo: "/projects/project-123",
+});
+```
+
+`connect` returns an existing healthy connection or a single-use authorization URL. Complete every provider through one Web-standard callback with `viby.integrations.callback(request)`. Viby persists connection metadata and hashed authorization state in PostgreSQL; the default secret store encrypts OAuth/installation credentials with AES-256-GCM. Advanced products can provide `connectionStore` and `secretStore` implementations instead. Repository and deployment execution methods arrive through their provider-neutral category contracts; no provider token is returned to application UI objects, generation events, or the model.
+
 Binary attachments use a separate provider-neutral artifact store so PostgreSQL retains only queryable ownership, media metadata, checksums, and opaque storage references. The filesystem adapter is a reference implementation for development or hosts with a durable mounted volume:
 
 ```ts
@@ -897,12 +918,13 @@ Included now:
 - signed outbound events with durable retries, dead letters, inspection, and redrive
 - provider-neutral telemetry hooks, OpenTelemetry adaptation, and durable cost attribution
 - categorized provider-neutral repository and deployment integration contracts
+- durable tenant-scoped integration authorization, refresh, reconnect, and disconnect lifecycle
+- encrypted PostgreSQL integration secret storage with custom store overrides
 - migration immutability plus schema-upgrade and public-API compatibility fixtures
 - a complete framework-neutral reference host for chat, stream, preview, iteration, and download
 
 Planned as separate capabilities later:
 
-- durable provider connections and authorization callbacks
 - repository push and pull-request implementations on the categorized integration contracts
 - deployment implementations on the categorized integration contracts
 - managed Viby infrastructure
