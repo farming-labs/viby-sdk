@@ -71,6 +71,7 @@ External account connections use the same tenant and user scope while keeping pr
 
 ```ts
 import { github } from "@viby/sdk/integrations/github";
+import { cloudflare } from "@viby/sdk/integrations/cloudflare";
 import { vercel } from "@viby/sdk/integrations/vercel";
 
 const viby = createViby({
@@ -91,6 +92,11 @@ const viby = createViby({
         clientId: env.VERCEL_CLIENT_ID,
         clientSecret: env.VERCEL_CLIENT_SECRET,
         slug: "viby",
+      }),
+      cloudflare: cloudflare({
+        clientId: env.CLOUDFLARE_CLIENT_ID,
+        clientSecret: env.CLOUDFLARE_CLIENT_SECRET,
+        scopes: env.CLOUDFLARE_OAUTH_SCOPES.split(" "),
       }),
     },
   },
@@ -155,7 +161,9 @@ deployment.status;
 deployment.url; // null until the provider has a URL
 ```
 
-`version.deploy(...)` sends the selected immutable text and binary source snapshot. Its default idempotency key is stable for the version, integration, project, and environment, so a safe retry does not create another provider effect. Project creation remains explicit through `createIfMissing`. Use `provider.projects`, `provider.deployments.get(...)`, and `provider.deployments.cancel(...)` for the rest of the lifecycle. Adapter authors can run `verifyDeploymentIntegration` from `@viby/sdk/integrations/deployment/conformance`. The included Vercel adapter uses an external Vercel Integration and is documented in [Vercel integration setup](./docs/integrations/vercel.md).
+`version.deploy(...)` sends the selected immutable text and binary source snapshot. Its default idempotency key is stable for the version, integration, project, and environment, so a safe retry does not create another provider effect. Project creation remains explicit through `createIfMissing`. Use `provider.projects` and `provider.deployments.get(...)` for the common lifecycle; cancellation is available only when the selected adapter supports it. Adapter authors can run `verifyDeploymentIntegration` from `@viby/sdk/integrations/deployment/conformance`.
+
+The included [Vercel adapter](./docs/integrations/vercel.md) accepts complete framework source and provider build settings. The included [Cloudflare adapter](./docs/integrations/cloudflare.md) uses Pages Direct Upload and therefore selects prebuilt assets from `dist` by default; it never publishes raw framework source in place of a build.
 
 Binary attachments use a separate provider-neutral artifact store so PostgreSQL retains only queryable ownership, media metadata, checksums, and opaque storage references. The filesystem adapter is a reference implementation for development or hosts with a durable mounted volume:
 
@@ -990,13 +998,14 @@ Included now:
 - durable tenant-scoped integration authorization, refresh, reconnect, and disconnect lifecycle
 - encrypted PostgreSQL integration secret storage with custom store overrides
 - provider-neutral repository discovery, source import, immutable pushes, branches, pull requests, and conformance
+- Vercel and Cloudflare provider adapters behind the provider-neutral deployment contract
 - migration immutability plus schema-upgrade and public-API compatibility fixtures
 - a complete framework-neutral reference host for chat, stream, preview, iteration, and download
 
 Planned as separate capabilities later:
 
 - Bitbucket repository provider adapter
-- Cloudflare deployment provider adapter
+- provider-neutral deployment preparation and additional deployment providers
 - managed Viby infrastructure
 
 ## Development

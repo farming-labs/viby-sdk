@@ -79,6 +79,8 @@ try {
     "dist/integration-github.d.ts",
     "dist/integration-vercel.js",
     "dist/integration-vercel.d.ts",
+    "dist/integration-cloudflare.js",
+    "dist/integration-cloudflare.d.ts",
     "migrations/0001_initial.sql",
     "migrations/0002_durable_generations.sql",
     "migrations/0013_generation_costs.sql",
@@ -135,6 +137,21 @@ try {
         'if (typeof RepositoryIntegrationHandle !== "function") throw new Error("RepositoryIntegrationHandle export is missing");',
         'if (typeof DeploymentIntegrationHandle !== "function") throw new Error("DeploymentIntegrationHandle export is missing");',
         'if (skillRead("./skills").source !== "file") throw new Error("skillRead export is invalid");',
+      ].join("\n"),
+    ],
+    { cwd: consumer },
+  );
+  await execute(
+    node,
+    [
+      "--input-type=module",
+      "--eval",
+      [
+        'import { cloudflare, cloudflareAccounts, cloudflareDeployment, CloudflareDeploymentError } from "@viby/sdk/integrations/cloudflare";',
+        'if (typeof cloudflare !== "function") throw new Error("Cloudflare deployment adapter export is missing");',
+        'if (typeof cloudflareAccounts !== "function") throw new Error("Cloudflare account helper export is missing");',
+        'if (cloudflareDeployment !== cloudflare) throw new Error("Cloudflare deployment alias is invalid");',
+        'if (typeof CloudflareDeploymentError !== "function") throw new Error("Cloudflare deployment error export is missing");',
       ].join("\n"),
     ],
     { cwd: consumer },

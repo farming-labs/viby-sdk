@@ -122,6 +122,10 @@
       "types": "./dist/integration-vercel.d.ts",
       "import": "./dist/integration-vercel.js"
     },
+    "./integrations/cloudflare": {
+      "types": "./dist/integration-cloudflare.d.ts",
+      "import": "./dist/integration-cloudflare.js"
+    },
     "./mcp": {
       "types": "./dist/mcp.d.ts",
       "import": "./dist/mcp.js"
@@ -166,6 +170,7 @@
     "registry": "https://registry.npmjs.org"
   },
   "dependencies": {
+    "@noble/hashes": "^1.8.0",
     "ai": "^7.0.52",
     "fflate": "^0.8.3",
     "postgres": "^3.4.9",
