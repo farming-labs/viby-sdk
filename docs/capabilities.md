@@ -103,6 +103,7 @@ Product authentication, provider-app registration, redirect routes, event schedu
 | Sandbox integration | shared conformance suite plus a real local Docker integration job |
 | Reference E2E | request-level chat → SSE → preview → iterate → ZIP download through real Viby objects and deterministic adapters |
 | Generated-project quality matrix | Farm, TanStack Start, and a custom framework ID across generation, runtime checks, preview HTTP, iteration, evaluation, and ZIP parity |
+| Live provider verification | explicit, environment-gated GitHub, Bitbucket, Vercel, and Cloudflare tests with disposable resources and failure-safe cleanup |
 | Package smoke test | packed artifact install, public import, CLI, and exported subpaths |
 
 ## Deliberately outside the current release

@@ -148,6 +148,8 @@
     "test:schema-upgrade": "node --import tsx --test test/schema-upgrade.integration.test.ts",
     "test:docker": "node --import tsx --test test/integration/sandbox-docker.test.ts",
     "test:playwright": "node --import tsx --test test/integration/browser-playwright.test.ts",
+    "test:providers:live": "node --import tsx --test --test-concurrency=1 test/live/*.live.test.ts",
+    "test:providers:cleanup": "node --import tsx scripts/cleanup-live-providers.ts",
     "test:package": "node scripts/package-smoke.mjs",
     "test:reference": "node --import tsx --test test/e2e/reference-app.test.mjs",
     "test:quality": "node --import tsx --test test/quality/*.test.ts",

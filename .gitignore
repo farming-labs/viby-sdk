@@ -7,3 +7,4 @@ coverage/
 *.tgz
 examples/**/output/
 .DS_Store
+.viby-live-cleanup.json
