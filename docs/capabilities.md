@@ -83,6 +83,7 @@ Preview URLs exist only when the configured adapter exposes port URLs and the ho
 | Provider connections | tenant/user-scoped PostgreSQL metadata, hashed single-use authorization state, callback substitution protection, refresh, reconnect, local revocation, and provider selection discovery |
 | Integration secrets | standalone secret-store contract plus an AES-256-GCM PostgreSQL default keyed by `VIBY_SECRET_KEY`; credentials never enter normal SDK records |
 | Repository workflows | connected provider handles for owners, repositories, branches, source import, complete immutable snapshot pushes, optimistic conflicts, pull requests, and optional merges |
+| Repository history | durable chat-to-repository links plus version-bound pending, pushed, conflict, and failed records with commits, pull requests, errors, timestamps, and idempotent replay |
 | Repository conformance | reusable disposable-repository suite covering discovery, source round-trips, pushes, stale-head conflicts, and pull requests |
 | Included repository adapters | GitHub App installation/user verification, short-lived token refresh and revocation, and exact Git Data pushes; Bitbucket Cloud OAuth, rotating refresh tokens, workspace discovery, binary-safe source commits, branches, and pull requests |
 | Deployment workflows | connected provider handles for projects, immutable-version deployment, stable retry idempotency, status lookup, URLs, and optional cancellation |

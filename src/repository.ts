@@ -48,6 +48,13 @@ import type {
   SandboxLeaseData,
   SandboxLeaseStatus,
 } from "./sandbox.js";
+import type {
+  BeginRepositoryPushRecord,
+  CompleteRepositoryPushRecord,
+  FailRepositoryPushRecord,
+  RepositoryLinkData,
+  RepositoryPushData,
+} from "./repository-history.js";
 
 export interface ImportChatRecord<Framework extends FrameworkId = FrameworkId> {
   readonly chatId: string;
@@ -565,6 +572,23 @@ export interface Repository {
     artifactId: string,
   ): Promise<ProjectArtifactContent | null>;
   getVersionChanges(scope: UserScope, versionId: string): Promise<SourceChange[]>;
+  beginRepositoryPush(
+    scope: UserScope,
+    input: BeginRepositoryPushRecord,
+  ): Promise<RepositoryPushData>;
+  completeRepositoryPush(
+    scope: UserScope,
+    input: CompleteRepositoryPushRecord,
+  ): Promise<RepositoryPushData>;
+  failRepositoryPush(
+    scope: UserScope,
+    input: FailRepositoryPushRecord,
+  ): Promise<RepositoryPushData>;
+  listRepositoryLinks(scope: UserScope, chatId: string): Promise<RepositoryLinkData[]>;
+  listRepositoryPushes(
+    scope: UserScope,
+    input: { readonly chatId: string; readonly versionId?: string },
+  ): Promise<RepositoryPushData[]>;
   createSandboxLease<Framework extends FrameworkId>(
     scope: UserScope,
     input: CreateSandboxLeaseRecord<Framework>,

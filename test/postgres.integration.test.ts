@@ -302,6 +302,66 @@ test("persists a durable generation, iteration, events, and download in Postgres
     assert.equal((await persistedChat.listVersions()).items.length, 2);
     assert.equal(calls[1]?.previousFiles[0]?.content, "export const version = 1;\n");
 
+    const pushId = randomUUID();
+    const pushKey = `postgres-push-${randomUUID()}`;
+    const startedPush = await repository.beginRepositoryPush(scope, {
+      id: pushId,
+      chatId: persistedChat.id,
+      versionId: persistedVersion.id,
+      integrationId: "github",
+      connectionId: randomUUID(),
+      provider: "github",
+      target: { owner: "acme", name: "postgres-history" },
+      branch: "main",
+      commitMessage: "test: persist repository history",
+      expectedHead: null,
+      idempotencyKey: pushKey,
+      now: new Date(),
+    });
+    assert.equal(startedPush.status, "pending");
+    const completedPush = await repository.completeRepositoryPush(scope, {
+      id: pushId,
+      repository: {
+        id: "provider-repository-1",
+        owner: "acme",
+        name: "postgres-history",
+        defaultBranch: "main",
+        visibility: "private",
+        url: "https://git.example/acme/postgres-history",
+      },
+      result: {
+        status: "pushed",
+        commit: {
+          id: "commit-1",
+          message: "test: persist repository history",
+          branch: "main",
+          url: "https://git.example/acme/postgres-history/commit/commit-1",
+        },
+        changedFiles: 1,
+        pullRequest: null,
+      },
+      completedAt: new Date(),
+    });
+    assert.equal(completedPush.status, "pushed");
+    assert.equal((await persistedVersion.repositoryPushes())[0]?.commit?.id, "commit-1");
+    assert.equal((await persistedChat.repositoryLinks())[0]?.repositoryId, "provider-repository-1");
+    const replayedPush = await repository.beginRepositoryPush(scope, {
+      id: randomUUID(),
+      chatId: persistedChat.id,
+      versionId: persistedVersion.id,
+      integrationId: "github",
+      connectionId: randomUUID(),
+      provider: "github",
+      target: { owner: "different", name: "ignored-by-idempotency" },
+      branch: "other",
+      commitMessage: "test: ignored duplicate",
+      expectedHead: null,
+      idempotencyKey: pushKey,
+      now: new Date(),
+    });
+    assert.equal(replayedPush.id, pushId);
+    assert.equal(replayedPush.status, "pushed");
+
     const artifact = await persistedVersion.download();
     const files = unzipSync(artifact.bytes);
     assert.equal(strFromU8(files["src/index.ts"]!), "export const version = 2;\n");

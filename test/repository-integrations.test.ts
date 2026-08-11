@@ -202,10 +202,11 @@ function repositoryFixture() {
 
 test("imports, iterates, pushes immutable versions, opens pull requests, and reports conflicts", async () => {
   const fixture = repositoryFixture();
+  const persistence = new MemoryRepository();
   const viby = createViby({
     framework: "farm",
     model: "test/mock" as LanguageModel,
-    persistence: new MemoryRepository(),
+    persistence,
     connectionStore: new MemoryIntegrationConnectionStore(),
     secretStore: new MemorySecretStore(),
     integrations: { repository: { company: fixture.adapter } },
@@ -263,6 +264,22 @@ test("imports, iterates, pushes immutable versions, opens pull requests, and rep
   });
   assert.equal(initialPush.status, "pushed");
   assert.equal(initialPush.status === "pushed" && initialPush.changedFiles, 2);
+  const repeatedInitialPush = await first.push({
+    using: repository,
+    repository: { owner: "acme", name: "generated", createIfMissing: true },
+    branch: { name: "main", createIfMissing: true },
+    commit: { message: "feat: publish generated app" },
+  });
+  assert.equal(repeatedInitialPush.status, "pushed");
+  assert.equal(
+    repeatedInitialPush.status === "pushed" && repeatedInitialPush.commit.id,
+    initialPush.status === "pushed" && initialPush.commit.id,
+  );
+  assert.equal((await first.repositoryPushes()).length, 1);
+  const [link] = await imported.repositoryLinks();
+  assert.equal(link?.provider, "fixture-git");
+  assert.equal(link?.repositoryId, "repository-2");
+  assert.equal(link?.name, "generated");
 
   const second = await first.apply({
     changes: [{
@@ -284,6 +301,15 @@ test("imports, iterates, pushes immutable versions, opens pull requests, and rep
   });
   assert.equal(iterationPush.status, "pushed");
   assert.equal(iterationPush.status === "pushed" && iterationPush.pullRequest?.status, "draft");
+  const [iterationHistory] = await second.repositoryPushes();
+  assert.equal(iterationHistory?.versionId, second.id);
+  assert.equal(iterationHistory?.branch, "feat/version-two");
+  assert.equal(iterationHistory?.status, "pushed");
+  assert.equal(iterationHistory?.commit?.id, iterationPush.status === "pushed"
+    ? iterationPush.commit.id
+    : null);
+  assert.equal(iterationHistory?.pullRequest?.status, "draft");
+  assert.match(iterationHistory?.idempotencyKey ?? "", /^viby-[a-f0-9]{48}$/);
 
   const conflict = await second.push({
     using: repository,
@@ -293,6 +319,35 @@ test("imports, iterates, pushes immutable versions, opens pull requests, and rep
   });
   assert.equal(conflict.status, "conflict");
   assert.notEqual(conflict.status === "conflict" && conflict.actualHead, "commit-stale");
+  const conflictHistory = (await second.repositoryPushes())
+    .find((push) => push.status === "conflict");
+  assert.equal(conflictHistory?.expectedHead, "commit-stale");
+  assert.equal(
+    conflictHistory?.actualHead,
+    conflict.status === "conflict" ? conflict.actualHead : null,
+  );
+
+  await assert.rejects(
+    () => second.push({
+      using: repository,
+      repository: { owner: "acme", name: "missing" },
+      branch: "main",
+      commit: { message: "test: persist a failed push" },
+      idempotencyKey: "missing-repository-push",
+    }),
+    /Remote repository was not found/,
+  );
+  const failed = (await second.repositoryPushes())
+    .find((push) => push.idempotencyKey === "missing-repository-push");
+  assert.equal(failed?.status, "failed");
+  assert.match(failed?.error ?? "", /Remote repository was not found/);
+  await assert.rejects(
+    () => persistence.listRepositoryPushes(
+      { tenantId: "tenant-b", userId: "user-b" },
+      { chatId: imported.id },
+    ),
+    /Chat was not found/,
+  );
   await viby.close();
 });
 

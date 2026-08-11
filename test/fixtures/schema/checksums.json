@@ -20,5 +20,6 @@
   "0019_generated_artifacts.sql": "19084630645dc622e5db2ca9c01f1fd9fb286fe6b5e3f6498d6102472d34c482",
   "0020_visual_artifacts.sql": "34af71616bd4a4ddbd34ade69dc8e65dc7707cb944cc66472036732d38d2f24b",
   "0021_project_artifacts.sql": "63fcd8be61617828d94e5c6e76a10cd25643f2e7662c53aa4bcc0e7e5a5dd176",
-  "0022_integration_connections.sql": "59dcf73877cc32b88f9354ff17ddc94776dca555e42fdde6f7693ff7d2a0cec0"
+  "0022_integration_connections.sql": "59dcf73877cc32b88f9354ff17ddc94776dca555e42fdde6f7693ff7d2a0cec0",
+  "0023_repository_push_history.sql": "9f7a7ddf4869c59b8be70fd9f4094f5f993bf4e8a958e0575fc4fc8dd0a6a48c"
 }

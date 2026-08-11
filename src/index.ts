@@ -140,6 +140,11 @@ export type {
 } from "./visual-evaluation.js";
 export type { PersistenceAdapter } from "./persistence.js";
 export type {
+  RepositoryLinkData,
+  RepositoryPushData,
+  RepositoryPushStatus,
+} from "./repository-history.js";
+export type {
   ArtifactKind,
   ArtifactReference,
   ArtifactStore,

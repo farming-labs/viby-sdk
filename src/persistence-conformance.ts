@@ -19,6 +19,7 @@ export interface PersistenceConformanceReport {
     | "durable-generation"
     | "event-cursors"
     | "source-history"
+    | "repository-history"
     | "binary-projects"
     | "generated-artifacts"
     | "visual-artifacts"
@@ -127,6 +128,74 @@ export async function verifyPersistenceAdapter(
     assertConformance(child.parentVersionId === outcome.version.id, "Version lineage was not retained.");
     assertConformance((await chat.listVersions()).items.length === 2, "Version history was not durable.");
     checks.push("source-history");
+
+    const pushId = crypto.randomUUID();
+    const pushKey = `conformance-${crypto.randomUUID()}`;
+    const pendingPush = await persistence.beginRepositoryPush(scope, {
+      id: pushId,
+      chatId: chat.id,
+      versionId: child.id,
+      integrationId: "conformance-git",
+      connectionId: "connection-1",
+      provider: "conformance-git",
+      target: { owner: "acme", name: "generated" },
+      branch: "main",
+      commitMessage: "test: verify repository persistence",
+      expectedHead: null,
+      idempotencyKey: pushKey,
+      now: new Date(),
+    });
+    assertConformance(pendingPush.status === "pending", "Repository push did not start durably.");
+    await persistence.completeRepositoryPush(scope, {
+      id: pushId,
+      repository: {
+        id: "repository-1",
+        owner: "acme",
+        name: "generated",
+        defaultBranch: "main",
+        visibility: "private",
+        url: "https://git.example/acme/generated",
+      },
+      result: {
+        status: "pushed",
+        commit: {
+          id: "commit-1",
+          message: "test: verify repository persistence",
+          branch: "main",
+          url: "https://git.example/acme/generated/commit/commit-1",
+        },
+        changedFiles: 1,
+        pullRequest: null,
+      },
+      completedAt: new Date(),
+    });
+    const [storedPush] = await persistence.listRepositoryPushes(scope, {
+      chatId: chat.id,
+      versionId: child.id,
+    });
+    assertConformance(storedPush?.commit?.id === "commit-1", "Repository commit was not durable.");
+    assertConformance(
+      (await persistence.listRepositoryLinks(scope, chat.id))[0]?.repositoryId === "repository-1",
+      "Repository link was not durable.",
+    );
+    assertConformance(
+      (await persistence.beginRepositoryPush(scope, {
+        id: crypto.randomUUID(),
+        chatId: chat.id,
+        versionId: child.id,
+        integrationId: "conformance-git",
+        connectionId: "connection-1",
+        provider: "conformance-git",
+        target: { owner: "acme", name: "generated" },
+        branch: "main",
+        commitMessage: "test: verify repository persistence",
+        expectedHead: null,
+        idempotencyKey: pushKey,
+        now: new Date(),
+      })).id === pushId,
+      "Repository push idempotency was not durable.",
+    );
+    checks.push("repository-history");
 
     const binaryBytes = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 7]);
     const binaryChat = await owner.chats.import({
