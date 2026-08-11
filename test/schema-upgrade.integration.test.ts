@@ -81,6 +81,7 @@ test("upgrades a historical v0.2 schema without losing tenant data", {
       "0020_visual_artifacts",
       "0021_project_artifacts",
       "0022_integration_connections",
+      "0023_repository_push_history",
     ]);
     assert.equal((await getMigrationStatus(databaseUrl.toString())).every((entry) => entry.applied), true);
     assert.deepEqual(await migrateDatabase(databaseUrl.toString()), []);
