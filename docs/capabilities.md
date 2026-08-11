@@ -84,7 +84,7 @@ Preview URLs exist only when the configured adapter exposes port URLs and the ho
 | Integration secrets | standalone secret-store contract plus an AES-256-GCM PostgreSQL default keyed by `VIBY_SECRET_KEY`; credentials never enter normal SDK records |
 | Repository workflows | connected provider handles for owners, repositories, branches, source import, complete immutable snapshot pushes, optimistic conflicts, pull requests, and optional merges |
 | Repository conformance | reusable disposable-repository suite covering discovery, source round-trips, pushes, stale-head conflicts, and pull requests |
-| Included repository adapter | GitHub App installation/user verification, short-lived token refresh and revocation, source reads, exact Git Data tree pushes, branches, and pull requests |
+| Included repository adapters | GitHub App installation/user verification, short-lived token refresh and revocation, and exact Git Data pushes; Bitbucket Cloud OAuth, rotating refresh tokens, workspace discovery, binary-safe source commits, branches, and pull requests |
 | Deployment workflows | connected provider handles for projects, immutable-version deployment, stable retry idempotency, status lookup, URLs, and optional cancellation |
 | Deployment conformance | reusable disposable-project suite covering creation, idempotent deployment, lookup, and cancellation |
 | Included deployment adapters | Vercel external-integration authorization with source deployment and cancellation; Cloudflare OAuth with multi-account Pages discovery, Wrangler-compatible prebuilt asset uploads, durable retry recovery, status, and URLs |
