@@ -125,10 +125,11 @@ async function authorize(
 
 test("creates projects and deploys immutable text and binary versions idempotently", async () => {
   const fixture = deploymentFixture();
+  const persistence = new MemoryRepository();
   const viby = createViby({
     framework: "farm",
     model: "test/mock" as LanguageModel,
-    persistence: new MemoryRepository(),
+    persistence,
     connectionStore: new MemoryIntegrationConnectionStore(),
     secretStore: new MemorySecretStore(),
     integrations: { deployment: { preview: fixture.adapter } },
@@ -166,12 +167,21 @@ test("creates projects and deploys immutable text and binary versions idempotent
     ["index.html", new TextEncoder().encode("<!doctype html><title>Viby</title>")],
     ["logo.bin", new Uint8Array([0, 1, 2, 255])],
   ]);
+  const [firstHistory] = await version.deployments();
+  assert.equal(firstHistory?.providerDeploymentId, first.id);
+  assert.equal(firstHistory?.status, "ready");
+  assert.deepEqual(firstHistory?.transitions.map((transition) => transition.status), [
+    "pending",
+    "ready",
+  ]);
+  assert.equal((await chat.deploymentProjects())[0]?.providerProjectId, first.projectId);
   const automaticRetry = await version.deploy({
     using: provider,
     project: { name: "viby-app", createIfMissing: true },
     environment: "preview",
   });
   assert.equal(automaticRetry.id, first.id);
+  assert.equal((await version.deployments()).length, 1);
 
   const repeated = await version.deploy({
     using: provider,
@@ -191,6 +201,42 @@ test("creates projects and deploys immutable text and binary versions idempotent
     id: repeated.id,
     idempotencyKey: "cancel-stable-version-deploy",
   })).status, "cancelled");
+  const durableDeployments = await (await user.chats.get(chat.id)).deployments();
+  assert.equal(durableDeployments.length, 2);
+  const cancelled = durableDeployments.find((deployment) => (
+    deployment.providerDeploymentId === repeated.id
+  ));
+  assert.equal(cancelled?.status, "cancelled");
+  assert.deepEqual(cancelled?.transitions.map((transition) => transition.status), [
+    "pending",
+    "ready",
+    "cancelled",
+  ]);
+
+  await assert.rejects(
+    () => version.deploy({
+      using: provider,
+      project: { id: "missing-project" },
+      environment: "preview",
+      idempotencyKey: "missing-deployment-project",
+    }),
+    /Deployment project was not found/,
+  );
+  const failed = (await version.deployments())
+    .find((deployment) => deployment.idempotencyKey === "missing-deployment-project");
+  assert.equal(failed?.status, "failed");
+  assert.match(failed?.error ?? "", /Deployment project was not found/);
+  assert.deepEqual(failed?.transitions.map((transition) => transition.status), [
+    "pending",
+    "failed",
+  ]);
+  await assert.rejects(
+    () => persistence.listDeployments(
+      { tenantId: "other", userId: "other" },
+      { chatId: chat.id },
+    ),
+    /Chat was not found/,
+  );
   await viby.close();
 });
 

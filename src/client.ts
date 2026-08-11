@@ -175,6 +175,10 @@ import {
   type PushVersionRepositoryResult,
 } from "./repository-integrations.js";
 import type { RepositoryLinkData, RepositoryPushData } from "./repository-history.js";
+import type {
+  DeploymentProjectLinkData,
+  DeploymentRecordData,
+} from "./deployment-history.js";
 import {
   EncryptedPostgresSecretStore,
   PostgresIntegrationConnectionStore,
@@ -593,7 +597,10 @@ export class ScopedViby<Framework extends FrameworkId = FrameworkId> {
     this.chats = new ChatCollection(dependencies);
     this.generations = new GenerationCollection(dependencies);
     this.sandboxes = new SandboxCollection(dependencies);
-    this.integrations = dependencies.integrations.forUser(dependencies.scope);
+    this.integrations = dependencies.integrations.forUser(
+      dependencies.scope,
+      dependencies.repository,
+    );
   }
 }
 
@@ -865,6 +872,22 @@ export class Chat<Framework extends FrameworkId = FrameworkId> {
   async repositoryPushes(): Promise<readonly RepositoryPushData[]> {
     await this.#assertActive();
     return this.#dependencies.repository.listRepositoryPushes(
+      this.#dependencies.scope,
+      { chatId: this.id },
+    );
+  }
+
+  async deploymentProjects(): Promise<readonly DeploymentProjectLinkData[]> {
+    await this.#assertActive();
+    return this.#dependencies.repository.listDeploymentProjects(
+      this.#dependencies.scope,
+      this.id,
+    );
+  }
+
+  async deployments(): Promise<readonly DeploymentRecordData[]> {
+    await this.#assertActive();
+    return this.#dependencies.repository.listDeployments(
       this.#dependencies.scope,
       { chatId: this.id },
     );
@@ -1571,18 +1594,72 @@ export class Version<Framework extends FrameworkId = FrameworkId> {
     input: VersionDeployInput<ProjectOptions, DeployOptions>,
   ): Promise<DeploymentData> {
     if (!input) throw new ConfigurationError("A deployment target is required.");
+    const context = await input.using.operationContext(input.signal);
     const idempotencyKey = input.idempotencyKey?.trim() || `viby-${sha256([
       this.id,
       input.using.id,
+      context.connectionId,
       deploymentTargetIdentity(input.project),
       String(input.environment),
     ].join("\0")).slice(0, 48)}`;
-    return deployVersionSource(await materializeVersionSourceFiles(
+    assertIdentifier(idempotencyKey, "Deployment idempotency key");
+    const started = await this.#dependencies.repository.beginDeployment(
+      this.#dependencies.scope,
+      {
+        id: createId(),
+        chatId: this.chatId,
+        versionId: this.id,
+        integrationId: input.using.id,
+        connectionId: context.connectionId,
+        provider: input.using.provider,
+        projectTarget: deploymentTargetIdentity(input.project),
+        environment: assertIdentifier(String(input.environment), "Deployment environment"),
+        idempotencyKey,
+        now: new Date(),
+      },
+    );
+    const replay = await storedDeploymentResult(
       this.#dependencies.repository,
       this.#dependencies.scope,
-      this.id,
-      await this.entries(),
-    ), { ...input, idempotencyKey });
+      started,
+    );
+    if (replay) return replay;
+    try {
+      const deployment = await deployVersionSource(await materializeVersionSourceFiles(
+        this.#dependencies.repository,
+        this.#dependencies.scope,
+        this.id,
+        await this.entries(),
+      ), { ...input, idempotencyKey });
+      const project = await input.using.projects.get({ id: deployment.projectId }, input.signal);
+      if (!project) throw new NotFoundError("Deployed project");
+      await this.#dependencies.repository.completeDeployment(
+        this.#dependencies.scope,
+        { id: started.id, project, deployment, observedAt: new Date() },
+      );
+      return deployment;
+    } catch (error) {
+      try {
+        await this.#dependencies.repository.failDeployment(
+          this.#dependencies.scope,
+          { id: started.id, error: errorMessage(error), observedAt: new Date() },
+        );
+      } catch (historyError) {
+        throw new AggregateError(
+          [error, historyError],
+          "Deployment failed and its durable history could not be updated.",
+        );
+      }
+      throw error;
+    }
+  }
+
+  async deployments(): Promise<readonly DeploymentRecordData[]> {
+    await assertActiveChat(this.#dependencies, this.chatId);
+    return this.#dependencies.repository.listDeployments(
+      this.#dependencies.scope,
+      { chatId: this.chatId, versionId: this.id },
+    );
   }
 
   async sandbox(options: SandboxOpenOptions = {}): Promise<SandboxSession> {
@@ -1799,6 +1876,28 @@ async function storedRepositoryPushResult(
     commit: push.commit,
     changedFiles: push.changedFiles,
     pullRequest: push.pullRequest,
+  };
+}
+
+async function storedDeploymentResult(
+  repository: Repository,
+  scope: UserScope,
+  deployment: DeploymentRecordData,
+): Promise<DeploymentData | null> {
+  if (deployment.status === "pending" || deployment.status === "failed") return null;
+  if (!deployment.providerDeploymentId || !deployment.providerCreatedAt || !deployment.projectLinkId) {
+    throw new Error(`Completed deployment ${deployment.id} has no provider identity.`);
+  }
+  const project = (await repository.listDeploymentProjects(scope, deployment.chatId))
+    .find((candidate) => candidate.id === deployment.projectLinkId);
+  if (!project) throw new Error(`Deployment project link ${deployment.projectLinkId} is unavailable.`);
+  return {
+    id: deployment.providerDeploymentId,
+    projectId: project.providerProjectId,
+    environment: deployment.environment,
+    status: deployment.status,
+    url: deployment.url,
+    createdAt: deployment.providerCreatedAt,
   };
 }
 

@@ -20,6 +20,7 @@ export interface PersistenceConformanceReport {
     | "event-cursors"
     | "source-history"
     | "repository-history"
+    | "deployment-history"
     | "binary-projects"
     | "generated-artifacts"
     | "visual-artifacts"
@@ -196,6 +197,65 @@ export async function verifyPersistenceAdapter(
       "Repository push idempotency was not durable.",
     );
     checks.push("repository-history");
+
+    const deploymentId = crypto.randomUUID();
+    const deploymentKey = `conformance-${crypto.randomUUID()}`;
+    await persistence.beginDeployment(scope, {
+      id: deploymentId,
+      chatId: chat.id,
+      versionId: child.id,
+      integrationId: "conformance-deploy",
+      connectionId: "connection-1",
+      provider: "conformance-deploy",
+      projectTarget: "name:generated",
+      environment: "preview",
+      idempotencyKey: deploymentKey,
+      now: new Date(),
+    });
+    const providerCreatedAt = new Date();
+    await persistence.completeDeployment(scope, {
+      id: deploymentId,
+      project: { id: "project-1", name: "generated", url: null },
+      deployment: {
+        id: "deployment-1",
+        projectId: "project-1",
+        environment: "preview",
+        status: "queued",
+        url: null,
+        createdAt: providerCreatedAt,
+      },
+      observedAt: new Date(),
+    });
+    await persistence.observeDeployment(scope, {
+      integrationId: "conformance-deploy",
+      connectionId: "connection-1",
+      provider: "conformance-deploy",
+      deployment: {
+        id: "deployment-1",
+        projectId: "project-1",
+        environment: "preview",
+        status: "ready",
+        url: "https://preview.example.test",
+        createdAt: providerCreatedAt,
+      },
+      observedAt: new Date(),
+    });
+    const [storedDeployment] = await persistence.listDeployments(scope, {
+      chatId: chat.id,
+      versionId: child.id,
+    });
+    assertConformance(storedDeployment?.status === "ready", "Deployment status was not durable.");
+    assertConformance(
+      storedDeployment.transitions.map((transition) => transition.status).join(",")
+        === "pending,queued,ready",
+      "Deployment transitions were not durable.",
+    );
+    assertConformance(
+      (await persistence.listDeploymentProjects(scope, chat.id))[0]?.providerProjectId
+        === "project-1",
+      "Deployment project link was not durable.",
+    );
+    checks.push("deployment-history");
 
     const binaryBytes = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 7]);
     const binaryChat = await owner.chats.import({

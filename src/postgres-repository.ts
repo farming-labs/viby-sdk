@@ -56,6 +56,7 @@ import type {
   RepositoryPullRequestData,
   RepositoryVisibility,
 } from "./integrations.js";
+import type { DeploymentEnvironment, DeploymentStatus } from "./integrations.js";
 import type { GenerationCostData } from "./telemetry.js";
 import type {
   CreateSandboxLeaseRecord,
@@ -105,6 +106,16 @@ import type {
   RepositoryPushData,
   RepositoryPushStatus,
 } from "./repository-history.js";
+import type {
+  BeginDeploymentRecord,
+  CompleteDeploymentRecord,
+  DeploymentHistoryStatus,
+  DeploymentProjectLinkData,
+  DeploymentRecordData,
+  DeploymentStatusTransitionData,
+  FailDeploymentRecord,
+  ObserveDeploymentRecord,
+} from "./deployment-history.js";
 import { createId, sha256 } from "./utils.js";
 import { normalizeAndRedactToolPayload } from "./redaction.js";
 import {
@@ -445,6 +456,49 @@ interface RepositoryPushRow {
   completed_at: Date | null;
 }
 
+interface DeploymentProjectLinkRow {
+  id: string;
+  chat_id: string;
+  integration_id: string;
+  connection_id: string;
+  provider: string;
+  provider_project_id: string;
+  name: string;
+  url: string | null;
+  created_at: Date;
+  updated_at: Date;
+}
+
+interface DeploymentRow {
+  id: string;
+  chat_id: string;
+  version_id: string;
+  project_link_id: string | null;
+  integration_id: string;
+  connection_id: string;
+  provider: string;
+  project_target: string;
+  environment: DeploymentEnvironment;
+  provider_deployment_id: string | null;
+  provider_created_at: Date | null;
+  url: string | null;
+  status: DeploymentHistoryStatus;
+  error: string | null;
+  idempotency_key: string;
+  created_at: Date;
+  updated_at: Date;
+  completed_at: Date | null;
+}
+
+interface DeploymentStatusTransitionRow {
+  id: string;
+  deployment_id: string;
+  status: DeploymentHistoryStatus;
+  url: string | null;
+  error: string | null;
+  created_at: Date;
+}
+
 export class PostgresRepository implements Repository {
   readonly #sql: ReturnType<typeof postgres>;
   readonly #artifactStore: ArtifactStore | undefined;
@@ -479,6 +533,9 @@ export class PostgresRepository implements Repository {
         AND to_regclass('viby.project_artifacts') IS NOT NULL
         AND to_regclass('viby.repository_links') IS NOT NULL
         AND to_regclass('viby.repository_pushes') IS NOT NULL
+        AND to_regclass('viby.deployment_project_links') IS NOT NULL
+        AND to_regclass('viby.deployments') IS NOT NULL
+        AND to_regclass('viby.deployment_status_transitions') IS NOT NULL
         AND EXISTS (
           SELECT 1 FROM information_schema.columns
           WHERE table_schema = 'viby' AND table_name = 'attachments'
@@ -2817,6 +2874,250 @@ export class PostgresRepository implements Repository {
     return rows.map(mapRepositoryPush);
   }
 
+  async beginDeployment(
+    scope: UserScope,
+    input: BeginDeploymentRecord,
+  ): Promise<DeploymentRecordData> {
+    await this.assertReady();
+    const row = await this.#sql.begin(async (sql) => {
+      const [inserted] = await sql<DeploymentRow[]>`
+        INSERT INTO viby.deployments (
+          id, tenant_id, user_id, chat_id, version_id, integration_id, connection_id,
+          provider, project_target, environment, status, idempotency_key, created_at, updated_at
+        )
+        SELECT
+          ${input.id}, ${scope.tenantId}, ${scope.userId}, version.chat_id, version.id,
+          ${input.integrationId}, ${input.connectionId}, ${input.provider},
+          ${input.projectTarget}, ${input.environment}, 'pending', ${input.idempotencyKey},
+          ${input.now}, ${input.now}
+        FROM viby.versions AS version
+        JOIN viby.chats AS chat ON chat.id = version.chat_id
+        WHERE version.tenant_id = ${scope.tenantId} AND version.user_id = ${scope.userId}
+          AND version.id = ${input.versionId} AND version.chat_id = ${input.chatId}
+          AND chat.deleted_at IS NULL
+        ON CONFLICT (tenant_id, user_id, idempotency_key) DO NOTHING
+        RETURNING *
+      `;
+      if (inserted) {
+        await sql`
+          INSERT INTO viby.deployment_status_transitions (
+            id, tenant_id, user_id, deployment_id, status, url, error, created_at
+          ) VALUES (
+            ${createId()}, ${scope.tenantId}, ${scope.userId}, ${inserted.id},
+            'pending', NULL, NULL, ${input.now}
+          )
+        `;
+        return inserted;
+      }
+      const [existing] = await sql<DeploymentRow[]>`
+        SELECT * FROM viby.deployments
+        WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+          AND idempotency_key = ${input.idempotencyKey}
+        LIMIT 1
+      `;
+      if (!existing) throw new NotFoundError("Deployment version");
+      return existing;
+    });
+    return (await this.#deploymentsWithTransitions(scope, [row]))[0]!;
+  }
+
+  async completeDeployment(
+    scope: UserScope,
+    input: CompleteDeploymentRecord,
+  ): Promise<DeploymentRecordData> {
+    await this.assertReady();
+    const row = await this.#sql.begin(async (sql) => {
+      const [deployment] = await sql<DeploymentRow[]>`
+        SELECT * FROM viby.deployments
+        WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+          AND id = ${input.id}
+        FOR UPDATE
+      `;
+      if (!deployment) throw new NotFoundError("Deployment");
+      const [project] = await sql<DeploymentProjectLinkRow[]>`
+        INSERT INTO viby.deployment_project_links (
+          id, tenant_id, user_id, chat_id, integration_id, connection_id, provider,
+          provider_project_id, name, url, created_at, updated_at
+        ) VALUES (
+          ${createId()}, ${scope.tenantId}, ${scope.userId}, ${deployment.chat_id},
+          ${deployment.integration_id}, ${deployment.connection_id}, ${deployment.provider},
+          ${input.project.id}, ${input.project.name}, ${input.project.url},
+          ${input.observedAt}, ${input.observedAt}
+        )
+        ON CONFLICT (
+          tenant_id, user_id, chat_id, integration_id, connection_id, provider_project_id
+        ) DO UPDATE SET
+          provider = EXCLUDED.provider,
+          name = EXCLUDED.name,
+          url = EXCLUDED.url,
+          updated_at = EXCLUDED.updated_at
+        RETURNING *
+      `;
+      if (!project) throw new Error("Postgres did not return the deployment project link.");
+      const terminal = isTerminalDeploymentStatus(input.deployment.status);
+      const changed = deployment.status !== input.deployment.status
+        || deployment.url !== input.deployment.url;
+      const [updated] = await sql<DeploymentRow[]>`
+        UPDATE viby.deployments SET
+          project_link_id = ${project.id},
+          provider_deployment_id = ${input.deployment.id},
+          provider_created_at = ${input.deployment.createdAt},
+          environment = ${input.deployment.environment},
+          url = ${input.deployment.url},
+          status = ${input.deployment.status},
+          error = NULL,
+          updated_at = ${input.observedAt},
+          completed_at = ${terminal ? input.observedAt : null}
+        WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+          AND id = ${input.id}
+        RETURNING *
+      `;
+      if (!updated) throw new NotFoundError("Deployment");
+      if (changed) {
+        await insertDeploymentTransition(sql, scope, updated, null, input.observedAt);
+      }
+      return updated;
+    });
+    return (await this.#deploymentsWithTransitions(scope, [row]))[0]!;
+  }
+
+  async failDeployment(
+    scope: UserScope,
+    input: FailDeploymentRecord,
+  ): Promise<DeploymentRecordData> {
+    await this.assertReady();
+    const row = await this.#sql.begin(async (sql) => {
+      const [deployment] = await sql<DeploymentRow[]>`
+        SELECT * FROM viby.deployments
+        WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+          AND id = ${input.id}
+        FOR UPDATE
+      `;
+      if (!deployment) throw new NotFoundError("Deployment");
+      if (deployment.status !== "pending") return deployment;
+      const [failed] = await sql<DeploymentRow[]>`
+        UPDATE viby.deployments SET
+          status = 'failed', error = ${input.error}, updated_at = ${input.observedAt},
+          completed_at = ${input.observedAt}
+        WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+          AND id = ${input.id}
+        RETURNING *
+      `;
+      if (!failed) throw new NotFoundError("Deployment");
+      await insertDeploymentTransition(sql, scope, failed, input.error, input.observedAt);
+      return failed;
+    });
+    return (await this.#deploymentsWithTransitions(scope, [row]))[0]!;
+  }
+
+  async observeDeployment(
+    scope: UserScope,
+    input: ObserveDeploymentRecord,
+  ): Promise<DeploymentRecordData | null> {
+    await this.assertReady();
+    const row = await this.#sql.begin(async (sql) => {
+      const [deployment] = await sql<DeploymentRow[]>`
+        SELECT * FROM viby.deployments
+        WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+          AND integration_id = ${input.integrationId}
+          AND connection_id = ${input.connectionId}
+          AND provider = ${input.provider}
+          AND provider_deployment_id = ${input.deployment.id}
+        ORDER BY created_at DESC
+        LIMIT 1
+        FOR UPDATE
+      `;
+      if (!deployment) return null;
+      const changed = deployment.status !== input.deployment.status
+        || deployment.url !== input.deployment.url;
+      const terminal = isTerminalDeploymentStatus(input.deployment.status);
+      const [updated] = await sql<DeploymentRow[]>`
+        UPDATE viby.deployments SET
+          environment = ${input.deployment.environment},
+          provider_created_at = ${input.deployment.createdAt},
+          url = ${input.deployment.url},
+          status = ${input.deployment.status},
+          error = NULL,
+          updated_at = ${input.observedAt},
+          completed_at = ${terminal ? input.observedAt : null}
+        WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+          AND id = ${deployment.id}
+        RETURNING *
+      `;
+      if (!updated) throw new NotFoundError("Deployment");
+      if (changed) {
+        await insertDeploymentTransition(sql, scope, updated, null, input.observedAt);
+      }
+      return updated;
+    });
+    if (!row) return null;
+    return (await this.#deploymentsWithTransitions(scope, [row]))[0]!;
+  }
+
+  async listDeploymentProjects(
+    scope: UserScope,
+    chatId: string,
+  ): Promise<DeploymentProjectLinkData[]> {
+    await this.assertReady();
+    const rows = await this.#sql<DeploymentProjectLinkRow[]>`
+      SELECT project.* FROM viby.deployment_project_links AS project
+      JOIN viby.chats AS chat ON chat.id = project.chat_id
+      WHERE project.tenant_id = ${scope.tenantId} AND project.user_id = ${scope.userId}
+        AND project.chat_id = ${chatId} AND chat.deleted_at IS NULL
+      ORDER BY project.updated_at DESC, project.id DESC
+    `;
+    return rows.map(mapDeploymentProjectLink);
+  }
+
+  async listDeployments(
+    scope: UserScope,
+    input: { readonly chatId: string; readonly versionId?: string },
+  ): Promise<DeploymentRecordData[]> {
+    await this.assertReady();
+    const rows = input.versionId
+      ? await this.#sql<DeploymentRow[]>`
+          SELECT deployment.* FROM viby.deployments AS deployment
+          JOIN viby.chats AS chat ON chat.id = deployment.chat_id
+          WHERE deployment.tenant_id = ${scope.tenantId}
+            AND deployment.user_id = ${scope.userId}
+            AND deployment.chat_id = ${input.chatId}
+            AND deployment.version_id = ${input.versionId}
+            AND chat.deleted_at IS NULL
+          ORDER BY deployment.created_at DESC, deployment.id DESC
+        `
+      : await this.#sql<DeploymentRow[]>`
+          SELECT deployment.* FROM viby.deployments AS deployment
+          JOIN viby.chats AS chat ON chat.id = deployment.chat_id
+          WHERE deployment.tenant_id = ${scope.tenantId}
+            AND deployment.user_id = ${scope.userId}
+            AND deployment.chat_id = ${input.chatId}
+            AND chat.deleted_at IS NULL
+          ORDER BY deployment.created_at DESC, deployment.id DESC
+        `;
+    return this.#deploymentsWithTransitions(scope, rows);
+  }
+
+  async #deploymentsWithTransitions(
+    scope: UserScope,
+    rows: readonly DeploymentRow[],
+  ): Promise<DeploymentRecordData[]> {
+    if (rows.length === 0) return [];
+    const transitions = await this.#sql<DeploymentStatusTransitionRow[]>`
+      SELECT id, deployment_id, status, url, error, created_at
+      FROM viby.deployment_status_transitions
+      WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+        AND deployment_id = ANY(${this.#sql.array(rows.map((row) => row.id))}::uuid[])
+      ORDER BY created_at, id
+    `;
+    const grouped = new Map<string, DeploymentStatusTransitionData[]>();
+    for (const transition of transitions) {
+      const values = grouped.get(transition.deployment_id) ?? [];
+      values.push(mapDeploymentTransition(transition));
+      grouped.set(transition.deployment_id, values);
+    }
+    return rows.map((row) => mapDeployment(row, grouped.get(row.id) ?? []));
+  }
+
   async createSandboxLease<Framework extends FrameworkId>(
     scope: UserScope,
     input: CreateSandboxLeaseRecord<Framework>,
@@ -3259,6 +3560,65 @@ function mapRepositoryPush(row: RepositoryPushRow): RepositoryPushData {
   };
 }
 
+function mapDeploymentProjectLink(row: DeploymentProjectLinkRow): DeploymentProjectLinkData {
+  return {
+    id: row.id,
+    chatId: row.chat_id,
+    integrationId: row.integration_id,
+    connectionId: row.connection_id,
+    provider: row.provider,
+    providerProjectId: row.provider_project_id,
+    name: row.name,
+    url: row.url,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function mapDeploymentTransition(
+  row: DeploymentStatusTransitionRow,
+): DeploymentStatusTransitionData {
+  return {
+    id: row.id,
+    deploymentId: row.deployment_id,
+    status: row.status,
+    url: row.url,
+    error: row.error,
+    createdAt: row.created_at,
+  };
+}
+
+function mapDeployment(
+  row: DeploymentRow,
+  transitions: readonly DeploymentStatusTransitionData[],
+): DeploymentRecordData {
+  return {
+    id: row.id,
+    chatId: row.chat_id,
+    versionId: row.version_id,
+    projectLinkId: row.project_link_id,
+    integrationId: row.integration_id,
+    connectionId: row.connection_id,
+    provider: row.provider,
+    projectTarget: row.project_target,
+    environment: row.environment,
+    providerDeploymentId: row.provider_deployment_id,
+    providerCreatedAt: row.provider_created_at,
+    url: row.url,
+    status: row.status,
+    error: row.error,
+    idempotencyKey: row.idempotency_key,
+    transitions,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    completedAt: row.completed_at,
+  };
+}
+
+function isTerminalDeploymentStatus(status: DeploymentStatus): boolean {
+  return status === "ready" || status === "failed" || status === "cancelled";
+}
+
 function mapDesignEvaluation(row: DesignEvaluationRow): DesignEvaluationData {
   return {
     id: row.id,
@@ -3437,6 +3797,23 @@ async function insertGeneratedArtifacts(
       )
     `;
   }
+}
+
+async function insertDeploymentTransition(
+  sql: postgres.TransactionSql,
+  scope: UserScope,
+  deployment: DeploymentRow,
+  error: string | null,
+  createdAt: Date,
+): Promise<void> {
+  await sql`
+    INSERT INTO viby.deployment_status_transitions (
+      id, tenant_id, user_id, deployment_id, status, url, error, created_at
+    ) VALUES (
+      ${createId()}, ${scope.tenantId}, ${scope.userId}, ${deployment.id},
+      ${deployment.status}, ${deployment.url}, ${error}, ${createdAt}
+    )
+  `;
 }
 
 async function insertProjectArtifacts(

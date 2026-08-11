@@ -48,3 +48,14 @@ export type {
   RepositoryPushData,
   RepositoryPushStatus,
 } from "./repository-history.js";
+export type {
+  BeginDeploymentRecord,
+  CompleteDeploymentRecord,
+  DeploymentHistoryStatus,
+  DeploymentHistoryStore,
+  DeploymentProjectLinkData,
+  DeploymentRecordData,
+  DeploymentStatusTransitionData,
+  FailDeploymentRecord,
+  ObserveDeploymentRecord,
+} from "./deployment-history.js";

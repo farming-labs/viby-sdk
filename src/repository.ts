@@ -55,6 +55,7 @@ import type {
   RepositoryLinkData,
   RepositoryPushData,
 } from "./repository-history.js";
+import type { DeploymentHistoryStore } from "./deployment-history.js";
 
 export interface ImportChatRecord<Framework extends FrameworkId = FrameworkId> {
   readonly chatId: string;
@@ -346,7 +347,7 @@ export interface FailOutboundEventDeliveryRecord {
   readonly retryDelayMs: number;
 }
 
-export interface Repository {
+export interface Repository extends DeploymentHistoryStore {
   assertReady(): Promise<void>;
   close(): Promise<void>;
   createChat<Framework extends FrameworkId>(

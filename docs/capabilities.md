@@ -87,6 +87,7 @@ Preview URLs exist only when the configured adapter exposes port URLs and the ho
 | Repository conformance | reusable disposable-repository suite covering discovery, source round-trips, pushes, stale-head conflicts, and pull requests |
 | Included repository adapters | GitHub App installation/user verification, short-lived token refresh and revocation, and exact Git Data pushes; Bitbucket Cloud OAuth, rotating refresh tokens, workspace discovery, binary-safe source commits, branches, and pull requests |
 | Deployment workflows | connected provider handles for projects, immutable-version deployment, stable retry idempotency, status lookup, URLs, and optional cancellation |
+| Deployment history | durable chat-to-project links, version-bound deployment records, restart-safe idempotency, provider IDs and URLs, failures, and ordered status transitions |
 | Deployment conformance | reusable disposable-project suite covering creation, idempotent deployment, lookup, and cancellation |
 | Included deployment adapters | Vercel external-integration authorization with source deployment and cancellation; Cloudflare OAuth with multi-account Pages discovery, Wrangler-compatible prebuilt asset uploads, durable retry recovery, status, and URLs |
 

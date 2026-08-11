@@ -145,6 +145,12 @@ export type {
   RepositoryPushStatus,
 } from "./repository-history.js";
 export type {
+  DeploymentHistoryStatus,
+  DeploymentProjectLinkData,
+  DeploymentRecordData,
+  DeploymentStatusTransitionData,
+} from "./deployment-history.js";
+export type {
   ArtifactKind,
   ArtifactReference,
   ArtifactStore,
