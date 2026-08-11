@@ -84,6 +84,7 @@ Preview URLs exist only when the configured adapter exposes port URLs and the ho
 | Integration secrets | standalone secret-store contract plus an AES-256-GCM PostgreSQL default keyed by `VIBY_SECRET_KEY`; credentials never enter normal SDK records |
 | Repository workflows | connected provider handles for owners, repositories, branches, source import, complete immutable snapshot pushes, optimistic conflicts, pull requests, and optional merges |
 | Repository conformance | reusable disposable-repository suite covering discovery, source round-trips, pushes, stale-head conflicts, and pull requests |
+| Included repository adapter | GitHub App installation/user verification, short-lived token refresh and revocation, source reads, exact Git Data tree pushes, branches, and pull requests |
 
 Product authentication, provider-app registration, redirect routes, event scheduling, and transport infrastructure remain host-owned. Viby stores tenant-scoped provider connections and delivery state but does not run a hidden queue or scheduler.
 
@@ -103,7 +104,7 @@ Product authentication, provider-app registration, redirect routes, event schedu
 
 ## Deliberately outside the current release
 
-- GitHub and Bitbucket repository provider adapters;
+- Bitbucket repository provider adapter;
 - deployment runtime workflows, provider adapters, and managed preview hosting;
 - managed authentication, billing, Postgres, workers, queues, secrets, or a Viby API key.
 

@@ -70,11 +70,21 @@ Custom persistence adapters own transactions, tenant isolation, durable event cu
 External account connections use the same tenant and user scope while keeping provider credentials out of ordinary records. Configure adapters under capability categories, set a separate 32-byte `VIBY_SECRET_KEY`, and run the normal migrations:
 
 ```ts
+import { github } from "@viby/sdk/integrations/github";
+
 const viby = createViby({
   framework: "farm",
   model,
   integrations: {
-    repository: { github: githubIntegration },
+    repository: {
+      github: github({
+        appId: env.GITHUB_APP_ID,
+        clientId: env.GITHUB_APP_CLIENT_ID,
+        clientSecret: env.GITHUB_APP_CLIENT_SECRET,
+        privateKey: env.GITHUB_APP_PRIVATE_KEY,
+        slug: "viby",
+      }),
+    },
     deployment: { vercel: vercelIntegration },
   },
 });
@@ -122,7 +132,7 @@ if (pushed.status === "conflict") {
 }
 ```
 
-Adapters receive a complete immutable source snapshot, including artifact-backed binary files. `expectedHead` provides portable optimistic concurrency for later iterations. Adapter authors can run `verifyRepositoryIntegration` from `@viby/sdk/integrations/repository/conformance` against a disposable provider repository.
+Adapters receive a complete immutable source snapshot, including artifact-backed binary files. `expectedHead` provides portable optimistic concurrency for later iterations. Adapter authors can run `verifyRepositoryIntegration` from `@viby/sdk/integrations/repository/conformance` against a disposable provider repository. The included GitHub adapter uses a verified GitHub App installation flow and is documented in [GitHub integration setup](./docs/integrations/github.md).
 
 Binary attachments use a separate provider-neutral artifact store so PostgreSQL retains only queryable ownership, media metadata, checksums, and opaque storage references. The filesystem adapter is a reference implementation for development or hosts with a durable mounted volume:
 
@@ -962,7 +972,7 @@ Included now:
 
 Planned as separate capabilities later:
 
-- GitHub and Bitbucket repository provider adapters
+- Bitbucket repository provider adapter
 - deployment implementations on the categorized integration contracts
 - managed Viby infrastructure
 

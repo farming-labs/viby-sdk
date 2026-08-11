@@ -110,6 +110,10 @@
       "types": "./dist/repository-integration-conformance.d.ts",
       "import": "./dist/repository-integration-conformance.js"
     },
+    "./integrations/github": {
+      "types": "./dist/integration-github.d.ts",
+      "import": "./dist/integration-github.js"
+    },
     "./mcp": {
       "types": "./dist/mcp.d.ts",
       "import": "./dist/mcp.js"
