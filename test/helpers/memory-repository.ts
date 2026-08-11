@@ -81,6 +81,15 @@ import type {
   RepositoryLinkData,
   RepositoryPushData,
 } from "../../src/repository-history.js";
+import type {
+  BeginDeploymentRecord,
+  CompleteDeploymentRecord,
+  DeploymentProjectLinkData,
+  DeploymentRecordData,
+  DeploymentStatusTransitionData,
+  FailDeploymentRecord,
+  ObserveDeploymentRecord,
+} from "../../src/deployment-history.js";
 
 interface ScopedRecord {
   tenantId: string;
@@ -129,6 +138,8 @@ export class MemoryRepository implements Repository {
   readonly toolCalls = new Map<string, ToolCallData & ScopedRecord>();
   readonly repositoryLinks = new Map<string, RepositoryLinkData & ScopedRecord>();
   readonly repositoryPushes = new Map<string, RepositoryPushData & ScopedRecord>();
+  readonly deploymentProjects = new Map<string, DeploymentProjectLinkData & ScopedRecord>();
+  readonly deployments = new Map<string, DeploymentRecordData & ScopedRecord>();
   readonly workerLeaseTokens = new Map<string, string>();
   closed = false;
   #cursor = 0;
@@ -1800,6 +1811,158 @@ export class MemoryRepository implements Repository {
       .map(publicRepositoryPush);
   }
 
+  async beginDeployment(
+    scope: UserScope,
+    input: BeginDeploymentRecord,
+  ): Promise<DeploymentRecordData> {
+    const version = await this.getVersion(scope, input.versionId);
+    if (!version || version.chatId !== input.chatId) throw new NotFoundError("Deployment version");
+    const existing = [...this.deployments.values()].find((deployment) => (
+      inScope(deployment, scope) && deployment.idempotencyKey === input.idempotencyKey
+    ));
+    if (existing) return publicDeployment(existing);
+    const transition: DeploymentStatusTransitionData = {
+      id: createId(),
+      deploymentId: input.id,
+      status: "pending",
+      url: null,
+      error: null,
+      createdAt: input.now,
+    };
+    const deployment: DeploymentRecordData & ScopedRecord = {
+      id: input.id,
+      chatId: input.chatId,
+      versionId: input.versionId,
+      projectLinkId: null,
+      integrationId: input.integrationId,
+      connectionId: input.connectionId,
+      provider: input.provider,
+      projectTarget: input.projectTarget,
+      environment: input.environment,
+      providerDeploymentId: null,
+      providerCreatedAt: null,
+      url: null,
+      status: "pending",
+      error: null,
+      idempotencyKey: input.idempotencyKey,
+      transitions: [transition],
+      createdAt: input.now,
+      updatedAt: input.now,
+      completedAt: null,
+      ...scope,
+    };
+    this.deployments.set(deployment.id, deployment);
+    return publicDeployment(deployment);
+  }
+
+  async completeDeployment(
+    scope: UserScope,
+    input: CompleteDeploymentRecord,
+  ): Promise<DeploymentRecordData> {
+    const deployment = this.deployments.get(input.id);
+    if (!deployment || !inScope(deployment, scope)) throw new NotFoundError("Deployment");
+    const existingProject = [...this.deploymentProjects.values()].find((project) => (
+      inScope(project, scope)
+      && project.chatId === deployment.chatId
+      && project.integrationId === deployment.integrationId
+      && project.connectionId === deployment.connectionId
+      && project.providerProjectId === input.project.id
+    ));
+    const project: DeploymentProjectLinkData & ScopedRecord = {
+      id: existingProject?.id ?? createId(),
+      chatId: deployment.chatId,
+      integrationId: deployment.integrationId,
+      connectionId: deployment.connectionId,
+      provider: deployment.provider,
+      providerProjectId: input.project.id,
+      name: input.project.name,
+      url: input.project.url,
+      createdAt: existingProject?.createdAt ?? input.observedAt,
+      updatedAt: input.observedAt,
+      ...scope,
+    };
+    this.deploymentProjects.set(project.id, project);
+    const completed = updateMemoryDeployment(
+      deployment,
+      input.deployment,
+      input.observedAt,
+      project.id,
+    );
+    this.deployments.set(completed.id, completed);
+    return publicDeployment(completed);
+  }
+
+  async failDeployment(
+    scope: UserScope,
+    input: FailDeploymentRecord,
+  ): Promise<DeploymentRecordData> {
+    const deployment = this.deployments.get(input.id);
+    if (!deployment || !inScope(deployment, scope)) throw new NotFoundError("Deployment");
+    if (deployment.status !== "pending") return publicDeployment(deployment);
+    const failed: DeploymentRecordData & ScopedRecord = {
+      ...deployment,
+      status: "failed",
+      error: input.error,
+      transitions: [...deployment.transitions, {
+        id: createId(),
+        deploymentId: deployment.id,
+        status: "failed",
+        url: deployment.url,
+        error: input.error,
+        createdAt: input.observedAt,
+      }],
+      updatedAt: input.observedAt,
+      completedAt: input.observedAt,
+    };
+    this.deployments.set(failed.id, failed);
+    return publicDeployment(failed);
+  }
+
+  async observeDeployment(
+    scope: UserScope,
+    input: ObserveDeploymentRecord,
+  ): Promise<DeploymentRecordData | null> {
+    const deployment = [...this.deployments.values()].find((candidate) => (
+      inScope(candidate, scope)
+      && candidate.integrationId === input.integrationId
+      && candidate.connectionId === input.connectionId
+      && candidate.provider === input.provider
+      && candidate.providerDeploymentId === input.deployment.id
+    ));
+    if (!deployment) return null;
+    const observed = updateMemoryDeployment(deployment, input.deployment, input.observedAt);
+    this.deployments.set(observed.id, observed);
+    return publicDeployment(observed);
+  }
+
+  async listDeploymentProjects(
+    scope: UserScope,
+    chatId: string,
+  ): Promise<DeploymentProjectLinkData[]> {
+    const chat = await this.getChat(scope, chatId);
+    if (!chat) throw new NotFoundError("Chat");
+    return [...this.deploymentProjects.values()]
+      .filter((project) => inScope(project, scope) && project.chatId === chatId)
+      .sort((left, right) => right.updatedAt.getTime() - left.updatedAt.getTime())
+      .map(publicDeploymentProject);
+  }
+
+  async listDeployments(
+    scope: UserScope,
+    input: { readonly chatId: string; readonly versionId?: string },
+  ): Promise<DeploymentRecordData[]> {
+    const chat = await this.getChat(scope, input.chatId);
+    if (!chat) throw new NotFoundError("Chat");
+    return [...this.deployments.values()]
+      .filter((deployment) => (
+        inScope(deployment, scope)
+        && deployment.chatId === input.chatId
+        && (input.versionId === undefined || deployment.versionId === input.versionId)
+      ))
+      .sort((left, right) => right.createdAt.getTime() - left.createdAt.getTime())
+      .map(publicDeployment);
+  }
+
   async createSandboxLease<Framework extends FrameworkId>(
     scope: UserScope,
     input: CreateSandboxLeaseRecord<Framework>,
@@ -1972,6 +2135,54 @@ function publicRepositoryPush(record: RepositoryPushData & ScopedRecord): Reposi
     target: { ...data.target },
     commit: data.commit ? { ...data.commit } : null,
     pullRequest: data.pullRequest ? { ...data.pullRequest } : null,
+  };
+}
+
+function publicDeploymentProject(
+  record: DeploymentProjectLinkData & ScopedRecord,
+): DeploymentProjectLinkData {
+  const { tenantId: _tenantId, userId: _userId, ...data } = record;
+  return { ...data };
+}
+
+function publicDeployment(record: DeploymentRecordData & ScopedRecord): DeploymentRecordData {
+  const { tenantId: _tenantId, userId: _userId, ...data } = record;
+  return { ...data, transitions: data.transitions.map((transition) => ({ ...transition })) };
+}
+
+function updateMemoryDeployment(
+  record: DeploymentRecordData & ScopedRecord,
+  observation: {
+    readonly id: string;
+    readonly status: DeploymentRecordData["status"];
+    readonly url: string | null;
+    readonly createdAt?: Date;
+  },
+  observedAt: Date,
+  projectLinkId = record.projectLinkId,
+): DeploymentRecordData & ScopedRecord {
+  const changed = record.status !== observation.status || record.url !== observation.url;
+  const terminal = observation.status === "ready"
+    || observation.status === "failed"
+    || observation.status === "cancelled";
+  return {
+    ...record,
+    projectLinkId,
+    providerDeploymentId: observation.id,
+    providerCreatedAt: observation.createdAt ?? record.providerCreatedAt,
+    status: observation.status,
+    url: observation.url,
+    error: null,
+    transitions: changed ? [...record.transitions, {
+      id: createId(),
+      deploymentId: record.id,
+      status: observation.status,
+      url: observation.url,
+      error: null,
+      createdAt: observedAt,
+    }] : record.transitions,
+    updatedAt: observedAt,
+    completedAt: terminal ? observedAt : null,
   };
 }
 

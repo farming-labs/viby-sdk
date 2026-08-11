@@ -73,6 +73,7 @@ test("passes the provider-neutral persistence conformance suite", async () => {
     "event-cursors",
     "source-history",
     "repository-history",
+    "deployment-history",
     "binary-projects",
     "generated-artifacts",
     "visual-artifacts",

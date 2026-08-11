@@ -24,6 +24,7 @@ import { configuredIntegrations } from "./integrations.js";
 import { ScopedDeploymentIntegrations } from "./deployment-integrations.js";
 import { ScopedRepositoryIntegrations } from "./repository-integrations.js";
 import type { UserScope } from "./types.js";
+import type { DeploymentHistoryStore } from "./deployment-history.js";
 import { assertIdentifier, createId, sha256 } from "./utils.js";
 
 const AUTHORIZATION_SESSION_MS = 10 * 60 * 1_000;
@@ -87,12 +88,12 @@ export class IntegrationClient {
     }
   }
 
-  forUser(scope: UserScope): ScopedIntegrations {
+  forUser(scope: UserScope, deploymentHistory?: DeploymentHistoryStore): ScopedIntegrations {
     const normalized = {
       tenantId: assertIdentifier(scope.tenantId, "tenantId"),
       userId: assertIdentifier(scope.userId, "userId"),
     };
-    return new ScopedIntegrations(this, normalized);
+    return new ScopedIntegrations(this, normalized, deploymentHistory);
   }
 
   async callback(request: Request | string): Promise<CompleteIntegrationAuthorizationResult> {
@@ -471,9 +472,13 @@ export class ScopedIntegrations {
   readonly repository: ScopedRepositoryIntegrations;
   readonly deployment: ScopedDeploymentIntegrations;
 
-  constructor(client: IntegrationClient, scope: UserScope) {
+  constructor(
+    client: IntegrationClient,
+    scope: UserScope,
+    deploymentHistory?: DeploymentHistoryStore,
+  ) {
     this.repository = new ScopedRepositoryIntegrations(client, scope);
-    this.deployment = new ScopedDeploymentIntegrations(client, scope);
+    this.deployment = new ScopedDeploymentIntegrations(client, scope, deploymentHistory);
   }
 }
 

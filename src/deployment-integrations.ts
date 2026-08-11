@@ -24,6 +24,7 @@ import type {
   ListDeploymentProjectsInput,
 } from "./integrations.js";
 import type { UserScope } from "./types.js";
+import type { DeploymentHistoryStore } from "./deployment-history.js";
 import { assertIdentifier } from "./utils.js";
 
 export interface DeploymentIntegrationHandleOptions {
@@ -58,10 +59,16 @@ export type VersionDeployInput<ProjectOptions = never, DeployOptions = never> =
 export class ScopedDeploymentIntegrations {
   readonly #client: IntegrationClient;
   readonly #scope: UserScope;
+  readonly #history: DeploymentHistoryStore | undefined;
 
-  constructor(client: IntegrationClient, scope: UserScope) {
+  constructor(
+    client: IntegrationClient,
+    scope: UserScope,
+    history?: DeploymentHistoryStore,
+  ) {
     this.#client = client;
     this.#scope = scope;
+    this.#history = history;
   }
 
   list() {
@@ -98,6 +105,7 @@ export class ScopedDeploymentIntegrations {
       this.#scope,
       assertIdentifier(integrationId, "Deployment integration id"),
       options.connectionId,
+      this.#history,
     );
   }
 }
@@ -112,12 +120,14 @@ export class DeploymentIntegrationHandle<ProjectOptions = never, DeployOptions =
   readonly #scope: UserScope;
   readonly #adapter: DeploymentIntegration<ProjectOptions, DeployOptions>;
   readonly #connectionId: string | undefined;
+  readonly #history: DeploymentHistoryStore | undefined;
 
   constructor(
     client: IntegrationClient,
     scope: UserScope,
     integrationId: string,
     connectionId?: string,
+    history?: DeploymentHistoryStore,
   ) {
     this.#client = client;
     this.#scope = scope;
@@ -129,6 +139,7 @@ export class DeploymentIntegrationHandle<ProjectOptions = never, DeployOptions =
     this.provider = this.#adapter.provider;
     this.displayName = this.#adapter.displayName;
     this.#connectionId = connectionId;
+    this.#history = history;
     this.projects = new DeploymentProjectOperations(this);
     this.deployments = new DeploymentOperations(this);
   }
@@ -164,6 +175,19 @@ export class DeploymentIntegrationHandle<ProjectOptions = never, DeployOptions =
       this.#connectionId,
       signal,
     );
+  }
+
+  async observe(
+    deployment: DeploymentData,
+    context: IntegrationOperationContext,
+  ): Promise<void> {
+    await this.#history?.observeDeployment(this.#scope, {
+      integrationId: this.id,
+      connectionId: context.connectionId,
+      provider: this.provider,
+      deployment,
+      observedAt: new Date(),
+    });
   }
 
   async run<Result>(
@@ -242,17 +266,21 @@ export class DeploymentOperations {
   }
 
   get(input: GetDeploymentInput, signal?: AbortSignal): Promise<DeploymentData | null> {
-    return this.#handle.run("get deployment", signal, (adapter, context) => (
-      adapter.getDeployment(input, context)
-    ));
+    return this.#handle.run("get deployment", signal, async (adapter, context) => {
+      const deployment = await adapter.getDeployment(input, context);
+      if (deployment) await this.#handle.observe(deployment, context);
+      return deployment;
+    });
   }
 
   cancel(input: CancelDeploymentInput, signal?: AbortSignal): Promise<DeploymentData> {
-    return this.#handle.run("cancel deployment", signal, (adapter, context) => {
+    return this.#handle.run("cancel deployment", signal, async (adapter, context) => {
       if (!adapter.cancelDeployment) {
         throw new ConfigurationError(`${adapter.displayName} does not support deployment cancellation.`);
       }
-      return adapter.cancelDeployment(input, context);
+      const deployment = await adapter.cancelDeployment(input, context);
+      await this.#handle.observe(deployment, context);
+      return deployment;
     });
   }
 }
