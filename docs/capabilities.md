@@ -87,7 +87,7 @@ Preview URLs exist only when the configured adapter exposes port URLs and the ho
 | Included repository adapter | GitHub App installation/user verification, short-lived token refresh and revocation, source reads, exact Git Data tree pushes, branches, and pull requests |
 | Deployment workflows | connected provider handles for projects, immutable-version deployment, stable retry idempotency, status lookup, URLs, and optional cancellation |
 | Deployment conformance | reusable disposable-project suite covering creation, idempotent deployment, lookup, and cancellation |
-| Included deployment adapter | external Vercel Integration authorization, team-scoped project discovery/creation, SHA-addressed text and binary uploads, metadata-backed retry recovery, custom environments, status, URLs, and cancellation |
+| Included deployment adapters | Vercel external-integration authorization with source deployment and cancellation; Cloudflare OAuth with multi-account Pages discovery, Wrangler-compatible prebuilt asset uploads, durable retry recovery, status, and URLs |
 
 Product authentication, provider-app registration, redirect routes, event scheduling, and transport infrastructure remain host-owned. Viby stores tenant-scoped provider connections and delivery state but does not run a hidden queue or scheduler.
 
@@ -108,7 +108,8 @@ Product authentication, provider-app registration, redirect routes, event schedu
 ## Deliberately outside the current release
 
 - Bitbucket repository provider adapter;
-- Cloudflare deployment adapter plus managed preview hosting;
+- provider-neutral deployment preparation for building source before prebuilt-asset providers;
+- managed preview hosting;
 - managed authentication, billing, Postgres, workers, queues, secrets, or a Viby API key.
 
 The categorized contracts, durable connection lifecycle, repository orchestration, and deployment orchestration are shipped without pretending that a specific deployment vendor is present. Provider features enter through explicit adapters without weakening the framework-, runtime-, model-, or vendor-neutral boundary.
