@@ -80,6 +80,7 @@ test("upgrades a historical v0.2 schema without losing tenant data", {
       "0019_generated_artifacts",
       "0020_visual_artifacts",
       "0021_project_artifacts",
+      "0022_integration_connections",
     ]);
     assert.equal((await getMigrationStatus(databaseUrl.toString())).every((entry) => entry.applied), true);
     assert.deepEqual(await migrateDatabase(databaseUrl.toString()), []);
@@ -106,6 +107,8 @@ test("upgrades a historical v0.2 schema without losing tenant data", {
         visualArtifacts: string | null;
         projectArtifacts: string | null;
         projectArtifactColumn: boolean;
+        integrationConnections: string | null;
+        integrationSecrets: string | null;
       }[]>`
         SELECT
           to_regclass('viby.outbound_event_deliveries')::text AS deliveries,
@@ -134,6 +137,8 @@ test("upgrades a historical v0.2 schema without losing tenant data", {
           to_regclass('viby.generated_artifacts')::text AS "generatedArtifacts",
           to_regclass('viby.visual_artifacts')::text AS "visualArtifacts",
           to_regclass('viby.project_artifacts')::text AS "projectArtifacts",
+          to_regclass('viby.integration_connections')::text AS "integrationConnections",
+          to_regclass('viby.integration_secrets')::text AS "integrationSecrets",
           EXISTS (
             SELECT 1 FROM information_schema.columns
             WHERE table_schema = 'viby' AND table_name = 'version_files'
@@ -151,6 +156,8 @@ test("upgrades a historical v0.2 schema without losing tenant data", {
       assert.equal(row?.visualArtifacts, "viby.visual_artifacts");
       assert.equal(row?.projectArtifacts, "viby.project_artifacts");
       assert.equal(row?.projectArtifactColumn, true);
+      assert.equal(row?.integrationConnections, "viby.integration_connections");
+      assert.equal(row?.integrationSecrets, "viby.integration_secrets");
     } finally {
       await inspection.end({ timeout: 5 });
     }
