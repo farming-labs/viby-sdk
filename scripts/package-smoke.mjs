@@ -110,7 +110,16 @@ try {
   const tarball = join(scratch, manifest.filename);
   await execute(
     npm,
-    ["install", "--ignore-scripts", "--no-audit", "--no-fund", "--package-lock=false", tarball],
+    [
+      "install",
+      "--ignore-scripts",
+      "--no-audit",
+      "--no-fund",
+      "--legacy-peer-deps",
+      "--omit=optional",
+      "--package-lock=false",
+      tarball,
+    ],
     { cwd: consumer, maxBuffer: 10 * 1024 * 1024 },
   );
   await execute(
