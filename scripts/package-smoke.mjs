@@ -77,6 +77,8 @@ try {
     "dist/deployment-integration-conformance.d.ts",
     "dist/integration-github.js",
     "dist/integration-github.d.ts",
+    "dist/integration-vercel.js",
+    "dist/integration-vercel.d.ts",
     "migrations/0001_initial.sql",
     "migrations/0002_durable_generations.sql",
     "migrations/0013_generation_costs.sql",
@@ -133,6 +135,20 @@ try {
         'if (typeof RepositoryIntegrationHandle !== "function") throw new Error("RepositoryIntegrationHandle export is missing");',
         'if (typeof DeploymentIntegrationHandle !== "function") throw new Error("DeploymentIntegrationHandle export is missing");',
         'if (skillRead("./skills").source !== "file") throw new Error("skillRead export is invalid");',
+      ].join("\n"),
+    ],
+    { cwd: consumer },
+  );
+  await execute(
+    node,
+    [
+      "--input-type=module",
+      "--eval",
+      [
+        'import { vercel, vercelDeployment, VercelDeploymentError } from "@viby/sdk/integrations/vercel";',
+        'if (typeof vercel !== "function") throw new Error("Vercel deployment adapter export is missing");',
+        'if (vercelDeployment !== vercel) throw new Error("Vercel deployment alias is invalid");',
+        'if (typeof VercelDeploymentError !== "function") throw new Error("Vercel deployment error export is missing");',
       ].join("\n"),
     ],
     { cwd: consumer },
