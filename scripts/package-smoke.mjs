@@ -73,6 +73,8 @@ try {
     "dist/integration-store-conformance.d.ts",
     "dist/repository-integration-conformance.js",
     "dist/repository-integration-conformance.d.ts",
+    "dist/deployment-integration-conformance.js",
+    "dist/deployment-integration-conformance.d.ts",
     "dist/integration-github.js",
     "dist/integration-github.d.ts",
     "migrations/0001_initial.sql",
@@ -111,7 +113,7 @@ try {
       "--input-type=module",
       "--eval",
       [
-        'import { accessibilityGate, configuredIntegrations, consoleErrorGate, createViby, BrowserSession, DownloadArtifact, IntegrationAuthorizationError, IntegrationClient, IntegrationOperationError, RepositoryIntegrationHandle, SandboxSession, SourceImportError, generationEventStreamResponse, openBrowserSession, openTelemetry, signedOutboundEventSink, verifySignedOutboundEvent, skillRead } from "@viby/sdk";',
+        'import { accessibilityGate, configuredIntegrations, consoleErrorGate, createViby, BrowserSession, DeploymentIntegrationHandle, DownloadArtifact, IntegrationAuthorizationError, IntegrationClient, IntegrationOperationError, RepositoryIntegrationHandle, SandboxSession, SourceImportError, generationEventStreamResponse, openBrowserSession, openTelemetry, signedOutboundEventSink, verifySignedOutboundEvent, skillRead } from "@viby/sdk";',
         'if (typeof createViby !== "function") throw new Error("createViby export is missing");',
         'if (typeof BrowserSession !== "function") throw new Error("BrowserSession export is missing");',
         'if (typeof openBrowserSession !== "function") throw new Error("openBrowserSession export is missing");',
@@ -129,6 +131,7 @@ try {
         'if (typeof IntegrationAuthorizationError !== "function") throw new Error("IntegrationAuthorizationError export is missing");',
         'if (typeof IntegrationOperationError !== "function") throw new Error("IntegrationOperationError export is missing");',
         'if (typeof RepositoryIntegrationHandle !== "function") throw new Error("RepositoryIntegrationHandle export is missing");',
+        'if (typeof DeploymentIntegrationHandle !== "function") throw new Error("DeploymentIntegrationHandle export is missing");',
         'if (skillRead("./skills").source !== "file") throw new Error("skillRead export is invalid");',
       ].join("\n"),
     ],
@@ -144,6 +147,18 @@ try {
         'if (typeof github !== "function") throw new Error("GitHub repository adapter export is missing");',
         'if (githubRepository !== github) throw new Error("GitHub repository alias is invalid");',
         'if (typeof GitHubRepositoryError !== "function") throw new Error("GitHub repository error export is missing");',
+      ].join("\n"),
+    ],
+    { cwd: consumer },
+  );
+  await execute(
+    node,
+    [
+      "--input-type=module",
+      "--eval",
+      [
+        'import { verifyDeploymentIntegration } from "@viby/sdk/integrations/deployment/conformance";',
+        'if (typeof verifyDeploymentIntegration !== "function") throw new Error("deployment integration conformance export is missing");',
       ].join("\n"),
     ],
     { cwd: consumer },

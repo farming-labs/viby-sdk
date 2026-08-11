@@ -21,6 +21,7 @@ import type {
   VibyIntegrations,
 } from "./integrations.js";
 import { configuredIntegrations } from "./integrations.js";
+import { ScopedDeploymentIntegrations } from "./deployment-integrations.js";
 import { ScopedRepositoryIntegrations } from "./repository-integrations.js";
 import type { UserScope } from "./types.js";
 import { assertIdentifier, createId, sha256 } from "./utils.js";
@@ -217,6 +218,13 @@ export class IntegrationClient {
       "repository",
       assertIdentifier(integrationId, "Repository integration id"),
     ) as RepositoryIntegration<any, any, any>;
+  }
+
+  deploymentAdapter(integrationId: string): DeploymentIntegration<any, any> {
+    return this.#adapter(
+      "deployment",
+      assertIdentifier(integrationId, "Deployment integration id"),
+    ) as DeploymentIntegration<any, any>;
   }
 
   async connections(
@@ -461,11 +469,11 @@ export class IntegrationClient {
 
 export class ScopedIntegrations {
   readonly repository: ScopedRepositoryIntegrations;
-  readonly deployment: ScopedIntegrationCategory;
+  readonly deployment: ScopedDeploymentIntegrations;
 
   constructor(client: IntegrationClient, scope: UserScope) {
     this.repository = new ScopedRepositoryIntegrations(client, scope);
-    this.deployment = new ScopedIntegrationCategory(client, scope, "deployment");
+    this.deployment = new ScopedDeploymentIntegrations(client, scope);
   }
 }
 
