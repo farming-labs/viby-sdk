@@ -1,5 +1,5 @@
 import type { LanguageModelUsage } from "ai";
-import { unzipSync } from "fflate";
+import { unzipSync, zipSync } from "fflate";
 import { createVibyWithDependencies } from "./client.js";
 import { ConfigurationError, NotFoundError } from "./errors.js";
 import type { GeneratorOutput } from "./generator.js";
@@ -21,6 +21,7 @@ export interface PersistenceConformanceReport {
     | "source-history"
     | "repository-history"
     | "deployment-history"
+    | "deployment-artifacts"
     | "binary-projects"
     | "generated-artifacts"
     | "visual-artifacts"
@@ -256,6 +257,45 @@ export async function verifyPersistenceAdapter(
       "Deployment project link was not durable.",
     );
     checks.push("deployment-history");
+
+    const deploymentArchive = zipSync({
+      "dist/index.html": new TextEncoder().encode("<!doctype html><title>Prepared</title>"),
+    });
+    const deploymentArtifact = await persistence.createDeploymentArtifact(scope, {
+      id: crypto.randomUUID(),
+      chatId: chat.id,
+      versionId: child.id,
+      deploymentId,
+      framework: child.framework,
+      sandboxProvider: "conformance-sandbox",
+      outputDirectory: "dist",
+      commands: [{
+        command: "npm",
+        args: ["run", "build"],
+        cwd: ".",
+        environment: ["PUBLIC_API_ORIGIN"],
+        timeoutMs: null,
+      }],
+      fileCount: 1,
+      bytes: deploymentArchive,
+      size: deploymentArchive.byteLength,
+      checksum: sha256(deploymentArchive),
+    });
+    const loadedDeploymentArtifact = await persistence.getDeploymentArtifact(
+      scope,
+      deploymentId,
+      deploymentArtifact.id,
+    );
+    assertConformance(
+      loadedDeploymentArtifact?.checksum === sha256(deploymentArchive),
+      "Prepared deployment output was not durable.",
+    );
+    assertConformance(
+      (await persistence.listDeployments(scope, { chatId: chat.id, versionId: child.id }))[0]
+        ?.preparationArtifactId === deploymentArtifact.id,
+      "The deployment did not retain its preparation artifact.",
+    );
+    checks.push("deployment-artifacts");
 
     const binaryBytes = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 7]);
     const binaryChat = await owner.chats.import({

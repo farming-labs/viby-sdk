@@ -66,7 +66,7 @@ import type {
   UpdateChatRecord,
   VersionPageCursor,
 } from "../../src/repository.js";
-import { createId } from "../../src/utils.js";
+import { createId, sha256 } from "../../src/utils.js";
 import { ConfigurationError, GenerationStateError, NotFoundError } from "../../src/errors.js";
 import { normalizeAndRedactToolPayload } from "../../src/redaction.js";
 import type { GenerationCostData } from "../../src/telemetry.js";
@@ -90,6 +90,11 @@ import type {
   FailDeploymentRecord,
   ObserveDeploymentRecord,
 } from "../../src/deployment-history.js";
+import type {
+  CreateDeploymentArtifactRecord,
+  DeploymentArtifactContent,
+  DeploymentArtifactData,
+} from "../../src/deployment-preparation.js";
 
 interface ScopedRecord {
   tenantId: string;
@@ -140,6 +145,7 @@ export class MemoryRepository implements Repository {
   readonly repositoryPushes = new Map<string, RepositoryPushData & ScopedRecord>();
   readonly deploymentProjects = new Map<string, DeploymentProjectLinkData & ScopedRecord>();
   readonly deployments = new Map<string, DeploymentRecordData & ScopedRecord>();
+  readonly deploymentArtifacts = new Map<string, DeploymentArtifactContent & ScopedRecord>();
   readonly workerLeaseTokens = new Map<string, string>();
   closed = false;
   #cursor = 0;
@@ -452,6 +458,11 @@ export class MemoryRepository implements Repository {
       for (const [artifactId, artifact] of this.visualArtifacts) {
         if (artifact.chatId === id && inScope(artifact, scope)) {
           this.visualArtifacts.delete(artifactId);
+        }
+      }
+      for (const [artifactId, artifact] of this.deploymentArtifacts) {
+        if (artifact.chatId === id && inScope(artifact, scope)) {
+          this.deploymentArtifacts.delete(artifactId);
         }
       }
       for (let index = this.events.length - 1; index >= 0; index -= 1) {
@@ -1834,6 +1845,7 @@ export class MemoryRepository implements Repository {
       chatId: input.chatId,
       versionId: input.versionId,
       projectLinkId: null,
+      preparationArtifactId: null,
       integrationId: input.integrationId,
       connectionId: input.connectionId,
       provider: input.provider,
@@ -1961,6 +1973,70 @@ export class MemoryRepository implements Repository {
       ))
       .sort((left, right) => right.createdAt.getTime() - left.createdAt.getTime())
       .map(publicDeployment);
+  }
+
+  async createDeploymentArtifact(
+    scope: UserScope,
+    input: CreateDeploymentArtifactRecord,
+  ): Promise<DeploymentArtifactData> {
+    const deployment = this.deployments.get(input.deploymentId);
+    if (
+      !deployment
+      || !inScope(deployment, scope)
+      || deployment.chatId !== input.chatId
+      || deployment.versionId !== input.versionId
+    ) throw new NotFoundError("Deployment");
+    const existing = [...this.deploymentArtifacts.values()].find((artifact) => (
+      inScope(artifact, scope) && artifact.deploymentId === input.deploymentId
+    ));
+    if (existing) return publicDeploymentArtifact(existing);
+    if (input.bytes.byteLength !== input.size || sha256(input.bytes) !== input.checksum) {
+      throw new ConfigurationError("Deployment artifact size or checksum is invalid.");
+    }
+    const artifact: DeploymentArtifactContent & ScopedRecord = {
+      id: input.id,
+      chatId: input.chatId,
+      versionId: input.versionId,
+      deploymentId: input.deploymentId,
+      framework: input.framework,
+      sandboxProvider: input.sandboxProvider,
+      outputDirectory: input.outputDirectory,
+      commands: input.commands.map((command) => ({
+        ...command,
+        args: [...command.args],
+        environment: [...command.environment],
+      })),
+      fileCount: input.fileCount,
+      mediaType: "application/zip",
+      size: input.size,
+      checksum: input.checksum,
+      artifact: { store: "memory", key: `deployments/${input.deploymentId}/${input.id}.zip` },
+      bytes: Uint8Array.from(input.bytes),
+      createdAt: new Date(),
+      ...scope,
+    };
+    this.deploymentArtifacts.set(artifact.id, artifact);
+    this.deployments.set(deployment.id, {
+      ...deployment,
+      preparationArtifactId: artifact.id,
+      updatedAt: artifact.createdAt,
+    });
+    return publicDeploymentArtifact(artifact);
+  }
+
+  async getDeploymentArtifact(
+    scope: UserScope,
+    deploymentId: string,
+    artifactId: string,
+  ): Promise<DeploymentArtifactContent | null> {
+    const artifact = this.deploymentArtifacts.get(artifactId);
+    if (!artifact || !inScope(artifact, scope) || artifact.deploymentId !== deploymentId) return null;
+    const deployment = this.deployments.get(deploymentId);
+    if (!deployment || !inScope(deployment, scope)) return null;
+    return {
+      ...publicDeploymentArtifact(artifact),
+      bytes: Uint8Array.from(artifact.bytes),
+    };
   }
 
   async createSandboxLease<Framework extends FrameworkId>(
@@ -2148,6 +2224,21 @@ function publicDeploymentProject(
 function publicDeployment(record: DeploymentRecordData & ScopedRecord): DeploymentRecordData {
   const { tenantId: _tenantId, userId: _userId, ...data } = record;
   return { ...data, transitions: data.transitions.map((transition) => ({ ...transition })) };
+}
+
+function publicDeploymentArtifact(
+  record: DeploymentArtifactContent & ScopedRecord,
+): DeploymentArtifactData {
+  const { tenantId: _tenantId, userId: _userId, bytes: _bytes, ...data } = record;
+  return {
+    ...data,
+    commands: data.commands.map((command) => ({
+      ...command,
+      args: [...command.args],
+      environment: [...command.environment],
+    })),
+    artifact: { ...data.artifact },
+  };
 }
 
 function updateMemoryDeployment(

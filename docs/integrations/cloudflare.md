@@ -1,6 +1,6 @@
 # Cloudflare deployment integration
 
-`@viby/sdk/integrations/cloudflare` connects each product user to their own Cloudflare account and implements the provider-neutral deployment contract with Pages Direct Upload. The host owns the Cloudflare OAuth client, callback route, database, secret-encryption key, and project build step. Viby never exposes the resulting access or refresh token to the browser, a model, or a normal application record.
+`@viby/sdk/integrations/cloudflare` connects each product user to their own Cloudflare account and implements the provider-neutral deployment contract with Pages Direct Upload. The host owns the Cloudflare OAuth client, callback route, database, secret-encryption key, sandbox, artifact store, and declarative framework build command. Viby never exposes the resulting access or refresh token to the browser, a model, or a normal application record.
 
 ## Register the OAuth client
 
@@ -24,6 +24,15 @@ import { cloudflare } from "@viby/sdk/integrations/cloudflare";
 const viby = createViby({
   framework: "farm",
   model,
+  sandbox,
+  artifactStore,
+  deployment: {
+    preparation: {
+      install: { command: "pnpm", args: ["install", "--frozen-lockfile"] },
+      build: { command: "pnpm", args: ["build"] },
+      outputDirectory: "dist",
+    },
+  },
   integrations: {
     deployment: {
       cloudflare: cloudflare({
@@ -79,7 +88,7 @@ await hosting.projects.create({
 
 ## Deploy prebuilt immutable assets
 
-Cloudflare Pages Direct Upload accepts prebuilt assets. It does not build the raw Farm, TanStack, or other framework source sent to the adapter. Run the framework's existing build contract first and include its output in the immutable version snapshot. The adapter selects `dist` by default:
+Cloudflare Pages Direct Upload accepts prebuilt assets, so the adapter declares `{ mode: "prebuilt", outputDirectory: "dist" }`. Viby automatically materializes the raw immutable version in the configured sandbox, runs the framework build contract, stores a checked immutable ZIP through `artifactStore`, and then sends the built files to Cloudflare:
 
 ```ts
 const version = await chat.latestVersion();
@@ -96,9 +105,12 @@ const deployment = await version!.deploy({
 
 deployment.status;
 deployment.url;
+
+const [record] = await version!.deployments();
+const build = record ? await version!.deploymentArtifact(record.id) : null;
 ```
 
-Use `assetsDirectory: "."` for an asset-only snapshot. If the selected directory contains no files, the adapter fails before making provider calls and explains that a build is required. It never deploys raw source as public assets. `_headers`, `_redirects`, `_routes.json`, `_worker.js`, `_worker.bundle`, and the functions routing configuration are sent through Cloudflare's dedicated multipart fields.
+Set `deployment.preparation.outputDirectory` and `providerOptions.assetsDirectory` to the same non-default directory when the framework does not emit `dist`. If the output contains no files, preparation fails before making provider calls. The raw version remains available through `version.download()` and is never changed or exposed as public assets. `_headers`, `_redirects`, `_routes.json`, `_worker.js`, `_worker.bundle`, and the functions routing configuration are sent through Cloudflare's dedicated multipart fields.
 
 The adapter uses Cloudflare's content-addressed upload protocol: Wrangler-compatible BLAKE3 hashes, missing-asset discovery, bounded batches, MIME metadata, and hash-cache upserts. Cloudflare's published Direct Upload limits are enforced by default: 20,000 files and 25 MiB per file. Hosts may lower those limits but cannot configure the adapter above the provider maximum.
 
@@ -116,4 +128,4 @@ Pages exposes deployment deletion, retry, and rollback, but not cancellation wit
 
 All operations are tenant/user scoped and require an active connection. Provider errors are wrapped by the connected handle as `IntegrationOperationError`; direct adapter consumers can inspect `CloudflareDeploymentError.status` and `.code`.
 
-The Direct Upload behavior follows Cloudflare's [prebuilt-assets requirement and limits](https://developers.cloudflare.com/pages/get-started/direct-upload/). A future provider-neutral deployment-preparation capability can build source in a selected sandbox before calling this adapter without adding framework or runtime types to the deployment contract.
+The Direct Upload behavior follows Cloudflare's [prebuilt-assets requirement and limits](https://developers.cloudflare.com/pages/get-started/direct-upload/). Preparation stays provider-neutral: the Cloudflare adapter declares only the input shape it requires, while the host chooses the framework command, sandbox implementation, and artifact store.

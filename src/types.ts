@@ -16,6 +16,7 @@ import type {
   GenerationCostData,
   VibyTelemetry,
 } from "./telemetry.js";
+import type { DeploymentPreparationConfig } from "./deployment-preparation.js";
 
 export type FrameworkId =
   | "farm"
@@ -58,6 +59,10 @@ interface VibyBaseConfig<Framework extends FrameworkId = FrameworkId> {
   readonly framework: Framework;
   /** Optional external capabilities grouped by their provider-neutral product category. */
   readonly integrations?: VibyIntegrations;
+  /** Optional sandbox build contract used when a deployment adapter requires prebuilt files. */
+  readonly deployment?: {
+    readonly preparation?: DeploymentPreparationConfig<Framework>;
+  };
   /** Advanced durable connection-state override. Omit to use PostgreSQL through DATABASE_URL. */
   readonly connectionStore?: IntegrationConnectionStore;
   /** Advanced provider-secret override. Omit to use encrypted PostgreSQL through VIBY_SECRET_KEY. */

@@ -25,6 +25,7 @@ import type {
 } from "./integrations.js";
 import type { UserScope } from "./types.js";
 import type { DeploymentHistoryStore } from "./deployment-history.js";
+import type { DeploymentPreparationInput } from "./deployment-preparation.js";
 import { assertIdentifier } from "./utils.js";
 
 export interface DeploymentIntegrationHandleOptions {
@@ -54,6 +55,8 @@ export type VersionDeployInput<ProjectOptions = never, DeployOptions = never> =
   Omit<DeploySourceInput<ProjectOptions, DeployOptions>, "idempotencyKey"> & {
     /** Defaults to a stable key derived from the immutable version and deployment target. */
     readonly idempotencyKey?: string;
+    /** Runtime-only build environment used when this provider requires prebuilt files. */
+    readonly preparation?: DeploymentPreparationInput;
   };
 
 export class ScopedDeploymentIntegrations {
@@ -114,6 +117,8 @@ export class DeploymentIntegrationHandle<ProjectOptions = never, DeployOptions =
   readonly id: string;
   readonly provider: string;
   readonly displayName: string;
+  readonly sourceMode: "source" | "prebuilt";
+  readonly outputDirectory: string | undefined;
   readonly projects: DeploymentProjectOperations<ProjectOptions>;
   readonly deployments: DeploymentOperations;
   readonly #client: IntegrationClient;
@@ -138,6 +143,8 @@ export class DeploymentIntegrationHandle<ProjectOptions = never, DeployOptions =
     >;
     this.provider = this.#adapter.provider;
     this.displayName = this.#adapter.displayName;
+    this.sourceMode = this.#adapter.source?.mode ?? "source";
+    this.outputDirectory = this.#adapter.source?.outputDirectory;
     this.#connectionId = connectionId;
     this.#history = history;
     this.projects = new DeploymentProjectOperations(this);

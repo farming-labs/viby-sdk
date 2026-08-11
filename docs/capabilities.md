@@ -88,6 +88,7 @@ Preview URLs exist only when the configured adapter exposes port URLs and the ho
 | Included repository adapters | GitHub App installation/user verification, short-lived token refresh and revocation, and exact Git Data pushes; Bitbucket Cloud OAuth, rotating refresh tokens, workspace discovery, binary-safe source commits, branches, and pull requests |
 | Deployment workflows | connected provider handles for projects, immutable-version deployment, stable retry idempotency, status lookup, URLs, and optional cancellation |
 | Deployment history | durable chat-to-project links, version-bound deployment records, restart-safe idempotency, provider IDs and URLs, failures, and ordered status transitions |
+| Deployment preparation | adapter-declared source/prebuilt input; capability-gated sandbox install/build, immutable external build artifact, artifact reuse on retries, and unchanged raw-source downloads |
 | Deployment conformance | reusable disposable-project suite covering creation, idempotent deployment, lookup, and cancellation |
 | Included deployment adapters | Vercel external-integration authorization with source deployment and cancellation; Cloudflare OAuth with multi-account Pages discovery, Wrangler-compatible prebuilt asset uploads, durable retry recovery, status, and URLs |
 
@@ -110,7 +111,6 @@ Product authentication, provider-app registration, redirect routes, event schedu
 ## Deliberately outside the current release
 
 - Bitbucket repository provider adapter;
-- provider-neutral deployment preparation for building source before prebuilt-asset providers;
 - managed preview hosting;
 - managed authentication, billing, Postgres, workers, queues, secrets, or a Viby API key.
 
