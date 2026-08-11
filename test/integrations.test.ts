@@ -39,8 +39,16 @@ function repositoryIntegration(provider = "github"): RepositoryIntegration {
       };
     },
     async listBranches() { return { items: [], nextCursor: null }; },
+    async getBranch() { return null; },
     async createBranch(input) {
       return { name: input.name, head: input.from, protected: false };
+    },
+    async readSource(input) {
+      const repository = await this.createRepository({
+        ...input.repository,
+        visibility: "private",
+      }, {} as never);
+      return { repository, ref: input.ref, commit: "commit", files: [] };
     },
     async pushVersion(input) {
       return {

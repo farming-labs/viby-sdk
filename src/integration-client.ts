@@ -21,6 +21,7 @@ import type {
   VibyIntegrations,
 } from "./integrations.js";
 import { configuredIntegrations } from "./integrations.js";
+import { ScopedRepositoryIntegrations } from "./repository-integrations.js";
 import type { UserScope } from "./types.js";
 import { assertIdentifier, createId, sha256 } from "./utils.js";
 
@@ -194,6 +195,28 @@ export class IntegrationClient {
 
   configured(category: IntegrationCategory): readonly ConfiguredIntegration[] {
     return configuredIntegrations(this.#config).filter((item) => item.category === category);
+  }
+
+  async statuses(
+    scope: UserScope,
+    category: IntegrationCategory,
+  ): Promise<readonly ConfiguredIntegrationStatus[]> {
+    const connections = await this.connections(scope, category);
+    return this.configured(category).map((integration) => {
+      const matching = connections.filter((connection) => connection.integrationId === integration.id);
+      return {
+        ...integration,
+        connections: matching,
+        connected: matching.some((connection) => connection.status === "active"),
+      };
+    });
+  }
+
+  repositoryAdapter(integrationId: string): RepositoryIntegration<any, any, any> {
+    return this.#adapter(
+      "repository",
+      assertIdentifier(integrationId, "Repository integration id"),
+    ) as RepositoryIntegration<any, any, any>;
   }
 
   async connections(
@@ -437,11 +460,11 @@ export class IntegrationClient {
 }
 
 export class ScopedIntegrations {
-  readonly repository: ScopedIntegrationCategory;
+  readonly repository: ScopedRepositoryIntegrations;
   readonly deployment: ScopedIntegrationCategory;
 
   constructor(client: IntegrationClient, scope: UserScope) {
-    this.repository = new ScopedIntegrationCategory(client, scope, "repository");
+    this.repository = new ScopedRepositoryIntegrations(client, scope);
     this.deployment = new ScopedIntegrationCategory(client, scope, "deployment");
   }
 }
@@ -458,15 +481,7 @@ export class ScopedIntegrationCategory {
   }
 
   async list(): Promise<readonly ConfiguredIntegrationStatus[]> {
-    const connections = await this.#client.connections(this.#scope, this.#category);
-    return this.#client.configured(this.#category).map((integration) => {
-      const matching = connections.filter((connection) => connection.integrationId === integration.id);
-      return {
-        ...integration,
-        connections: matching,
-        connected: matching.some((connection) => connection.status === "active"),
-      };
-    });
+    return this.#client.statuses(this.#scope, this.#category);
   }
 
   connections(integrationId?: string): Promise<readonly IntegrationConnectionData[]> {

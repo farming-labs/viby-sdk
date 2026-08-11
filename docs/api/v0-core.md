@@ -128,7 +128,7 @@ Viby separates a portable tool call from the credentialed connection used to ful
 - The host supplies tool implementations and authorizes each external effect.
 - Viby operations can be registered as scoped MCP tools; MCP transport, discovery registries, OAuth grants, refresh tokens, and connection storage remain host-owned.
 - Signed event sinks ship durable generation events through an app-owned transport with stable IDs, HMAC verification, leases, retries, dead letters, and redrive; endpoint CRUD and scheduling remain app-owned.
-- Deployment and Git provider credentials stay in their future adapters and never enter model context by default.
+- Deployment and Git provider credentials stay behind the explicit connection and secret-store boundary and never enter model context by default.
 
 ## Prioritized parity backlog
 
@@ -140,7 +140,7 @@ Visual evaluation workflows are shipped on the provider-neutral browser contract
 
 Persistence is also provider-neutral: `DATABASE_URL` selects the built-in PostgreSQL implementation, while `persistence` accepts a host-owned durable adapter verified by the reusable conformance suite. Custom adapters retain responsibility for their own transactions, migrations, credentials, and binary-store integration.
 
-1. Durable connection workflows and explicit Git and deployment implementations on the shipped categorized integration contracts.
+1. GitHub and Bitbucket adapters for the shipped repository workflows, plus provider-neutral deployment workflows and vendor adapters.
 
 ## Persistence rules
 

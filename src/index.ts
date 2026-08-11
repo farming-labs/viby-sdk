@@ -22,6 +22,22 @@ export {
   ScopedIntegrationCategory,
   ScopedIntegrations,
 } from "./integration-client.js";
+export {
+  RepositoryBranchOperations,
+  RepositoryIntegrationHandle,
+  RepositoryOperations,
+  RepositoryOwnerOperations,
+  RepositoryPullRequestOperations,
+  ScopedRepositoryIntegrations,
+  pushVersionSource,
+} from "./repository-integrations.js";
+export type {
+  PushVersionRepositoryInput,
+  PushVersionRepositoryResult,
+  RepositoryImportInput,
+  RepositoryImportSource,
+  RepositoryIntegrationHandleOptions,
+} from "./repository-integrations.js";
 export type {
   IntegrationConnectionStore,
   SecretStore,
@@ -59,6 +75,7 @@ export type {
   DeploymentProjectData,
   DeploymentStatus,
   GetDeploymentInput,
+  GetRepositoryBranchInput,
   IntegrationAuthorizationCompleteInput,
   IntegrationAuthorizationContext,
   IntegrationAuthorizationRequest,
@@ -79,6 +96,7 @@ export type {
   MergeRepositoryPullRequestInput,
   PushRepositoryVersionInput,
   PushRepositoryVersionResult,
+  ReadRepositorySourceInput,
   RepositoryBranchData,
   RepositoryCommitData,
   RepositoryData,
@@ -89,6 +107,8 @@ export type {
   RepositoryPullRequestData,
   RepositoryPullRequestStatus,
   RepositoryReference,
+  RepositorySourceData,
+  RepositorySourceReference,
   RepositoryVisibility,
   VibyIntegrations,
 } from "./integrations.js";
@@ -185,6 +205,7 @@ export {
   GenerationTaskRequiredError,
   IntegrationAuthorizationError,
   IntegrationConnectionRequiredError,
+  IntegrationOperationError,
   NotFoundError,
   OutboundEventDeliveryError,
   OutboundEventSignatureError,

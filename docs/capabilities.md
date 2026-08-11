@@ -82,6 +82,8 @@ Preview URLs exist only when the configured adapter exposes port URLs and the ho
 | Integration contracts | categorized `integrations.repository` and `integrations.deployment` configuration with provider-neutral authorization, repository, branch, commit, pull-request, project, and deployment adapter types |
 | Provider connections | tenant/user-scoped PostgreSQL metadata, hashed single-use authorization state, callback substitution protection, refresh, reconnect, local revocation, and provider selection discovery |
 | Integration secrets | standalone secret-store contract plus an AES-256-GCM PostgreSQL default keyed by `VIBY_SECRET_KEY`; credentials never enter normal SDK records |
+| Repository workflows | connected provider handles for owners, repositories, branches, source import, complete immutable snapshot pushes, optimistic conflicts, pull requests, and optional merges |
+| Repository conformance | reusable disposable-repository suite covering discovery, source round-trips, pushes, stale-head conflicts, and pull requests |
 
 Product authentication, provider-app registration, redirect routes, event scheduling, and transport infrastructure remain host-owned. Viby stores tenant-scoped provider connections and delivery state but does not run a hidden queue or scheduler.
 
@@ -101,8 +103,8 @@ Product authentication, provider-app registration, redirect routes, event schedu
 
 ## Deliberately outside the current release
 
-- Git repository push, branch, commit, and pull-request runtime workflows and provider adapters;
+- GitHub and Bitbucket repository provider adapters;
 - deployment runtime workflows, provider adapters, and managed preview hosting;
 - managed authentication, billing, Postgres, workers, queues, secrets, or a Viby API key.
 
-The categorized contracts and durable connection lifecycle are shipped without pretending that vendor external effects already run. Provider features enter through explicit adapters without weakening the framework-, runtime-, model-, or vendor-neutral boundary.
+The categorized contracts, durable connection lifecycle, and repository orchestration are shipped without pretending that a specific vendor adapter is present. Provider features enter through explicit adapters without weakening the framework-, runtime-, model-, or vendor-neutral boundary.
