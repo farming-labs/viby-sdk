@@ -1,0 +1,22 @@
+{
+  "name": "@viby/example-integrations",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "db:migrate": "node --env-file-if-exists=.env ../../dist/cli.js db migrate",
+    "start": "node --env-file-if-exists=.env --import tsx src/server.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@ai-sdk/openai": "^4.0.30",
+    "@viby/sdk": "file:../.."
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.2",
+    "tsx": "^4.23.7",
+    "typescript": "^7.0.2"
+  }
+}
