@@ -77,6 +77,8 @@ try {
     "dist/deployment-integration-conformance.d.ts",
     "dist/integration-github.js",
     "dist/integration-github.d.ts",
+    "dist/integration-bitbucket.js",
+    "dist/integration-bitbucket.d.ts",
     "dist/integration-vercel.js",
     "dist/integration-vercel.d.ts",
     "dist/integration-cloudflare.js",
@@ -137,6 +139,20 @@ try {
         'if (typeof RepositoryIntegrationHandle !== "function") throw new Error("RepositoryIntegrationHandle export is missing");',
         'if (typeof DeploymentIntegrationHandle !== "function") throw new Error("DeploymentIntegrationHandle export is missing");',
         'if (skillRead("./skills").source !== "file") throw new Error("skillRead export is invalid");',
+      ].join("\n"),
+    ],
+    { cwd: consumer },
+  );
+  await execute(
+    node,
+    [
+      "--input-type=module",
+      "--eval",
+      [
+        'import { bitbucket, bitbucketRepository, BitbucketRepositoryError } from "@viby/sdk/integrations/bitbucket";',
+        'if (typeof bitbucket !== "function") throw new Error("Bitbucket repository adapter export is missing");',
+        'if (bitbucketRepository !== bitbucket) throw new Error("Bitbucket repository alias is invalid");',
+        'if (typeof BitbucketRepositoryError !== "function") throw new Error("Bitbucket repository error export is missing");',
       ].join("\n"),
     ],
     { cwd: consumer },
