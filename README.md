@@ -134,6 +134,22 @@ if (pushed.status === "conflict") {
 
 Adapters receive a complete immutable source snapshot, including artifact-backed binary files. `expectedHead` provides portable optimistic concurrency for later iterations. Adapter authors can run `verifyRepositoryIntegration` from `@viby/sdk/integrations/repository/conformance` against a disposable provider repository. The included GitHub adapter uses a verified GitHub App installation flow and is documented in [GitHub integration setup](./docs/integrations/github.md).
 
+Deployment uses the same connected-handle pattern and exists only when the product configures an adapter:
+
+```ts
+const hosting = user.integrations.deployment.use("vercel");
+const deployment = await version.deploy({
+  using: hosting,
+  project: { name: "analytics-dashboard", createIfMissing: true },
+  environment: "preview",
+});
+
+deployment.status;
+deployment.url; // null until the provider has a URL
+```
+
+`version.deploy(...)` sends the selected immutable text and binary source snapshot. Its default idempotency key is stable for the version, integration, project, and environment, so a safe retry does not create another provider effect. Project creation remains explicit through `createIfMissing`. Use `provider.projects`, `provider.deployments.get(...)`, and `provider.deployments.cancel(...)` for the rest of the lifecycle. Adapter authors can run `verifyDeploymentIntegration` from `@viby/sdk/integrations/deployment/conformance`.
+
 Binary attachments use a separate provider-neutral artifact store so PostgreSQL retains only queryable ownership, media metadata, checksums, and opaque storage references. The filesystem adapter is a reference implementation for development or hosts with a durable mounted volume:
 
 ```ts
@@ -973,7 +989,7 @@ Included now:
 Planned as separate capabilities later:
 
 - Bitbucket repository provider adapter
-- deployment implementations on the categorized integration contracts
+- Vercel and Cloudflare deployment provider adapters
 - managed Viby infrastructure
 
 ## Development

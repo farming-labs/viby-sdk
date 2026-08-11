@@ -85,6 +85,8 @@ Preview URLs exist only when the configured adapter exposes port URLs and the ho
 | Repository workflows | connected provider handles for owners, repositories, branches, source import, complete immutable snapshot pushes, optimistic conflicts, pull requests, and optional merges |
 | Repository conformance | reusable disposable-repository suite covering discovery, source round-trips, pushes, stale-head conflicts, and pull requests |
 | Included repository adapter | GitHub App installation/user verification, short-lived token refresh and revocation, source reads, exact Git Data tree pushes, branches, and pull requests |
+| Deployment workflows | connected provider handles for projects, immutable-version deployment, stable retry idempotency, status lookup, URLs, and optional cancellation |
+| Deployment conformance | reusable disposable-project suite covering creation, idempotent deployment, lookup, and cancellation |
 
 Product authentication, provider-app registration, redirect routes, event scheduling, and transport infrastructure remain host-owned. Viby stores tenant-scoped provider connections and delivery state but does not run a hidden queue or scheduler.
 
@@ -105,7 +107,7 @@ Product authentication, provider-app registration, redirect routes, event schedu
 ## Deliberately outside the current release
 
 - Bitbucket repository provider adapter;
-- deployment runtime workflows, provider adapters, and managed preview hosting;
+- Vercel and Cloudflare deployment adapters plus managed preview hosting;
 - managed authentication, billing, Postgres, workers, queues, secrets, or a Viby API key.
 
-The categorized contracts, durable connection lifecycle, and repository orchestration are shipped without pretending that a specific vendor adapter is present. Provider features enter through explicit adapters without weakening the framework-, runtime-, model-, or vendor-neutral boundary.
+The categorized contracts, durable connection lifecycle, repository orchestration, and deployment orchestration are shipped without pretending that a specific deployment vendor is present. Provider features enter through explicit adapters without weakening the framework-, runtime-, model-, or vendor-neutral boundary.

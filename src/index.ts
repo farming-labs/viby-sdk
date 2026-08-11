@@ -31,6 +31,20 @@ export {
   ScopedRepositoryIntegrations,
   pushVersionSource,
 } from "./repository-integrations.js";
+export {
+  DeploymentIntegrationHandle,
+  DeploymentOperations,
+  DeploymentProjectOperations,
+  ScopedDeploymentIntegrations,
+  deployVersionSource,
+  deploymentTargetIdentity,
+} from "./deployment-integrations.js";
+export type {
+  DeploymentIntegrationHandleOptions,
+  DeploymentProjectTarget,
+  DeploySourceInput,
+  VersionDeployInput,
+} from "./deployment-integrations.js";
 export type {
   PushVersionRepositoryInput,
   PushVersionRepositoryResult,

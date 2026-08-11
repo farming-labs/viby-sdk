@@ -110,6 +110,10 @@
       "types": "./dist/repository-integration-conformance.d.ts",
       "import": "./dist/repository-integration-conformance.js"
     },
+    "./integrations/deployment/conformance": {
+      "types": "./dist/deployment-integration-conformance.d.ts",
+      "import": "./dist/deployment-integration-conformance.js"
+    },
     "./integrations/github": {
       "types": "./dist/integration-github.d.ts",
       "import": "./dist/integration-github.js"

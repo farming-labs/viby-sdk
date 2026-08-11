@@ -158,8 +158,17 @@ import {
   type TelemetrySpan,
   type VibyTelemetry,
 } from "./telemetry.js";
-import { configuredIntegrations } from "./integrations.js";
+import {
+  configuredIntegrations,
+  type DeploymentData,
+  type IntegrationSourceFile,
+} from "./integrations.js";
 import { IntegrationClient } from "./integration-client.js";
+import {
+  deployVersionSource,
+  deploymentTargetIdentity,
+  type VersionDeployInput,
+} from "./deployment-integrations.js";
 import {
   pushVersionSource,
   type PushVersionRepositoryInput,
@@ -1453,24 +1462,31 @@ export class Version<Framework extends FrameworkId = FrameworkId> {
     input: PushVersionRepositoryInput<PushOptions, PullRequestOptions>,
   ): Promise<PushVersionRepositoryResult> {
     if (!input) throw new ConfigurationError("A repository push target is required.");
-    const entries = await this.entries();
-    const materialized = await materializeVersionEntries(
+    return pushVersionSource(await materializeVersionSourceFiles(
       this.#dependencies.repository,
       this.#dependencies.scope,
       this.id,
-      entries,
-    );
-    const mediaTypes = new Map(entries.map((entry) => [entry.path, entry.mediaType]));
-    return pushVersionSource(materialized.map((file) => {
-      const mediaType = mediaTypes.get(file.path);
-      return {
-        path: file.path,
-        content: typeof file.content === "string"
-          ? new TextEncoder().encode(file.content)
-          : new Uint8Array(file.content),
-        ...(mediaType ? { mediaType } : {}),
-      };
-    }), input);
+      await this.entries(),
+    ), input);
+  }
+
+  /** Deploys this immutable source snapshot through a connected deployment integration. */
+  async deploy<ProjectOptions = never, DeployOptions = never>(
+    input: VersionDeployInput<ProjectOptions, DeployOptions>,
+  ): Promise<DeploymentData> {
+    if (!input) throw new ConfigurationError("A deployment target is required.");
+    const idempotencyKey = input.idempotencyKey?.trim() || `viby-${sha256([
+      this.id,
+      input.using.id,
+      deploymentTargetIdentity(input.project),
+      String(input.environment),
+    ].join("\0")).slice(0, 48)}`;
+    return deployVersionSource(await materializeVersionSourceFiles(
+      this.#dependencies.repository,
+      this.#dependencies.scope,
+      this.id,
+      await this.entries(),
+    ), { ...input, idempotencyKey });
   }
 
   async sandbox(options: SandboxOpenOptions = {}): Promise<SandboxSession> {
@@ -1661,6 +1677,26 @@ async function materializeVersionEntries(
     if (!artifact) throw new NotFoundError("Project artifact");
     return { path: entry.path, content: artifact.bytes };
   }));
+}
+
+async function materializeVersionSourceFiles(
+  repository: Repository,
+  scope: UserScope,
+  versionId: string,
+  entries: readonly VersionEntry[],
+): Promise<IntegrationSourceFile[]> {
+  const materialized = await materializeVersionEntries(repository, scope, versionId, entries);
+  const mediaTypes = new Map(entries.map((entry) => [entry.path, entry.mediaType]));
+  return materialized.map((file) => {
+    const mediaType = mediaTypes.get(file.path);
+    return {
+      path: file.path,
+      content: typeof file.content === "string"
+        ? new TextEncoder().encode(file.content)
+        : new Uint8Array(file.content),
+      ...(mediaType ? { mediaType } : {}),
+    };
+  });
 }
 
 async function assertActiveChat<Framework extends FrameworkId>(
