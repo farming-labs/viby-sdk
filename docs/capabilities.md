@@ -79,6 +79,7 @@ Preview URLs exist only when the configured adapter exposes port URLs and the ho
 | Generated artifacts | durable images, audio, video, documents, and binary outputs with ownership, checksums, artifact-store references, and resumable creation events |
 | Binary project entries | immutable artifact-backed source paths with scoped external bytes across import, edits, history, sandbox materialization, and ZIP downloads |
 | Design evaluation | immutable version-bound rubric results, criterion scores, validated source/attachment/visual-artifact evidence, metadata, and cursor pagination |
+| Integration contracts | categorized `integrations.repository` and `integrations.deployment` configuration with provider-neutral authorization, repository, branch, commit, pull-request, project, and deployment adapter types |
 
 Authentication, OAuth connection registries, event scheduling, and transport infrastructure remain host-owned. Viby stores delivery state but does not run a hidden queue or scheduler.
 
@@ -98,8 +99,8 @@ Authentication, OAuth connection registries, event scheduling, and transport inf
 
 ## Deliberately outside the current release
 
-- Git repository push, branch, commit, and pull-request adapters;
-- deployment adapters, provider connections, and managed preview hosting;
+- Git repository push, branch, commit, and pull-request runtime workflows and provider adapters;
+- deployment runtime workflows, provider connections, provider adapters, and managed preview hosting;
 - managed authentication, billing, Postgres, workers, queues, secrets, or a Viby API key.
 
-These are absent contracts, not runtime stubs. Future provider features should enter through portable core interfaces and explicit adapters without weakening the framework-, runtime-, model-, or vendor-neutral boundary.
+The categorized integration contracts are shipped without pretending that vendor authorization or external effects already run. Provider features enter through these explicit adapters without weakening the framework-, runtime-, model-, or vendor-neutral boundary.

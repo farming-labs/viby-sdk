@@ -4,6 +4,7 @@ import type { ArtifactReference, ArtifactStore } from "./artifact-store.js";
 import type { BrowserAdapter } from "./browser.js";
 import type { PersistenceAdapter } from "./persistence.js";
 import type { OutboundEventSink } from "./outbound-events.js";
+import type { VibyIntegrations } from "./integrations.js";
 import type {
   SandboxAdapter,
   SandboxCommandPolicy,
@@ -54,6 +55,8 @@ export type SkillGroups = {
 
 interface VibyBaseConfig<Framework extends FrameworkId = FrameworkId> {
   readonly framework: Framework;
+  /** Optional external capabilities grouped by their provider-neutral product category. */
+  readonly integrations?: VibyIntegrations;
   /** Custom durable state implementation. Omit to use PostgreSQL through DATABASE_URL. */
   readonly persistence?: PersistenceAdapter;
   /** External byte storage for attachments and generated binary artifacts. */

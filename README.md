@@ -896,13 +896,15 @@ Included now:
 - durable approval-gated sandbox actions with exact-action, idempotent resume
 - signed outbound events with durable retries, dead letters, inspection, and redrive
 - provider-neutral telemetry hooks, OpenTelemetry adaptation, and durable cost attribution
+- categorized provider-neutral repository and deployment integration contracts
 - migration immutability plus schema-upgrade and public-API compatibility fixtures
 - a complete framework-neutral reference host for chat, stream, preview, iteration, and download
 
 Planned as separate capabilities later:
 
-- deployment presets and provider connections
-- GitHub export and pull requests
+- durable provider connections and authorization callbacks
+- repository push and pull-request implementations on the categorized integration contracts
+- deployment implementations on the categorized integration contracts
 - managed Viby infrastructure
 
 ## Development
