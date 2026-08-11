@@ -110,7 +110,6 @@ Product authentication, provider-app registration, redirect routes, event schedu
 
 ## Deliberately outside the current release
 
-- Bitbucket repository provider adapter;
 - managed preview hosting;
 - managed authentication, billing, Postgres, workers, queues, secrets, or a Viby API key.
 
