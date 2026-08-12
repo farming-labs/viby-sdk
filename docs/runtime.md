@@ -32,6 +32,7 @@ Node-specific behavior lives behind dedicated entry points:
 | PostgreSQL migration helpers | `@viby/sdk/node/migrations` |
 | local files and skills.sh/GitHub skill resolution | `@viby/sdk/node/skills` |
 | filesystem artifacts | `@viby/sdk/artifact/filesystem` |
+| S3-compatible artifacts | `@viby/sdk/storage/s3` or `@viby/sdk/artifact/s3` |
 | local Docker sandbox | `@viby/sdk/sandbox/docker` |
 | Playwright browser | `@viby/sdk/browser/playwright` |
 | provider integrations and sandboxes | their existing explicit provider subpaths |

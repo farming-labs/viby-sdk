@@ -23,6 +23,7 @@ import {
   type VibyStorage,
 } from "@viby/sdk";
 import { postgres } from "@viby/sdk/storage/postgres";
+import { s3 } from "@viby/sdk/storage/s3";
 import { registerVibyMcpTools } from "@viby/sdk/mcp";
 
 declare const model: LanguageModel;
@@ -105,4 +106,5 @@ void exerciseShippedApi;
 void exposeMcp;
 void signedOutboundEventSink;
 void postgres;
+void s3;
 void storage;

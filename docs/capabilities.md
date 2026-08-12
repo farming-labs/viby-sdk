@@ -13,7 +13,7 @@ This inventory describes the current `@viby/sdk` source on `main`. “Shipped”
 | Categorized skills | skills.sh slugs, `skillRead(...)` directories, inline snapshots, and provider-neutral resolvers | host selects; Viby resolves and snapshots exact content |
 | Categorized storage | `storage.database`, `storage.artifacts`, `storage.connections`, and `storage.secrets`; `DATABASE_URL` remains the PostgreSQL shortcut | host selects each provider-neutral implementation independently |
 | Structured database | provider-neutral database factory or raw `PersistenceAdapter` plus conformance suite | host may provide another durable implementation and owns its credentials and migrations |
-| Binary artifact storage | provider-neutral `ArtifactStore`, conformance suite, and filesystem reference adapter | host selects storage and owns its credentials; the database keeps metadata and opaque references |
+| Binary artifact storage | provider-neutral `ArtifactStore`, conformance suite, filesystem reference adapter, and S3-compatible adapter for AWS S3, R2, MinIO, and compatible stores | host selects storage and owns its credentials; the database keeps metadata and opaque references |
 | Tenant isolation | `viby.forUser({ tenantId, userId })` | host authenticates; every Viby query enforces both IDs |
 | Viby API key | none | no managed Viby control plane is required |
 

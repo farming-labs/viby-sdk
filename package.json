@@ -87,6 +87,14 @@
       "types": "./dist/artifact-filesystem.d.ts",
       "import": "./dist/artifact-filesystem.js"
     },
+    "./storage/s3": {
+      "types": "./dist/artifact-s3.d.ts",
+      "import": "./dist/artifact-s3.js"
+    },
+    "./artifact/s3": {
+      "types": "./dist/artifact-s3.d.ts",
+      "import": "./dist/artifact-s3.js"
+    },
     "./artifact/conformance": {
       "types": "./dist/artifact-store-conformance.d.ts",
       "import": "./dist/artifact-store-conformance.js"
@@ -201,6 +209,7 @@
     "zod": "^4.4.3"
   },
   "peerDependencies": {
+    "@aws-sdk/client-s3": "^3.1108.0",
     "@axe-core/playwright": "^4.12.1",
     "@cloudflare/sandbox": "^0.12.5",
     "@daytona/sdk": "^0.203.0",
@@ -211,6 +220,9 @@
     "playwright": "^1.62.1"
   },
   "peerDependenciesMeta": {
+    "@aws-sdk/client-s3": {
+      "optional": true
+    },
     "@axe-core/playwright": {
       "optional": true
     },
@@ -237,6 +249,7 @@
     }
   },
   "devDependencies": {
+    "@aws-sdk/client-s3": "^3.1108.0",
     "@axe-core/playwright": "^4.12.1",
     "@cloudflare/sandbox": "^0.12.5",
     "@daytona/sdk": "^0.203.0",
