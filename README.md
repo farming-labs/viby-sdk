@@ -180,6 +180,8 @@ await source.disconnect();
 
 Viby hashes single-use callback state, persists connection metadata with `storage.database`, and stores opaque authorization sessions and credentials only through `storage.secrets`. Credential resolution occurs inside the adapter boundary immediately before a selected source lists or calls tools. Products still own provider app registration, redirect routing, and user authentication.
 
+`createVibyApi()` exposes the same lifecycle through `/tool-sources`, `/chats/:chatId/tool-sources`, and the public `/tool-sources/callback` route. `createVibyWebClient()` mirrors those operations through `client.toolSources` and `client.chats.toolSources`.
+
 PostgreSQL remains the zero-configuration structured database: omit `storage.database`, set `DATABASE_URL`, and run `viby db migrate`. Storage is grouped by what Viby stores, while each value remains a provider-neutral adapter:
 
 ```ts

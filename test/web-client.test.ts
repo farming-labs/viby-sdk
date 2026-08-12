@@ -5,6 +5,7 @@ import { createVibyApi } from "../src/api-host.js";
 import { createVibyWithDependencies } from "../src/client.js";
 import type { GeneratorInput, GeneratorOutput, ProjectGenerator } from "../src/generator.js";
 import { SkillResolver } from "../src/skills.js";
+import { defineToolSourceAdapter } from "../src/tool-source-registry.js";
 import type { VersionFile } from "../src/types.js";
 import { sha256 } from "../src/utils.js";
 import {
@@ -12,6 +13,7 @@ import {
   VibyApiClientError,
 } from "../src/web-client.js";
 import { MemoryRepository } from "./helpers/memory-repository.js";
+import { MemorySecretStore } from "./helpers/memory-integration-store.js";
 
 const usage: LanguageModelUsage = {
   inputTokens: 10,
@@ -44,8 +46,37 @@ class WebClientGenerator implements ProjectGenerator<"farm"> {
 }
 
 test("consumes the Web API host through typed chat, stream, preview, and download operations", async () => {
+  const secrets = new MemorySecretStore();
+  const toolAdapter = defineToolSourceAdapter<"farm">({
+    type: "web-oauth",
+    authorization: {
+      provider: "web-oauth-provider",
+      async startAuthorization(input) {
+        return {
+          url: `https://provider.example/oauth?state=${encodeURIComponent(input.state)}`,
+          expiresAt: new Date(Date.now() + 60_000),
+        };
+      },
+      async completeAuthorization() {
+        return {
+          account: { id: "web-account", name: "Web account" },
+          credential: {
+            secret: new TextEncoder().encode("web-access-token"),
+            scopes: ["tools:read"],
+            expiresAt: null,
+          },
+        };
+      },
+    },
+    open: ({ source }) => ({ id: source.id, list: async () => [], call: async () => null }),
+  });
   const viby = createVibyWithDependencies(
-    { framework: "farm", model: "test/web-client" as LanguageModel },
+    {
+      framework: "farm",
+      model: "test/web-client" as LanguageModel,
+      storage: { secrets },
+      tools: { adapters: { "web-oauth": toolAdapter } },
+    },
     {
       repository: new MemoryRepository(),
       generator: new WebClientGenerator(),
@@ -105,6 +136,44 @@ test("consumes the Web API host through typed chat, stream, preview, and downloa
 
     const listed = await client.chats.list({ metadata: { workspace: "design" } });
     assert.deepEqual(listed.chats.map((chat) => chat.id), [created.chat.id]);
+
+    const registered = await client.toolSources.create({
+      type: "web-oauth",
+      name: "Web tools",
+      configuration: { endpoint: "https://tools.example" },
+    });
+    assert.equal(registered.toolSource.status, "active");
+    const selected = await client.chats.toolSources.set(created.chat.id, [registered.toolSource.id]);
+    assert.deepEqual(selected.toolSources.map((source) => source.id), [registered.toolSource.id]);
+    assert.deepEqual(
+      (await client.chats.toolSources.list(created.chat.id)).toolSources.map((source) => source.id),
+      [registered.toolSource.id],
+    );
+    const authorization = await client.toolSources.connect(registered.toolSource.id, {
+      callbackUrl: "https://app.example/api/viby/tool-sources/callback",
+      returnTo: "/settings/tools",
+    });
+    assert.equal(authorization.result.status, "authorization-required");
+    if (authorization.result.status !== "authorization-required") return;
+    const state = new URL(authorization.result.url).searchParams.get("state");
+    assert.ok(state);
+    const callback = await api.fetch(new Request(
+      `https://app.example/api/viby/tool-sources/callback?state=${encodeURIComponent(state)}&code=approved`,
+    ));
+    assert.equal(callback.status, 200);
+    assert.equal((await client.toolSources.connection(registered.toolSource.id)).connection?.status, "active");
+    assert.equal((await client.toolSources.list({ type: "web-oauth" })).toolSources.length, 1);
+    assert.equal((await client.toolSources.update(registered.toolSource.id, {
+      name: "Updated web tools",
+    })).toolSource.name, "Updated web tools");
+    assert.equal(
+      (await client.toolSources.disconnect(registered.toolSource.id)).result.connection.status,
+      "revoked",
+    );
+    assert.equal(
+      (await client.toolSources.archive(registered.toolSource.id)).toolSource.status,
+      "archived",
+    );
   } finally {
     await viby.close();
   }

@@ -15,7 +15,7 @@ const api = createVibyApi({
 });
 ```
 
-The host owns authentication. Returning `null` produces a JSON `401`; returning a `Response` preserves a product-specific redirect or denial. Every resource route after authentication uses the returned tenant/user scope. The integration callback is deliberately public because its hashed, single-use authorization state establishes the original scope.
+The host owns authentication. Returning `null` produces a JSON `401`; returning a `Response` preserves a product-specific redirect or denial. Every resource route after authentication uses the returned tenant/user scope. Integration and tool-source callbacks are deliberately public because their hashed, single-use authorization state establishes the original scope.
 
 ## Typed Web client
 
@@ -41,6 +41,13 @@ for await (const event of viby.generations.stream(generation.id)) {
 
 const state = await viby.generations.get(generation.id);
 const source = await viby.chats.versions.download(chat.id, state.version!.id);
+
+const tools = await viby.toolSources.create({
+  type: "mcp",
+  name: "Company tools",
+  configuration: { endpoint: "https://tools.example.com/mcp" },
+});
+await viby.chats.toolSources.set(chat.id, [tools.toolSource.id]);
 ```
 
 Pass `after` to `generations.stream()` when restoring a cursor from application storage. The client sends it as `Last-Event-ID`, updates it after each event, and reconnects a prematurely closed retryable stream without replaying acknowledged events. Authentication remains host-owned: use `headers`, a header factory, or a custom `fetch` implementation to attach the product session.
@@ -60,6 +67,7 @@ All paths are relative to `basePath` (default `/api/viby`).
 | `GET /chats/:chatId/attachments/:attachmentId` | stream private attachment bytes with verified metadata headers |
 | `GET /chats/:chatId/environment` | list public and redacted environment-variable records |
 | `PUT/DELETE /chats/:chatId/environment/:environment/:name` | set or delete a scoped variable or secret |
+| `GET/PUT /chats/:chatId/tool-sources` | list or replace the chat's explicit durable tool-source selection |
 | `GET /chats/:chatId/{repository-links,repository-pushes}` | reload durable repository connection and push history |
 | `GET /chats/:chatId/{deployment-projects,deployments}` | reload durable deployment project and deployment history |
 | `GET /chats/:chatId/versions` | list immutable versions |
@@ -81,6 +89,11 @@ All paths are relative to `basePath` (default `/api/viby`).
 | `POST /generations/:generationId/resume` | resume an interrupted attempt |
 | `POST /generations/:generationId/tasks/:taskId` | resolve a typed plan, question, or permission task |
 | `GET/POST /integrations/callback` | complete a provider authorization through durable state |
+| `GET/POST /tool-sources/callback` | complete tool-source authorization through durable single-use state |
+| `GET/POST /tool-sources` | list/filter registrations or create a public credential-free registration |
+| `GET/PATCH/DELETE /tool-sources/:sourceId` | load, update, disable, or archive a registration |
+| `GET /tool-sources/:sourceId/connection` | inspect redacted connection metadata |
+| `POST /tool-sources/:sourceId/{connect,disconnect}` | authorize, reconnect, or revoke a source connection |
 | `GET /integrations[/:category]` | list configured repository/deployment adapters and connection state |
 | `GET/POST/DELETE /integrations/:category/:id/{connections,connect}` | inspect, authorize, or revoke user connections |
 | `GET/POST /integrations/repository/:id/{owners,repositories,branches,pull-requests}` | drive provider-neutral repository selection and PR workflows |
@@ -94,6 +107,8 @@ Generation JSON accepts `prompt`, `model`, `instructions`, categorized `skills`,
 Project imports use `{ source: { type: "files", files } }`, `{ source: { type: "zip", base64 } }`, or `{ source: { type: "repository", integrationId, connectionId?, repository, ref } }`. Binary file entries carry `type: "artifact"` and `base64`; text entries carry `content`. Repository credentials remain in the selected integration adapter and never enter the request or response.
 
 Provider workflow routes accept only provider-neutral fields at the stable boundary. Vendor-specific options, when needed, stay inside `providerOptions`. Push and deployment effects execute against one immutable version and use the SDK's durable idempotency and history records.
+
+Tool-source routes accept only public registration configuration. `connect` returns either an existing healthy connection or a provider authorization URL; callback state restores the original tenant/user scope without a product session. Connection responses never contain credential bytes or secret-store references.
 
 ## Preview boundary
 
