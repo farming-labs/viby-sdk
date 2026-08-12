@@ -347,6 +347,8 @@ test("persists typed ordered message parts with message, generation, and attempt
   assert.equal(messages.length, 2);
   const user = messages.find((message) => message.role === "user")!;
   const assistant = messages.find((message) => message.role === "assistant")!;
+  assert.equal(user.finishReason, null);
+  assert.equal(assistant.finishReason, "stop");
   assert.deepEqual(user.parts.map((part) => part.type), ["text"]);
   assert.deepEqual(assistant.parts.map((part) => part.type), [
     "file-edit",

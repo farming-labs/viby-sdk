@@ -275,6 +275,7 @@ interface MessageRow {
   generation_id: string | null;
   role: "user" | "assistant";
   content: string;
+  finish_reason: string | null;
   created_at: Date;
 }
 
@@ -1673,6 +1674,7 @@ export class PostgresRepository implements Repository {
         attemptId: input.attemptId,
         role: "assistant",
         content: input.assistantMessage,
+        finishReason: input.finishReason,
         parts: input.assistantParts,
       });
       await sql`
@@ -1789,6 +1791,7 @@ export class PostgresRepository implements Repository {
         attemptId: input.attemptId,
         role: "assistant",
         content: input.task.message,
+        finishReason: input.finishReason,
         parts: input.assistantParts,
       });
       await sql`
@@ -2412,7 +2415,7 @@ export class PostgresRepository implements Repository {
   async listMessages(scope: UserScope, chatId: string): Promise<MessageData[]> {
     await this.assertReady();
     const rows = await this.#sql<MessageRow[]>`
-      SELECT id, chat_id, generation_id, role, content, created_at
+      SELECT id, chat_id, generation_id, role, content, finish_reason, created_at
       FROM viby.messages
       WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId} AND chat_id = ${chatId}
       ORDER BY created_at, id
@@ -2423,7 +2426,7 @@ export class PostgresRepository implements Repository {
   async getMessage(scope: UserScope, chatId: string, id: string): Promise<MessageData | null> {
     await this.assertReady();
     const rows = await this.#sql<MessageRow[]>`
-      SELECT id, chat_id, generation_id, role, content, created_at
+      SELECT id, chat_id, generation_id, role, content, finish_reason, created_at
       FROM viby.messages
       WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
         AND chat_id = ${chatId} AND id = ${id}
@@ -2611,7 +2614,7 @@ export class PostgresRepository implements Repository {
     await this.assertReady();
     const rows = after
       ? await this.#sql<MessageRow[]>`
-          SELECT id, chat_id, generation_id, role, content, created_at
+          SELECT id, chat_id, generation_id, role, content, finish_reason, created_at
           FROM viby.messages
           WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
             AND chat_id = ${chatId}
@@ -2626,7 +2629,7 @@ export class PostgresRepository implements Repository {
           LIMIT ${limit + 1}
         `
       : await this.#sql<MessageRow[]>`
-          SELECT id, chat_id, generation_id, role, content, created_at
+          SELECT id, chat_id, generation_id, role, content, finish_reason, created_at
           FROM viby.messages
           WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
             AND chat_id = ${chatId}
@@ -3832,6 +3835,7 @@ function mapMessage(
     generationId: row.generation_id,
     role: row.role,
     content: row.content,
+    finishReason: row.finish_reason,
     parts,
     attachments,
     createdAt: row.created_at,
@@ -4083,6 +4087,7 @@ async function insertMessage(
     readonly attemptId: string;
     readonly role: "user" | "assistant";
     readonly content: string;
+    readonly finishReason?: string | null;
     readonly parts: readonly MessagePartInput[];
     readonly attachments?: readonly StoredAttachmentInput[];
   },
@@ -4090,10 +4095,10 @@ async function insertMessage(
   const messageId = createId();
   await sql`
     INSERT INTO viby.messages (
-      id, tenant_id, user_id, chat_id, generation_id, role, content
+      id, tenant_id, user_id, chat_id, generation_id, role, content, finish_reason
     ) VALUES (
       ${messageId}, ${scope.tenantId}, ${scope.userId}, ${input.chatId},
-      ${input.generationId}, ${input.role}, ${input.content}
+      ${input.generationId}, ${input.role}, ${input.content}, ${input.finishReason ?? null}
     )
   `;
   for (const [position, part] of input.parts.entries()) {
