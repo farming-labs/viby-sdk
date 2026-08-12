@@ -19,6 +19,7 @@ export * from "./storage.js";
 export * from "./telemetry.js";
 export * from "./tool-source.js";
 export * from "./api-host.js";
+export * from "./web-client.js";
 
 export type * from "./browser.js";
 export type * from "./deployment-history.js";

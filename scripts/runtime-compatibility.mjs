@@ -33,6 +33,7 @@ while (pending.length > 0) {
 const core = await import(pathToFileURL(entry).href);
 assert.equal(typeof core.generationEventStreamResponse, "function");
 assert.equal(typeof core.defineSkillResolver, "function");
+assert.equal(typeof core.createVibyWebClient, "function");
 
 const source = {
   async *stream() {

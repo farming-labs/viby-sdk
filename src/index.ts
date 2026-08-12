@@ -45,6 +45,13 @@ export { AgentWorkspace } from "./agent-workspace.js";
 export { AgentProjectGenerator } from "./agent-runner.js";
 export { defineGenerationEngine } from "./generation-engine.js";
 export { createVibyApi, vibyApi } from "./api-host.js";
+export {
+  createVibyWebClient,
+  VibyApiClientError,
+  VibyStreamDisconnectedError,
+  VibyStreamProtocolError,
+} from "./web-client.js";
+export type * from "./web-client.js";
 export type {
   VibyApi,
   VibyApiAuthenticationResult,
