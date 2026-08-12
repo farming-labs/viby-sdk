@@ -23,7 +23,7 @@ Status meanings:
 | Source state | Read, replace, download, and restore current chat files | Read, change, download, fork, and restore immutable versions |
 | Preview | Hosted VM preview with a short-lived access token | Optional sandbox-backed preview session; never guaranteed by core |
 | Deployment | Creates and deploys a Vercel project | Future deployment adapter; no vendor identifiers in core records |
-| Tools | Hosted MCP server connections and agent actions | Shipped provider-neutral durable tool calls and source workspace tools plus host-owned connections and credentials |
+| Tools | Hosted MCP server connections and agent actions | Shipped provider-neutral durable tool sources, per-chat selection, permission policy, source workspace tools, and host-owned credentials |
 | Identity | v0 account/team, privacy, and write permissions | Host passes `tenantId` and `userId`; authorization stays app-owned |
 
 v0 v2 removed public version resources. Viby intentionally keeps immutable versions because deterministic downloads, branching, restoration, auditability, and provider-independent source history are core SDK properties. Applications may still present the simpler v0-style model by treating `chat.latestVersion()` as current workspace state.
@@ -38,7 +38,7 @@ The official v2 documentation organizes the API around these resources and endpo
 | Chat files | get, update, download, and restore from a message | immutable version files, changes, downloads, and restore are core |
 | Preview and deployment | get preview, create Vercel project, deploy chat | preview belongs behind sandbox capability checks; provider-neutral project and deployment workflows ship with Vercel and Cloudflare adapters |
 | Messages | list, get, send sync/async/streaming, resolve task sync/async/streaming, restore message | portable message history, parts, generation modes, tasks, and restore belong in core |
-| MCP servers | list, create, get, update, delete, and OAuth authorization | host-owned connection registry; portable tools may be passed into Viby without Viby owning OAuth |
+| MCP servers | list, create, get, update, delete, and OAuth authorization | shipped inbound MCP client adapter with host-owned catalog and OAuth lifecycle; outbound Viby MCP server adapter |
 | Webhooks | list, create, get, update, and delete | signed provider-neutral event sinks over the durable cursor; endpoint registry remains app-owned |
 
 ## Chats and generation
@@ -125,8 +125,9 @@ Viby separates a portable tool call from the credentialed connection used to ful
 
 - Core may define typed tools, calls, results, approval tasks, and durable events.
 - Typed calls and results, attempt/message ownership, redaction, and external-effect idempotency are shipped in core.
-- The host supplies tool implementations and authorizes each external effect.
-- Viby operations can be registered as scoped MCP tools; MCP transport, discovery registries, OAuth grants, refresh tokens, and connection storage remain host-owned.
+- The host supplies tool sources, per-chat selection, and policy; Viby durably gates, records, and idempotently resumes external effects.
+- The MCP client adapter supports Streamable HTTP and custom transports while resolving credentials inside transport factories. Discovery registries, OAuth grants, refresh tokens, and connection storage remain host-owned.
+- Viby operations can also be registered as scoped MCP server tools.
 - Signed event sinks ship durable generation events through an app-owned transport with stable IDs, HMAC verification, leases, retries, dead letters, and redrive; endpoint CRUD and scheduling remain app-owned.
 - Deployment and Git provider credentials stay behind the explicit connection and secret-store boundary and never enter model context by default.
 - Project environment variables use a provider-neutral metadata store plus the same isolated secret-store boundary. Secret values resolve only for an explicitly selected sandbox/build/deployment environment.

@@ -28,6 +28,7 @@ import { normalizeProjectPath, sha256 } from "./utils.js";
 import { ConfigurationError } from "./errors.js";
 import { applySourceChanges, normalizeSourceChanges } from "./source-changes.js";
 import type { SandboxSession } from "./sandbox.js";
+import type { ToolSourceContext } from "./tool-source.js";
 
 const MAX_PROJECT_FILES = 250;
 const MAX_FILE_BYTES = 1_500_000;
@@ -95,6 +96,8 @@ export interface GeneratorInput<Framework extends FrameworkId = FrameworkId> {
   readonly tasks: readonly GenerationTaskData[];
   readonly attachments?: readonly AttachmentContent[];
   readonly sandbox?: SandboxSession;
+  /** Durable identity and chat metadata supplied by Viby, never model-authored. */
+  readonly toolContext?: ToolSourceContext<Framework>;
 }
 
 export interface GeneratorProjectOutput {

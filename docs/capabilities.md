@@ -71,7 +71,9 @@ Preview URLs exist only when the configured adapter exposes port URLs and the ho
 
 | Capability | Shipped surface |
 | --- | --- |
-| MCP | `registerVibyMcpTools` exposes scoped chats, generations, events, task resolution, versions, iteration, and downloads through the official MCP server SDK |
+| Inbound tools | provider-neutral sources, per-chat selection, read/write/external effects, stable idempotency, durable permission tasks, and redacted call records |
+| MCP client | Streamable HTTP and custom-transport adapter with per-chat connection isolation and credentials resolved only inside the transport factory |
+| MCP server | `registerVibyMcpTools` exposes scoped chats, generations, events, task resolution, versions, iteration, and downloads through the official MCP server SDK |
 | Outbound events | signed CloudEvents-style envelopes with stable IDs and constant-time verification |
 | Durable delivery | database claims, retry backoff, lease fencing, inspection, dead letters, and explicit redrive |
 | HTTP streaming | `Last-Event-ID` parsing, standard SSE frames, request abort propagation, and Web `Response` headers |

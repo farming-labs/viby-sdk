@@ -86,6 +86,35 @@ const viby = createViby({
 
 Resolver locators and metadata are persisted with generation configuration, and exact resolved files are snapshotted once per generation. Credentials belong inside the resolver implementation, never in a reference or returned skill file.
 
+Inbound tools use the same provider-neutral pattern. Configure named sources once, then select them from durable chat metadata and apply one policy before a tool is exposed to the default agent:
+
+```ts
+import { mcp } from "@viby/sdk/tools/mcp";
+
+const viby = createViby({
+  framework: "farm",
+  model,
+  tools: {
+    sources: {
+      docs: mcp({ id: "docs", url: "https://docs.example.com/mcp" }),
+      private: mcp({
+        id: "private",
+        url: "https://tools.example.com/mcp",
+        headers: async ({ tenantId, userId }) => ({
+          Authorization: `Bearer ${await credentials.forUser(tenantId, userId)}`,
+        }),
+      }),
+    },
+    select: ({ context }) => context.metadata.toolset === "private"
+      ? ["docs", "private"]
+      : ["docs"],
+    policy: ({ tool }) => tool.effect === "read" ? "allow" : "approval-required",
+  },
+});
+```
+
+The core `ToolSource` contract also supports application catalogs, database-backed tools, and other protocols. MCP credentials remain inside the adapter callback. Viby gives every effectful call a stable idempotency key, persists redacted arguments/results, and resumes an approval-required call only after its permission task is resolved. Install the optional `@modelcontextprotocol/client` peer only when using the MCP adapter.
+
 PostgreSQL remains the zero-configuration structured database: omit `storage.database`, set `DATABASE_URL`, and run `viby db migrate`. Storage is grouped by what Viby stores, while each value remains a provider-neutral adapter:
 
 ```ts
@@ -871,7 +900,7 @@ savedCursor = page.cursor;
 
 The helper emits a CloudEvents-style JSON envelope and signs `timestamp.eventId.body` with HMAC-SHA256. It includes key ID, timestamp, event ID, and `v1` signature headers. Rotate keys through `keyId`, keep signing secrets server-side, reject timestamps outside your chosen replay window, and use `verifySignedOutboundEvent` for constant-time verification. Secrets and transport response bodies are never persisted.
 
-## Expose scoped MCP tools
+## Expose scoped Viby operations as MCP tools
 
 Install the optional official server package and register tools against an already-authenticated Viby scope:
 
