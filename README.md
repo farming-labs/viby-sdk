@@ -2,7 +2,7 @@
 
 `@viby/sdk` is a framework-agnostic TypeScript SDK for building persistent, skill-guided vibe coding products. Your application owns authentication, model credentials, and Postgres. Viby owns chats, durable generation attempts and events, typed tasks, immutable source versions, iteration, and source downloads.
 
-See the [shipped capability inventory](./docs/capabilities.md) for the complete core, adapter, integration, verification, and boundary matrix.
+See the [shipped capability inventory](./docs/capabilities.md) for the complete core, adapter, integration, verification, and boundary matrix. The [Web API host guide](./docs/api-host.md) documents the ready-to-mount Request/Response surface.
 
 ## Install
 
@@ -862,6 +862,28 @@ return generationEventStreamResponse(generation, { request });
 ```
 
 The helper reads `Last-Event-ID`, emits normal `id`, `event`, and JSON `data` fields, sends an SSE retry hint, propagates request cancellation, and returns a Web-standard `Response`.
+
+For a complete product API, mount the Web-standard host in any server or framework:
+
+```ts
+import { createVibyApi } from "@viby/sdk";
+
+const api = createVibyApi({
+  viby,
+  basePath: "/api/viby",
+  authenticate: async (request) => {
+    const session = await auth.session(request);
+    return session
+      ? { tenantId: session.organizationId, userId: session.userId }
+      : new Response("Unauthorized", { status: 401 });
+  },
+  preview: async ({ version }) => previewService.open(version),
+});
+
+export const fetch = (request: Request) => api.fetch(request);
+```
+
+It covers chat listing/creation/update/deletion, messages, generation status and control, resumable SSE and event pages, permission-task resolution, versions, iteration, ZIP downloads, public integration callbacks, and an optional host-owned preview handler. JSON attachments use `{ filename, mediaType, base64 }`. Authentication, sessions, CORS, rate limits, and preview infrastructure remain product-owned. The complete reference application mounts this helper at `/api`.
 
 Agent trace parts use four lifecycle events: `part.started`, `part.delta`, `part.completed`, and `part.failed`. Started events establish a stable part id, type, and trace position; deltas append live display data; completion carries the typed durable part; and failures carry a redaction-safe error. Completed trace parts retain the same id in the final assistant message. Saving the normal generation cursor is sufficient to resume both lifecycle and trace events.
 
