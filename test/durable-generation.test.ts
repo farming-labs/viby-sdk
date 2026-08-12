@@ -184,6 +184,7 @@ test("streams resumable typed agent trace part lifecycles into the durable messa
   assert.equal(resumed.events.some((event) => event.type === "part.delta"), true);
 
   const assistant = (await chat.listMessages()).items.find((message) => message.role === "assistant")!;
+  assert.equal(assistant.finishReason, "stop");
   const searchPart = assistant.parts.find((part) => part.type === "search");
   assert.ok(searchPart);
   assert.equal(searchPart.id, started.data.partId);
@@ -397,6 +398,7 @@ test("persists and resolves plan, question, and permission tasks before completi
   ));
   assert.equal(waitingMessages.length, 3);
   assert.ok(waitingMessages.every((message) => message.parts[0]?.type === "status"));
+  assert.ok(waitingMessages.every((message) => message.finishReason === "stop"));
   assert.deepEqual(
     (await generation.tasks()).map((task) => [task.kind, task.status]),
     [["plan", "resolved"], ["question", "resolved"], ["permission", "resolved"]],

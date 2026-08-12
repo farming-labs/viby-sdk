@@ -112,6 +112,7 @@ interface MemoryMessageInput {
   readonly attemptId: string;
   readonly role: "user" | "assistant";
   readonly content: string;
+  readonly finishReason?: string | null;
   readonly parts: readonly MessagePartInput[];
   readonly createdAt: Date;
   readonly attachments?: CreateGenerationRecord["attachments"];
@@ -978,6 +979,7 @@ export class MemoryRepository implements Repository {
       attemptId: input.attemptId,
       role: "assistant",
       content: input.assistantMessage,
+      finishReason: input.finishReason,
       parts: input.assistantParts,
       createdAt: completedAt,
     });
@@ -1051,6 +1053,7 @@ export class MemoryRepository implements Repository {
       attemptId: input.attemptId,
       role: "assistant",
       content: input.task.message,
+      finishReason: input.finishReason,
       parts: input.assistantParts,
       createdAt: now,
     });
@@ -2331,6 +2334,7 @@ function createMemoryMessage(
     generationId: input.generationId,
     role: input.role,
     content: input.content,
+    finishReason: input.finishReason ?? null,
     parts,
     attachments,
     createdAt: input.createdAt,

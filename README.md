@@ -945,7 +945,7 @@ Deleted chats disappear from normal reads immediately. The default retention is 
 
 ## Render typed message parts
 
-Every message retains its plain `content` for simple transcripts and also exposes ordered, discriminated `parts` for richer agent interfaces:
+Every message retains its plain `content` for simple transcripts, exposes the assistant's nullable `finishReason`, and provides ordered, discriminated `parts` for richer agent interfaces:
 
 ```ts
 const { items: messages } = await chat.listMessages();

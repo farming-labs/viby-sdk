@@ -296,6 +296,8 @@ export interface MessageData {
   readonly generationId: string | null;
   readonly role: "user" | "assistant";
   readonly content: string;
+  /** The model completion reason for assistant messages. User and historical messages are null. */
+  readonly finishReason: string | null;
   readonly parts: readonly MessagePart[];
   readonly attachments: readonly AttachmentData[];
   readonly createdAt: Date;

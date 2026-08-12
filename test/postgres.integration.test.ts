@@ -144,6 +144,8 @@ test("persists a durable generation, iteration, events, and download in Postgres
       currency: "USD",
     });
     const generationMessages = (await chat.listMessages()).items;
+    assert.equal(generationMessages.find((message) => message.role === "user")?.finishReason, null);
+    assert.equal(generationMessages.find((message) => message.role === "assistant")?.finishReason, "stop");
     const generatedArtifacts = await generation.artifacts();
     assert.equal(generatedArtifacts.length, 1);
     assert.equal(generatedArtifacts[0]?.artifact.store, "filesystem");
@@ -270,6 +272,10 @@ test("persists a durable generation, iteration, events, and download in Postgres
     });
     assert.equal((await persistedChat.listMessages()).items.length, 4);
     const persistedMessages = (await persistedChat.listMessages()).items;
+    assert.deepEqual(
+      persistedMessages.map((message) => message.finishReason),
+      [null, "stop", null, "stop"],
+    );
     assert.equal(persistedMessages[0]?.attachments[0]?.filename, "reference.txt");
     const persistedAttachment = await persistedChat.getAttachment(
       persistedMessages[0]!.attachments[0]!.id,

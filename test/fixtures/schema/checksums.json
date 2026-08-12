@@ -23,5 +23,6 @@
   "0022_integration_connections.sql": "59dcf73877cc32b88f9354ff17ddc94776dca555e42fdde6f7693ff7d2a0cec0",
   "0023_repository_push_history.sql": "9f7a7ddf4869c59b8be70fd9f4094f5f993bf4e8a958e0575fc4fc8dd0a6a48c",
   "0024_deployment_history.sql": "43b88fde1dfd40ee1d9b2d68ca2f3a9d0e64bd5b01b2b50fb01d0f475f07f12a",
-  "0025_deployment_artifacts.sql": "69650de13099d129cc96c7bc920e5d75fd798e8d104f19a47179f68735b50b05"
+  "0025_deployment_artifacts.sql": "69650de13099d129cc96c7bc920e5d75fd798e8d104f19a47179f68735b50b05",
+  "0026_message_finish_reasons.sql": "3857f9945a4365e46877037b26dcc265f76baa8fa16181ffb82321f299092145"
 }
