@@ -15,6 +15,25 @@ export {
 } from "./skill-resolver.js";
 export { skillRead } from "./skills.js";
 export { defineDatabaseAdapter } from "./storage.js";
+export {
+  EnvironmentManager,
+  normalizeEnvironmentName,
+  normalizeEnvironmentVariableName,
+} from "./environment.js";
+export type {
+  DeleteEnvironmentVariableInput,
+  DeletedEnvironmentVariable,
+  EnvironmentConfig,
+  EnvironmentName,
+  EnvironmentVariableCollection,
+  EnvironmentVariableData,
+  EnvironmentVariableStore,
+  ListEnvironmentVariablesInput,
+  SetEnvironmentVariableInput,
+  StoredEnvironmentVariable,
+  UpsertEnvironmentVariableRecord,
+  UpsertEnvironmentVariableResult,
+} from "./environment.js";
 export type {
   DatabaseAdapter,
   DatabaseAdapterContext,

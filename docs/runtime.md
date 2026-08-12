@@ -30,6 +30,7 @@ Node-specific behavior lives behind dedicated entry points:
 | Viby client with default PostgreSQL behavior | `@viby/sdk/node` |
 | PostgreSQL database factory | `@viby/sdk/storage/postgres` |
 | PostgreSQL migration helpers | `@viby/sdk/node/migrations` |
+| PostgreSQL project-environment metadata | `@viby/sdk/environment/postgres` |
 | local files and skills.sh/GitHub skill resolution | `@viby/sdk/node/skills` |
 | filesystem artifacts | `@viby/sdk/artifact/filesystem` |
 | S3-compatible artifacts | `@viby/sdk/storage/s3` or `@viby/sdk/artifact/s3` |

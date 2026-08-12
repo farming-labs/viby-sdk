@@ -23,12 +23,14 @@ import {
   MemoryIntegrationConnectionStore,
   MemorySecretStore,
 } from "./helpers/memory-integration-store.js";
+import { MemoryEnvironmentVariableStore } from "./helpers/memory-environment-store.js";
 
 function deploymentFixture(source?: DeploymentIntegration["source"]) {
   const projects = new Map<string, DeploymentProjectData>();
   const deployments = new Map<string, DeploymentData>();
   const effects = new Map<string, string>();
   const sources = new Map<string, readonly IntegrationSourceFile[]>();
+  const environments = new Map<string, Readonly<Record<string, string>>>();
   let projectNumber = 0;
   let deploymentNumber = 0;
   const adapter: DeploymentIntegration = {
@@ -99,6 +101,7 @@ function deploymentFixture(source?: DeploymentIntegration["source"]) {
         ...file,
         content: new Uint8Array(file.content),
       })));
+      environments.set(id, { ...(input.environmentVariables ?? {}) });
       return deployment;
     },
     async getDeployment(input, context) {
@@ -114,7 +117,7 @@ function deploymentFixture(source?: DeploymentIntegration["source"]) {
       return cancelled;
     },
   };
-  return { adapter, projects, deployments, effects, sources };
+  return { adapter, projects, deployments, effects, sources, environments };
 }
 
 class BuildSandboxInstance implements SandboxInstance {
@@ -340,10 +343,12 @@ test("prepares prebuilt deployment files in a sandbox and preserves raw download
   const fixture = deploymentFixture({ mode: "prebuilt", outputDirectory: "dist" });
   const sandbox = new BuildSandboxAdapter();
   const persistence = new MemoryRepository();
+  const environmentStore = new MemoryEnvironmentVariableStore();
   const viby = createViby({
     framework: "farm",
     model: "test/mock" as LanguageModel,
     persistence,
+    environment: { store: environmentStore },
     sandbox,
     deployment: {
       preparation: { build: { command: "pnpm", args: ["build"] } },
@@ -366,6 +371,17 @@ test("prepares prebuilt deployment files in a sandbox and preserves raw download
   });
   const version = await chat.latestVersion();
   assert.ok(version);
+  await chat.environment.set({
+    environment: "preview",
+    name: "PUBLIC_API_ORIGIN",
+    value: "https://stored-api.example",
+  });
+  await chat.environment.set({
+    environment: "preview",
+    name: "SERVICE_TOKEN",
+    value: "build-and-deploy-secret",
+    secret: true,
+  });
   const provider = user.integrations.deployment.use("preview");
   assert.equal(provider.sourceMode, "prebuilt");
   assert.equal(provider.outputDirectory, "dist");
@@ -382,11 +398,15 @@ test("prepares prebuilt deployment files in a sandbox and preserves raw download
   ]);
   assert.equal(sandbox.instances.length, 1);
   assert.equal(sandbox.instances[0]?.stopCalls, 1);
-  assert.deepEqual(sandbox.creates[0]?.env, { PUBLIC_API_ORIGIN: "https://api.example" });
+  assert.deepEqual(sandbox.creates[0]?.env, {
+    PUBLIC_API_ORIGIN: "https://api.example",
+    SERVICE_TOKEN: "build-and-deploy-secret",
+  });
   assert.equal(sandbox.instances[0]?.commands[0]?.command, "pnpm");
   assert.deepEqual(sandbox.instances[0]?.commands[0]?.args, ["build"]);
   assert.deepEqual(sandbox.instances[0]?.commands[0]?.env, {
     PUBLIC_API_ORIGIN: "https://api.example",
+    SERVICE_TOKEN: "build-and-deploy-secret",
   });
   assert.equal(sandbox.instances[0]?.commands[1]?.command, "node");
   assert.equal(sandbox.instances[0]?.commands[1]?.args?.[2], "dist");
@@ -397,7 +417,13 @@ test("prepares prebuilt deployment files in a sandbox and preserves raw download
   assert.ok(artifact);
   assert.equal(artifact.sandboxProvider, "fixture-sandbox");
   assert.equal(artifact.outputDirectory, "dist");
-  assert.deepEqual(artifact.commands[0]?.environment, ["PUBLIC_API_ORIGIN"]);
+  assert.deepEqual(artifact.commands[0]?.environment, ["PUBLIC_API_ORIGIN", "SERVICE_TOKEN"]);
+  assert.deepEqual(fixture.environments.get(result.id), {
+    PUBLIC_API_ORIGIN: "https://stored-api.example",
+    SERVICE_TOKEN: "build-and-deploy-secret",
+  });
+  assert.equal(JSON.stringify(history).includes("build-and-deploy-secret"), false);
+  assert.equal(JSON.stringify(artifact).includes("build-and-deploy-secret"), false);
   assert.deepEqual(Object.keys(unzipSync(artifact.bytes)).sort(), [
     "dist/assets/app.js",
     "dist/index.html",

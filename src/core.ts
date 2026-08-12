@@ -9,6 +9,7 @@ export { MESSAGE_PART_TYPES } from "./types.js";
 export type * from "./types.js";
 
 export * from "./errors.js";
+export * from "./environment.js";
 export * from "./artifact-store.js";
 export * from "./generation-engine.js";
 export * from "./http.js";
@@ -29,4 +30,3 @@ export type * from "./repository-history.js";
 export type * from "./repository.js";
 export type * from "./sandbox.js";
 export type * from "./source-changes.js";
-

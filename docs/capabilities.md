@@ -12,6 +12,7 @@ This inventory describes the current `@viby/sdk` source on `main`. “Shipped”
 | Generation engine | public provider-neutral engine plus conformance suite | host may replace the AI SDK shortcut with any agent, model runtime, or orchestrator |
 | Categorized skills | skills.sh slugs, `skillRead(...)` directories, inline snapshots, and provider-neutral resolvers | host selects; Viby resolves and snapshots exact content |
 | Categorized storage | `storage.database`, `storage.artifacts`, `storage.connections`, and `storage.secrets`; `DATABASE_URL` remains the PostgreSQL shortcut | host selects each provider-neutral implementation independently |
+| Project environments | chat-scoped development, preview, production, and custom variables; public values plus redacted secret metadata | PostgreSQL is the default metadata store; secret bytes stay in `storage.secrets` and resolve only for runtime operations |
 | Structured database | provider-neutral database factory or raw `PersistenceAdapter` plus conformance suite | host may provide another durable implementation and owns its credentials and migrations |
 | Binary artifact storage | provider-neutral `ArtifactStore`, conformance suite, filesystem reference adapter, and S3-compatible adapter for AWS S3, R2, MinIO, and compatible stores | host selects storage and owns its credentials; the database keeps metadata and opaque references |
 | Tenant isolation | `viby.forUser({ tenantId, userId })` | host authenticates; every Viby query enforces both IDs |
@@ -91,6 +92,7 @@ Preview URLs exist only when the configured adapter exposes port URLs and the ho
 | Deployment workflows | connected provider handles for projects, immutable-version deployment, stable retry idempotency, status lookup, URLs, and optional cancellation |
 | Deployment history | durable chat-to-project links, version-bound deployment records, restart-safe idempotency, provider IDs and URLs, failures, and ordered status transitions |
 | Deployment preparation | adapter-declared source/prebuilt input; capability-gated sandbox install/build, immutable external build artifact, artifact reuse on retries, and unchanged raw-source downloads |
+| Environment injection | explicit sandbox environment selection plus automatic deployment/build selection; values never enter prompts, events, telemetry, histories, or command records |
 | Deployment conformance | reusable disposable-project suite covering creation, idempotent deployment, lookup, and cancellation |
 | Included deployment adapters | Vercel external-integration authorization with source deployment and cancellation; Cloudflare OAuth with multi-account Pages discovery, Wrangler-compatible prebuilt asset uploads, durable retry recovery, status, and URLs |
 

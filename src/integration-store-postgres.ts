@@ -257,7 +257,7 @@ export class EncryptedPostgresSecretStore implements SecretStore {
   async put(scope: UserScope, input: SecretStorePutInput): Promise<string> {
     await this.#assertReady();
     if (!(input.bytes instanceof Uint8Array) || input.bytes.byteLength === 0 || input.bytes.byteLength > 64_000) {
-      throw new ConfigurationError("Integration secrets must contain between 1 and 64,000 bytes.");
+      throw new ConfigurationError("Secrets must contain between 1 and 64,000 bytes.");
     }
     const reference = createId();
     const initializationVector = randomBytes(12);
@@ -343,7 +343,7 @@ function decodeEncryptionKey(value: string | Uint8Array | undefined): Buffer {
   }
   if (typeof value !== "string" || value.trim().length === 0) {
     throw new ConfigurationError(
-      "VIBY_SECRET_KEY is required when integrations use the default encrypted secret store.",
+      "VIBY_SECRET_KEY is required when Viby uses the default encrypted secret store.",
     );
   }
   const normalized = value.trim();

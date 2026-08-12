@@ -6,6 +6,7 @@ import {
   SandboxUnavailableError,
 } from "./errors.js";
 import type { FrameworkId, UserScope } from "./types.js";
+import type { EnvironmentName } from "./environment.js";
 import { createId, errorMessage, normalizeProjectPath, sha256 } from "./utils.js";
 
 const DEFAULT_SANDBOX_TIMEOUT_MS = 300_000;
@@ -123,6 +124,8 @@ export interface SandboxLeaseStore {
 
 export interface SandboxOpenOptions {
   readonly timeoutMs?: number;
+  /** Resolve this durable project environment before creating the sandbox. */
+  readonly environment?: EnvironmentName;
   readonly env?: Readonly<Record<string, string>>;
   readonly ports?: readonly number[];
   readonly signal?: AbortSignal;

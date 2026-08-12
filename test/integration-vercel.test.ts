@@ -258,6 +258,7 @@ test("uploads immutable source and reuses Vercel deployments by durable metadata
             { file: "index.html", sha: sha1(html), size: html.byteLength },
             { file: "public/logo.bin", sha: sha1(binary), size: binary.byteLength },
           ],
+          env: { SERVICE_TOKEN: "deployment-secret" },
           meta: { feature: "analytics", vibyIdempotencyKey: "deploy-1" },
           projectSettings: { buildCommand: "pnpm build", outputDirectory: "dist" },
         });
@@ -271,6 +272,7 @@ test("uploads immutable source and reuses Vercel deployments by durable metadata
       { path: "index.html", content: html },
       { path: "public/logo.bin", content: binary },
     ],
+    environmentVariables: { SERVICE_TOKEN: "deployment-secret" },
     providerOptions: {
       meta: { feature: "analytics" },
       skipAutoDetectionConfirmation: true,

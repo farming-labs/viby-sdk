@@ -23,6 +23,8 @@ import {
   PostgresIntegrationConnectionStore,
 } from "../src/integration-store-postgres.js";
 import type { RepositoryIntegration } from "../src/integrations.js";
+import { EnvironmentManager } from "../src/environment.js";
+import { PostgresEnvironmentVariableStore } from "../src/environment-postgres.js";
 
 const databaseUrl = process.env.TEST_DATABASE_URL;
 
@@ -37,6 +39,64 @@ const usage: LanguageModelUsage = {
   outputTokenDetails: { textTokens: 16, reasoningTokens: 0 },
   totalTokens: 24,
 };
+
+test("persists redacted project environments and encrypted secret values", {
+  skip: databaseUrl ? false : "TEST_DATABASE_URL is not configured",
+}, async () => {
+  assert.ok(databaseUrl);
+  await migrateDatabase(databaseUrl);
+  const repository = new PostgresRepository(databaseUrl);
+  const variables = new PostgresEnvironmentVariableStore({ databaseUrl });
+  const secretStore = new EncryptedPostgresSecretStore({
+    databaseUrl,
+    encryptionKey: new Uint8Array(32).fill(7),
+  });
+  const environment = new EnvironmentManager(variables, secretStore);
+  const scope = {
+    tenantId: `environment-${randomUUID()}`,
+    userId: `environment-${randomUUID()}`,
+  };
+  try {
+    const chat = await repository.createChat(scope, {
+      id: randomUUID(),
+      title: "Environment variables",
+      metadata: {},
+      framework: "farm",
+    });
+    const collection = environment.forChat(scope, chat.id);
+    await collection.set({
+      environment: "preview",
+      name: "PUBLIC_ORIGIN",
+      value: "https://preview.example",
+    });
+    await collection.set({
+      environment: "preview",
+      name: "SERVICE_TOKEN",
+      value: "postgres-encrypted-secret",
+      secret: true,
+    });
+    assert.deepEqual((await collection.list({ environment: "preview" })).map((variable) => ({
+      name: variable.name,
+      value: variable.value,
+      secret: variable.secret,
+    })), [
+      { name: "PUBLIC_ORIGIN", value: "https://preview.example", secret: false },
+      { name: "SERVICE_TOKEN", value: null, secret: true },
+    ]);
+    assert.deepEqual(await environment.resolve(scope, chat.id, "preview"), {
+      PUBLIC_ORIGIN: "https://preview.example",
+      SERVICE_TOKEN: "postgres-encrypted-secret",
+    });
+    assert.deepEqual(await environment.resolve({
+      tenantId: `other-${randomUUID()}`,
+      userId: scope.userId,
+    }, chat.id, "preview"), {});
+    await repository.deleteChat(scope, chat.id, { deletedAt: new Date(), purgeAfter: new Date() });
+    await repository.purgeDeletedChats(scope, new Date(), 10);
+  } finally {
+    await Promise.allSettled([environment.close(), secretStore.close(), repository.close()]);
+  }
+});
 
 test("persists a durable generation, iteration, events, and download in Postgres", {
   skip: databaseUrl ? false : "TEST_DATABASE_URL is not configured",

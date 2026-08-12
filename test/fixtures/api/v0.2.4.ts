@@ -13,6 +13,7 @@ import {
   type ChatData,
   type GenerationEvent,
   type GenerationOutcome,
+  type EnvironmentVariableData,
   type OutboundEventSink,
   type OpenTelemetryTracerLike,
   type SandboxAdapter,
@@ -24,6 +25,7 @@ import {
 } from "@viby/sdk";
 import { postgres } from "@viby/sdk/storage/postgres";
 import { s3 } from "@viby/sdk/storage/s3";
+import { postgresEnvironmentVariables } from "@viby/sdk/environment/postgres";
 import { registerVibyMcpTools } from "@viby/sdk/mcp";
 
 declare const model: LanguageModel;
@@ -69,6 +71,13 @@ const user = typedClient.forUser(scope);
 
 async function exerciseShippedApi(): Promise<void> {
   const chat = await user.chats.create({ title: "Compatibility", metadata: { team: "sdk" } });
+  const variable: EnvironmentVariableData = await chat.environment.set({
+    environment: "preview",
+    name: "API_ORIGIN",
+    value: "https://api.example",
+  });
+  await chat.environment.list({ environment: "preview" });
+  await chat.environment.delete({ environment: variable.environment, name: variable.name });
   await user.chats.list({ limit: 20, metadata: { team: "sdk" } });
   const generation = await chat.start({ prompt: "Build a product" });
   const request = new Request("https://example.test", {
@@ -107,4 +116,5 @@ void exposeMcp;
 void signedOutboundEventSink;
 void postgres;
 void s3;
+void postgresEnvironmentVariables;
 void storage;
