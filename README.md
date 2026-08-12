@@ -904,7 +904,7 @@ const api = createVibyApi({
 export const fetch = (request: Request) => api.fetch(request);
 ```
 
-It covers chat listing/creation/update/deletion, messages, generation status and control, resumable SSE and event pages, permission-task resolution, versions, iteration, ZIP downloads, public integration callbacks, and an optional host-owned preview handler. JSON attachments use `{ filename, mediaType, base64 }`. Authentication, sessions, CORS, rate limits, and preview infrastructure remain product-owned. The complete reference application mounts this helper at `/api`.
+It covers chat listing/creation/update/deletion, file/ZIP/repository imports, messages, generation status and control, resumable SSE and event pages, permission-task resolution, versions, iteration, private binary delivery, project environments, integration authorization and discovery, durable push/deployment workflows, ZIP downloads, public integration callbacks, and an optional host-owned preview handler. JSON attachments and binary imports use base64 only at the HTTP boundary. Provider credentials remain in adapter-owned secret storage. Authentication, sessions, CORS, rate limits, and preview infrastructure remain product-owned. The complete reference application mounts this helper at `/api`.
 
 Agent trace parts use four lifecycle events: `part.started`, `part.delta`, `part.completed`, and `part.failed`. Started events establish a stable part id, type, and trace position; deltas append live display data; completion carries the typed durable part; and failures carry a redaction-safe error. Completed trace parts retain the same id in the final assistant message. Saving the normal generation cursor is sufficient to resume both lifecycle and trace events.
 

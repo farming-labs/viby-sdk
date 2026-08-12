@@ -1,14 +1,17 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { strFromU8, unzipSync } from "fflate";
+import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
 import type { LanguageModelUsage } from "ai";
 import { createVibyApi } from "../src/api-host.js";
 import { createVibyWithDependencies } from "../src/client.js";
+import { EnvironmentManager } from "../src/environment.js";
 import type { GeneratorInput, GeneratorOutput, ProjectGenerator } from "../src/generator.js";
 import { SkillResolver } from "../src/skills.js";
 import type { VersionFile } from "../src/types.js";
 import { sha256 } from "../src/utils.js";
 import { MemoryRepository } from "./helpers/memory-repository.js";
+import { MemoryEnvironmentVariableStore } from "./helpers/memory-environment-store.js";
+import { MemorySecretStore } from "./helpers/memory-integration-store.js";
 
 const scope = { tenantId: "api-tenant", userId: "api-user" };
 const usage: LanguageModelUsage = {
@@ -64,7 +67,15 @@ test("hosts chat, message, stream, task, preview, and download flows with Web AP
   };
   const viby = createVibyWithDependencies(
     { framework: "farm", model: "test/api" as never },
-    { repository: new MemoryRepository(), generator, skillResolver: new SkillResolver({}) },
+    {
+      repository: new MemoryRepository(),
+      generator,
+      skillResolver: new SkillResolver({}),
+      environment: new EnvironmentManager(
+        new MemoryEnvironmentVariableStore(),
+        new MemorySecretStore(),
+      ),
+    },
   );
   const api = createVibyApi({
     viby,
@@ -92,6 +103,14 @@ test("hosts chat, message, stream, task, preview, and download flows with Web AP
     }, 201);
     const chatId = string(object(created.chat).id);
     const generationId = string(object(created.generation).id);
+
+    const secret = await requestJson(api, `/chats/${chatId}/environment/preview/API_TOKEN`, {
+      method: "PUT",
+      body: JSON.stringify({ value: "private-token", secret: true }),
+    });
+    assert.equal(object(secret.variable).value, null);
+    const environment = await requestJson(api, `/chats/${chatId}/environment?environment=preview`);
+    assert.deepEqual(array(environment.variables).map((value) => object(value).name), ["API_TOKEN"]);
 
     const stream = await api.fetch(request(`/generations/${generationId}/events`, {}, true));
     assert.match(stream.headers.get("content-type") ?? "", /^text\/event-stream/);
@@ -128,6 +147,18 @@ test("hosts chat, message, stream, task, preview, and download flows with Web AP
     assert.match(await (await api.fetch(request(`/generations/${iterationId}/events`, {}, true))).text(), /generation\.succeeded/);
     assert.equal(new TextDecoder().decode(inputs[1]?.attachments?.[0]?.bytes), "dense chart");
 
+    const messagesWithAttachment = await requestJson(api, `/chats/${chatId}/messages?limit=10`);
+    const attachment = array(messagesWithAttachment.messages)
+      .flatMap((message) => array(object(message).attachments))
+      .map(object)[0]!;
+    const attachmentResponse = await api.fetch(request(
+      `/chats/${chatId}/attachments/${string(attachment.id)}`,
+      {},
+      true,
+    ));
+    assert.equal(await attachmentResponse.text(), "dense chart");
+    assert.match(attachmentResponse.headers.get("content-disposition") ?? "", /brief\.txt/);
+
     const afterIteration = await requestJson(api, `/chats/${chatId}`);
     const latestVersion = object(array(afterIteration.versions)[0]);
     const latestVersionId = string(latestVersion.id);
@@ -163,6 +194,55 @@ test("hosts chat, message, stream, task, preview, and download flows with Web AP
     assert.equal(object(updated.chat).title, "Analytics workspace");
     const listed = await requestJson(api, `/chats?metadata=${encodeURIComponent(JSON.stringify({ toolset: "private" }))}`);
     assert.equal(array(listed.chats).length, 1);
+
+    const imported = await requestJson(api, "/chats/imports", {
+      method: "POST",
+      body: JSON.stringify({
+        title: "Imported assets",
+        source: {
+          type: "files",
+          files: [
+            { path: "src/main.ts", content: "export {};\n" },
+            {
+              type: "artifact",
+              path: "public/logo.bin",
+              mediaType: "application/octet-stream",
+              base64: btoa("binary-logo"),
+            },
+          ],
+        },
+      }),
+    }, 201);
+    const importedChatId = string(object(imported.chat).id);
+    const importedVersionId = string(object(imported.version).id);
+    const importedVersion = await requestJson(
+      api,
+      `/chats/${importedChatId}/versions/${importedVersionId}`,
+    );
+    const projectArtifact = array(importedVersion.entries)
+      .map(object)
+      .find((entry) => entry.type === "artifact")!;
+    const projectArtifactResponse = await api.fetch(request(
+      `/chats/${importedChatId}/versions/${importedVersionId}/artifacts/${string(projectArtifact.artifactId)}`,
+      {},
+      true,
+    ));
+    assert.equal(await projectArtifactResponse.text(), "binary-logo");
+
+    const zipped = await requestJson(api, "/chats/imports", {
+      method: "POST",
+      body: JSON.stringify({
+        source: {
+          type: "zip",
+          base64: Buffer.from(zipSync({ "README.md": strToU8("# Imported\n") })).toString("base64"),
+        },
+      }),
+    }, 201);
+    assert.equal(object(zipped.version).origin, "imported");
+
+    assert.equal(object(await requestJson(api, `/chats/${chatId}/environment/preview/API_TOKEN`, {
+      method: "DELETE",
+    })).deleted, true);
   } finally {
     await viby.close();
   }
@@ -194,6 +274,257 @@ test("handles public integration callbacks before product authentication", async
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), { provider: "vercel", connected: true });
   assert.equal(authCalls, 0);
+});
+
+test("hosts integration discovery, repository workflows, deployment workflows, and history", async () => {
+  const calls: Array<{ readonly operation: string; readonly input: unknown }> = [];
+  const version = {
+    id: "version-api",
+    chatId: "chat-api",
+    generationId: null,
+    parentVersionId: null,
+    number: 1,
+    origin: "imported",
+    framework: "farm",
+    title: "API workflows",
+    summary: "Imported source.",
+    createdAt: new Date("2026-08-12T00:00:00.000Z"),
+    push: async (input: unknown) => {
+      calls.push({ operation: "push", input });
+      return {
+        status: "pushed",
+        repository: {
+          id: "repository-1",
+          owner: "farming-labs",
+          name: "viby-app",
+          defaultBranch: "main",
+          visibility: "private",
+          url: "https://git.example/farming-labs/viby-app",
+        },
+        commit: { id: "commit-1", message: "feat: publish", branch: "feature", url: null },
+        changedFiles: 2,
+        pullRequest: null,
+      };
+    },
+    deploy: async (input: unknown) => {
+      calls.push({ operation: "deploy", input });
+      return {
+        id: "provider-deployment-1",
+        projectId: "project-1",
+        environment: "preview",
+        status: "ready",
+        url: "https://preview.example",
+        createdAt: new Date("2026-08-12T00:00:00.000Z"),
+      };
+    },
+    repositoryPushes: async () => [{ id: "push-history-1" }],
+    deployments: async () => [{ id: "deployment-history-1" }],
+    visualArtifacts: async () => [{ id: "visual-1" }],
+    getVisualArtifact: async () => ({
+      id: "visual-1",
+      filename: "preview.png",
+      mediaType: "image/png",
+      checksum: "visual-checksum",
+      bytes: new TextEncoder().encode("visual-bytes"),
+    }),
+    deploymentArtifact: async () => ({
+      id: "deployment-artifact-1",
+      mediaType: "application/zip",
+      checksum: "deployment-checksum",
+      bytes: new TextEncoder().encode("deployment-bytes"),
+    }),
+  };
+  const chat = {
+    id: "chat-api",
+    getVersion: async () => version,
+    repositoryLinks: async () => [{ id: "link-1" }],
+    repositoryPushes: async () => [{ id: "push-history-1" }],
+    deploymentProjects: async () => [{ id: "project-link-1" }],
+    deployments: async () => [{ id: "deployment-history-1" }],
+  };
+  const repositoryHandle = {
+    readSource: async (input: unknown) => {
+      calls.push({ operation: "read-source", input });
+      return {
+        repository: {
+          id: "repository-1",
+          owner: "farming-labs",
+          name: "viby-app",
+          defaultBranch: "main",
+          visibility: "private",
+          url: "https://git.example/farming-labs/viby-app",
+        },
+        ref: { branch: "main" },
+        commit: "commit-1",
+        files: [{
+          path: "src/index.ts",
+          content: new TextEncoder().encode("export {};\n"),
+          mediaType: "text/typescript",
+        }],
+      };
+    },
+    owners: { list: async () => ({ items: [{ id: "owner-1" }], nextCursor: null }) },
+    repositories: {
+      list: async (input: unknown) => {
+        calls.push({ operation: "list-repositories", input });
+        return { items: [{ id: "repository-1", owner: "farming-labs", name: "viby-app" }], nextCursor: null };
+      },
+      create: async () => ({ id: "repository-2", owner: "farming-labs", name: "new-app" }),
+    },
+    branches: {
+      list: async () => ({ items: [{ name: "main", head: "head-1" }], nextCursor: null }),
+      create: async (input: unknown) => {
+        calls.push({ operation: "create-branch", input });
+        return { name: "feature", head: "head-1", protected: false };
+      },
+    },
+    pullRequests: {
+      create: async () => ({ id: "pr-1", number: 1, status: "open" }),
+      merge: async () => ({ id: "pr-1", number: 1, status: "merged" }),
+    },
+  };
+  const deploymentHandle = {
+    projects: {
+      list: async () => ({ items: [{ id: "project-1", name: "viby-app" }], nextCursor: null }),
+      create: async () => ({ id: "project-2", name: "new-app", url: null }),
+    },
+    deployments: {
+      get: async () => ({ id: "provider-deployment-1", status: "ready" }),
+      cancel: async () => ({ id: "provider-deployment-1", status: "cancelled" }),
+    },
+  };
+  const category = (name: "repository" | "deployment") => ({
+    list: async () => [{ id: name === "repository" ? "git" : "host", category: name }],
+    connections: async () => [{ id: `${name}-connection` }],
+    connect: async (_id: string, input: unknown) => {
+      calls.push({ operation: `connect-${name}`, input });
+      return { status: "authorization-required", url: "https://provider.example/oauth" };
+    },
+    disconnect: async () => ({ connection: { status: "revoked" }, providerRevoked: true }),
+    use: () => name === "repository" ? repositoryHandle : deploymentHandle,
+  });
+  const api = createVibyApi({
+    viby: {
+      framework: "farm",
+      integrations: { callback: async () => ({}) },
+      forUser: () => ({
+        chats: {
+          get: async () => chat,
+          import: async (input: unknown) => {
+            calls.push({ operation: "import", input });
+            return {
+              id: "imported-chat",
+              title: "viby-app",
+              framework: "farm",
+              metadata: {},
+              createdAt: new Date("2026-08-12T00:00:00.000Z"),
+              updatedAt: new Date("2026-08-12T00:00:00.000Z"),
+              latestVersion: async () => version,
+            };
+          },
+        },
+        generations: {
+          get: async () => ({
+            getArtifact: async () => ({
+              id: "generated-1",
+              filename: "render.bin",
+              mediaType: "application/octet-stream",
+              checksum: "generated-checksum",
+              bytes: new TextEncoder().encode("generated-bytes"),
+            }),
+          }),
+        },
+        integrations: {
+          repository: category("repository"),
+          deployment: category("deployment"),
+        },
+      }),
+      worker: () => { throw new Error("not used"); },
+      close: async () => {},
+    } as never,
+    authenticate: () => scope,
+  });
+
+  const configured = await requestJson(api, "/integrations");
+  assert.equal(array(configured.repository).length, 1);
+  assert.equal(array(configured.deployment).length, 1);
+  const connected = await requestJson(api, "/integrations/repository/git/connect", {
+    method: "POST",
+    body: JSON.stringify({
+      callbackUrl: "https://app.example/callback",
+      returnTo: "/settings/integrations",
+    }),
+  });
+  assert.equal(object(connected.result).status, "authorization-required");
+  const repositories = await requestJson(
+    api,
+    "/integrations/repository/git/repositories?owner=farming-labs&search=viby&connectionId=repository-connection",
+  );
+  assert.equal(array(repositories.items).length, 1);
+  const branch = await requestJson(api, "/integrations/repository/git/branches", {
+    method: "POST",
+    body: JSON.stringify({ owner: "farming-labs", repository: "viby-app", name: "feature", from: "main" }),
+  }, 201);
+  assert.equal(object(branch.branch).name, "feature");
+
+  const imported = await requestJson(api, "/chats/imports", {
+    method: "POST",
+    body: JSON.stringify({
+      source: {
+        type: "repository",
+        integrationId: "git",
+        repository: { owner: "farming-labs", name: "viby-app" },
+        ref: { branch: "main" },
+      },
+    }),
+  }, 201);
+  assert.equal(object(imported.chat).id, "imported-chat");
+
+  const pushed = await requestJson(api, "/chats/chat-api/versions/version-api/repository-pushes", {
+    method: "POST",
+    body: JSON.stringify({
+      integrationId: "git",
+      repository: { owner: "farming-labs", name: "viby-app" },
+      branch: { name: "feature", from: "main", createIfMissing: true },
+      commit: { message: "feat: publish" },
+    }),
+  }, 201);
+  assert.equal(object(pushed.result).status, "pushed");
+  const deployed = await requestJson(api, "/chats/chat-api/versions/version-api/deployments", {
+    method: "POST",
+    body: JSON.stringify({
+      integrationId: "host",
+      project: { name: "viby-app", createIfMissing: true },
+      environment: "preview",
+    }),
+  }, 201);
+  assert.equal(object(deployed.deployment).status, "ready");
+  assert.equal(array((await requestJson(api, "/chats/chat-api/repository-links")).links).length, 1);
+  assert.equal(array((await requestJson(api, "/chats/chat-api/deployments")).deployments).length, 1);
+  assert.equal(await (await api.fetch(request(
+    "/generations/generation-api/artifacts/generated-1",
+    {},
+    true,
+  ))).text(), "generated-bytes");
+  assert.equal(await (await api.fetch(request(
+    "/chats/chat-api/versions/version-api/visual-artifacts/visual-1",
+    {},
+    true,
+  ))).text(), "visual-bytes");
+  assert.equal(await (await api.fetch(request(
+    "/chats/chat-api/versions/version-api/deployments/deployment-history-1/artifact",
+    {},
+    true,
+  ))).text(), "deployment-bytes");
+  assert.deepEqual(calls.map((call) => call.operation), [
+    "connect-repository",
+    "list-repositories",
+    "create-branch",
+    "read-source",
+    "import",
+    "push",
+    "deploy",
+  ]);
 });
 
 test("returns portable validation, method, route, and body-limit responses", async () => {
