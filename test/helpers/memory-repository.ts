@@ -95,6 +95,11 @@ import type {
   DeploymentArtifactContent,
   DeploymentArtifactData,
 } from "../../src/deployment-preparation.js";
+import type {
+  CreatePreviewSessionRecord,
+  PreviewSessionData,
+  PreviewSessionListOptions,
+} from "../../src/preview.js";
 
 interface ScopedRecord {
   tenantId: string;
@@ -140,6 +145,7 @@ export class MemoryRepository implements Repository {
   readonly tasks = new Map<string, GenerationTaskData & ScopedRecord>();
   readonly skills = new Map<string, ResolvedSkill[]>();
   readonly sandboxLeases = new Map<string, SandboxLeaseData & ScopedRecord>();
+  readonly previewSessions = new Map<string, PreviewSessionData & ScopedRecord>();
   readonly outboundDeliveries = new Map<string, MemoryOutboundEventDelivery>();
   readonly toolCalls = new Map<string, ToolCallData & ScopedRecord>();
   readonly repositoryLinks = new Map<string, RepositoryLinkData & ScopedRecord>();
@@ -471,6 +477,9 @@ export class MemoryRepository implements Repository {
       }
       for (const [leaseId, lease] of this.sandboxLeases) {
         if (lease.context.chatId === id && inScope(lease, scope)) this.sandboxLeases.delete(leaseId);
+      }
+      for (const [previewId, preview] of this.previewSessions) {
+        if (preview.chatId === id && inScope(preview, scope)) this.previewSessions.delete(previewId);
       }
     }
     return ids.length;
@@ -2092,6 +2101,131 @@ export class MemoryRepository implements Repository {
       updatedAt: now,
       stoppedAt: now,
     });
+  }
+
+  async createPreviewSession<Framework extends FrameworkId>(
+    scope: UserScope,
+    input: CreatePreviewSessionRecord<Framework>,
+  ): Promise<PreviewSessionData<Framework>> {
+    const version = await this.getVersion<Framework>(scope, input.versionId);
+    const lease = this.sandboxLeases.get(input.sandboxLeaseId);
+    if (!version || version.chatId !== input.chatId || !lease || !inScope(lease, scope)
+      || lease.context.versionId !== input.versionId || lease.status !== "active") {
+      throw new NotFoundError("Preview sandbox version");
+    }
+    if (lease.provider !== input.sandboxProvider) {
+      throw new ConfigurationError("Preview sandbox provider does not match its lease.");
+    }
+    const existing = [...this.previewSessions.values()].find((preview) => (
+      inScope(preview, scope) && preview.sandboxLeaseId === input.sandboxLeaseId
+    ));
+    if (existing) return existing as unknown as PreviewSessionData<Framework>;
+    const preview: PreviewSessionData<Framework> & ScopedRecord = {
+      id: input.id,
+      chatId: input.chatId,
+      versionId: input.versionId,
+      sandboxLeaseId: input.sandboxLeaseId,
+      sandboxProvider: input.sandboxProvider,
+      framework: input.framework,
+      port: input.port,
+      path: input.path,
+      url: null,
+      status: "starting",
+      error: null,
+      expiresAt: input.expiresAt,
+      readyAt: null,
+      stoppedAt: null,
+      createdAt: input.now,
+      updatedAt: input.now,
+      ...scope,
+    };
+    this.previewSessions.set(preview.id, preview);
+    return preview;
+  }
+
+  async getPreviewSession<Framework extends FrameworkId>(
+    scope: UserScope,
+    id: string,
+  ): Promise<PreviewSessionData<Framework> | null> {
+    const preview = this.previewSessions.get(id);
+    return preview && inScope(preview, scope)
+      ? preview as unknown as PreviewSessionData<Framework>
+      : null;
+  }
+
+  async listPreviewSessions<Framework extends FrameworkId>(
+    scope: UserScope,
+    options: PreviewSessionListOptions = {},
+  ): Promise<PreviewSessionData<Framework>[]> {
+    return ([...this.previewSessions.values()]
+      .filter((preview) => inScope(preview, scope)
+        && (options.chatId === undefined || preview.chatId === options.chatId)
+        && (options.versionId === undefined || preview.versionId === options.versionId)
+        && (options.status === undefined || preview.status === options.status))
+      .sort((left, right) => right.createdAt.getTime() - left.createdAt.getTime())) as unknown as
+      PreviewSessionData<Framework>[];
+  }
+
+  async listExpiredPreviewSessions<Framework extends FrameworkId>(
+    scope: UserScope,
+    now: Date,
+    limit: number,
+  ): Promise<PreviewSessionData<Framework>[]> {
+    return [...this.previewSessions.values()]
+      .filter((preview) => inScope(preview, scope)
+        && (preview.status === "starting" || preview.status === "ready")
+        && preview.expiresAt <= now)
+      .sort((left, right) => left.expiresAt.getTime() - right.expiresAt.getTime())
+      .slice(0, limit) as unknown as PreviewSessionData<Framework>[];
+  }
+
+  async markPreviewReady<Framework extends FrameworkId>(
+    scope: UserScope,
+    id: string,
+    url: string,
+    now: Date,
+  ): Promise<PreviewSessionData<Framework>> {
+    const preview = this.#activePreview(scope, id);
+    const updated = { ...preview, url, status: "ready" as const, error: null, readyAt: now, updatedAt: now };
+    this.previewSessions.set(id, updated);
+    return updated as unknown as PreviewSessionData<Framework>;
+  }
+
+  async failPreviewSession<Framework extends FrameworkId>(
+    scope: UserScope,
+    id: string,
+    error: string,
+    now: Date,
+  ): Promise<PreviewSessionData<Framework>> {
+    const preview = this.#activePreview(scope, id);
+    const updated = { ...preview, status: "failed" as const, error, stoppedAt: now, updatedAt: now };
+    this.previewSessions.set(id, updated);
+    return updated as unknown as PreviewSessionData<Framework>;
+  }
+
+  async closePreviewSession<Framework extends FrameworkId>(
+    scope: UserScope,
+    id: string,
+    status: "stopped" | "expired",
+    now: Date,
+  ): Promise<PreviewSessionData<Framework>> {
+    const preview = this.previewSessions.get(id);
+    if (!preview || !inScope(preview, scope)) throw new NotFoundError("Preview session");
+    if (preview.status !== "starting" && preview.status !== "ready") {
+      return preview as unknown as PreviewSessionData<Framework>;
+    }
+    const updated = { ...preview, status, stoppedAt: now, updatedAt: now };
+    this.previewSessions.set(id, updated);
+    return updated as unknown as PreviewSessionData<Framework>;
+  }
+
+  #activePreview(scope: UserScope, id: string): PreviewSessionData & ScopedRecord {
+    const preview = this.previewSessions.get(id);
+    if (!preview || !inScope(preview, scope)) throw new NotFoundError("Preview session");
+    if (preview.status !== "starting" && preview.status !== "ready") {
+      throw new ConfigurationError(`Preview ${id} is ${preview.status}.`);
+    }
+    return preview;
   }
 
   #addMessage(scope: UserScope, input: MemoryMessageInput): void {

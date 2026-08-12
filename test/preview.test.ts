@@ -1,0 +1,233 @@
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import type { LanguageModel } from "ai";
+import { createVibyWithDependencies } from "../src/client.js";
+import type { GeneratorInput, GeneratorOutput, ProjectGenerator } from "../src/generator.js";
+import type {
+  SandboxAdapter,
+  SandboxCommand,
+  SandboxCreateInput,
+  SandboxFile,
+  SandboxInstance,
+  SandboxOperationOptions,
+  SandboxProcessInstance,
+  SandboxReconnectInput,
+} from "../src/sandbox.js";
+import { sandboxCapabilities } from "../src/sandbox.js";
+import { SkillResolver } from "../src/skills.js";
+import type { PreviewConfig } from "../src/preview.js";
+import type { FrameworkId } from "../src/types.js";
+import { MemoryRepository } from "./helpers/memory-repository.js";
+
+class UnusedGenerator<Framework extends FrameworkId> implements ProjectGenerator<Framework> {
+  async generate(_input: GeneratorInput<Framework>): Promise<GeneratorOutput> {
+    throw new Error("Preview tests import source and do not invoke generation.");
+  }
+}
+
+class PreviewSandboxInstance implements SandboxInstance {
+  readonly id: string;
+  readonly files = new Map<string, Uint8Array>();
+  readonly starts: SandboxCommand[] = [];
+  stopCalls = 0;
+
+  constructor(id: string) {
+    this.id = id;
+  }
+
+  async writeFiles(files: readonly SandboxFile[]): Promise<void> {
+    for (const file of files) {
+      this.files.set(
+        file.path,
+        typeof file.content === "string" ? Buffer.from(file.content) : file.content,
+      );
+    }
+  }
+
+  async run() {
+    return { exitCode: 0, stdout: "", stderr: "", durationMs: 0 };
+  }
+
+  async start(command: SandboxCommand): Promise<SandboxProcessInstance> {
+    this.starts.push(command);
+    return {
+      id: `${this.id}-process`,
+      wait: () => new Promise(() => {}),
+      kill: async () => undefined,
+    };
+  }
+
+  async readFile(path: string): Promise<Uint8Array> {
+    const bytes = this.files.get(path);
+    if (!bytes) throw new Error(`Missing ${path}`);
+    return bytes;
+  }
+
+  getUrl(port: number): string {
+    return `https://${this.id}.preview.example.test:${port}/`;
+  }
+
+  async stop(_options?: SandboxOperationOptions): Promise<void> {
+    this.stopCalls += 1;
+  }
+}
+
+class PreviewSandboxAdapter implements SandboxAdapter {
+  readonly provider = "preview-fixture";
+  readonly capabilities = sandboxCapabilities({
+    files: true,
+    commands: true,
+    portUrls: true,
+    backgroundProcesses: true,
+    reconnect: true,
+  });
+  readonly creates: SandboxCreateInput[] = [];
+  readonly reconnects: SandboxReconnectInput[] = [];
+  readonly instances = new Map<string, PreviewSandboxInstance>();
+  #next = 0;
+
+  async create(input: SandboxCreateInput): Promise<SandboxInstance> {
+    this.creates.push(input);
+    const instance = new PreviewSandboxInstance(`preview-${++this.#next}`);
+    this.instances.set(instance.id, instance);
+    return instance;
+  }
+
+  async reconnect(input: SandboxReconnectInput): Promise<SandboxInstance> {
+    this.reconnects.push(input);
+    const instance = this.instances.get(input.sandboxId);
+    if (!instance) throw new Error("Preview sandbox no longer exists.");
+    return instance;
+  }
+}
+
+const scope = { tenantId: "preview-tenant", userId: "preview-user" };
+const defaultPreviewConfig: PreviewConfig = {
+  start: { command: "pnpm", args: ["dev", "--host", "0.0.0.0"] },
+  port: 3000,
+  path: "/health",
+  readiness: {
+    timeoutMs: 1_000,
+    intervalMs: 10,
+    check: async () => true,
+  },
+};
+
+function createPreviewViby(
+  repository: MemoryRepository,
+  sandbox: SandboxAdapter,
+  preview: PreviewConfig = defaultPreviewConfig,
+) {
+  return createVibyWithDependencies({
+    framework: "farm",
+    model: "test/mock" as LanguageModel,
+    skills: {},
+    sandbox,
+    preview,
+  }, {
+    repository,
+    generator: new UnusedGenerator<"farm">(),
+    skillResolver: new SkillResolver({}),
+  });
+}
+
+async function importVersion(repository: MemoryRepository, sandbox: SandboxAdapter) {
+  const viby = createPreviewViby(repository, sandbox);
+  const chat = await viby.forUser(scope).chats.import({
+    title: "Preview fixture",
+    source: {
+      type: "files",
+      files: [
+        { path: "package.json", content: '{"scripts":{"dev":"farm start"}}\n' },
+        { path: "src/index.ts", content: "export const ready = true;\n" },
+      ],
+    },
+  });
+  const version = await chat.latestVersion();
+  assert.ok(version);
+  return { viby, version };
+}
+
+test("starts, persists, reconnects, and stops a durable version preview", async () => {
+  const repository = new MemoryRepository();
+  const adapter = new PreviewSandboxAdapter();
+  const { viby: first, version } = await importVersion(repository, adapter);
+
+  const preview = await version.preview({ env: { PREVIEW_FIXTURE: "true" } });
+  assert.equal(preview.status, "ready");
+  assert.equal(preview.url, "https://preview-1.preview.example.test:3000/health");
+  assert.deepEqual(adapter.creates[0]?.ports, [3000]);
+  assert.deepEqual(adapter.creates[0]?.env, { PREVIEW_FIXTURE: "true" });
+  assert.deepEqual(adapter.instances.get("preview-1")?.starts[0], {
+    command: "pnpm",
+    args: ["dev", "--host", "0.0.0.0"],
+    cwd: ".",
+    env: {},
+    timeoutMs: 300_000,
+  });
+  assert.equal(
+    Buffer.from(adapter.instances.get("preview-1")!.files.get("src/index.ts")!).toString(),
+    "export const ready = true;\n",
+  );
+
+  const second = createPreviewViby(repository, adapter);
+  const restored = await second.forUser(scope).previews.get(preview.id);
+  await restored.reconnect();
+  assert.equal(restored.status, "ready");
+  assert.equal(adapter.reconnects[0]?.sandboxId, "preview-1");
+  assert.equal((await second.forUser(scope).previews.list({ versionId: version.id })).length, 1);
+
+  await restored.stop();
+  assert.equal(restored.status, "stopped");
+  assert.ok(restored.data().stoppedAt);
+  assert.equal((await second.forUser(scope).sandboxes.get(restored.data().sandboxLeaseId)).status, "stopped");
+
+  await second.close();
+  await first.close();
+});
+
+test("requires a durable reconnect-capable sandbox for previews", async () => {
+  const repository = new MemoryRepository();
+  const adapter = new PreviewSandboxAdapter();
+  Object.assign(adapter, {
+    capabilities: sandboxCapabilities({
+      files: true,
+      commands: true,
+      portUrls: true,
+      backgroundProcesses: true,
+    }),
+  });
+  const { viby, version } = await importVersion(repository, adapter);
+
+  await assert.rejects(() => version.preview(), /sandbox capability reconnect/);
+  assert.equal(adapter.instances.get("preview-1")?.stopCalls, 1);
+  assert.equal(repository.previewSessions.size, 0);
+  await viby.close();
+});
+
+test("records a failed preview and releases its sandbox", async () => {
+  const repository = new MemoryRepository();
+  const adapter = new PreviewSandboxAdapter();
+  const { viby: imported, version } = await importVersion(repository, adapter);
+  await imported.close();
+
+  const viby = createPreviewViby(repository, adapter, {
+    start: { command: "pnpm", args: ["dev"] },
+    port: 3000,
+    readiness: {
+      timeoutMs: 20,
+      intervalMs: 10,
+      check: async () => false,
+    },
+  });
+  const restoredVersion = await viby.forUser(scope).chats.get(version.chatId)
+    .then((chat) => chat.getVersion(version.id));
+
+  await assert.rejects(() => restoredVersion.preview(), /could not become ready/);
+  const [failed] = await viby.forUser(scope).previews.list({ status: "failed" });
+  assert.equal(failed?.status, "failed");
+  assert.match(failed?.error ?? "", /did not become ready/);
+  assert.ok(failed?.stoppedAt);
+  assert.equal(adapter.instances.get("preview-1")?.stopCalls, 1);
+  await viby.close();
+});

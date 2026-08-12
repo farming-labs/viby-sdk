@@ -97,16 +97,17 @@ Provider workflow routes accept only provider-neutral fields at the stable bound
 
 ## Preview boundary
 
-The API does not invent a preview URL. Configure `preview` to open or reuse a deployment/sandbox preview and return either JSON or a complete `Response`:
+The API does not invent a preview URL. When `createViby()` has a durable `preview` configuration, the host callback can delegate directly to the version and return either JSON or a complete `Response`:
 
 ```ts
 const api = createVibyApi({
   viby,
   authenticate,
-  preview: async ({ scope, chat, version, request }) => {
-    return previews.open({ scope, chatId: chat.id, version, signal: request.signal });
+  preview: async ({ version, request }) => {
+    const preview = await version.preview({ signal: request.signal });
+    return preview.data();
   },
 });
 ```
 
-Without that handler, preview routes return `501 preview_not_configured`. CORS, CSRF policy, rate limits, sessions, and preview cleanup remain application responsibilities.
+The callback may instead reuse an existing durable preview, return a deployment result, or provide a complete product-specific `Response`. Without it, preview routes return `501 preview_not_configured`. CORS, CSRF policy, rate limits, and sessions remain application responsibilities; durable sandbox preview cleanup is available through `user.previews.cleanupExpired()`.

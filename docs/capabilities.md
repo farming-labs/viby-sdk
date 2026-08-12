@@ -48,11 +48,11 @@ The core contract branches on declared capabilities, never provider names.
 | Lifecycle | materialize an immutable version, idempotent cleanup, durable leases, and reconnect by lease ID |
 | Command safety | provider-neutral allow/deny/approval-required policy with bounded command metadata |
 | Agent execution | capability-gated sandbox tools with step, time, token, command, and output budgets |
-| Background preview | tracked process handles plus portable HTTP readiness checks |
+| Durable version previews | immutable-version materialization, tracked server startup, HTTP readiness, persisted URL/status/failure/expiry, reconnect, stop, and expired-session cleanup |
 | Conformance | reusable adapter test suite with caller-supplied harmless commands |
 | Included adapters | E2B, Vercel Sandbox, local Docker, Daytona, Modal, and Cloudflare Sandbox |
 
-Preview URLs exist only when the configured adapter exposes port URLs and the host starts a server. Viby does not promise a globally hosted preview URL. The [reference application](../examples/reference) demonstrates the complete host composition.
+Preview URLs exist only when the configured adapter exposes port URLs and background processes. `version.preview()` starts the configured framework server and persists its lifecycle, but Viby does not promise a globally hosted preview URL. The [reference application](../examples/reference) demonstrates the complete host composition.
 
 ## Browser inspection
 

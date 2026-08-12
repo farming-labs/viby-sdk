@@ -69,6 +69,12 @@ import type {
   SandboxOpenOptions,
   SandboxReconnectOptions,
 } from "./sandbox.js";
+import {
+  PreviewRegistry,
+  type PreviewOpenOptions,
+  type PreviewSessionData,
+  type PreviewSessionListOptions,
+} from "./preview.js";
 import type {
   AgentTraceError,
   AgentTracePart,
@@ -540,6 +546,7 @@ class VibyClient<Framework extends FrameworkId> implements Viby<Framework> {
   readonly #browser: BrowserAdapter | undefined;
   readonly #registry = new GenerationRunRegistry();
   readonly #sandboxes: SandboxRegistry;
+  readonly #previews: PreviewRegistry<Framework>;
   readonly #runner: GenerationRunner<Framework>;
   readonly #workers = new Set<GenerationWorker<Framework>>();
   readonly #deletedChatsMs: number | null;
@@ -563,6 +570,12 @@ class VibyClient<Framework extends FrameworkId> implements Viby<Framework> {
       ...new Set(Object.values(config.tools?.sources ?? {})),
     ]);
     this.#sandboxes = new SandboxRegistry(this.#repository, config.sandboxPolicy);
+    this.#previews = new PreviewRegistry(
+      this.#repository,
+      this.#sandboxes,
+      this.#sandbox,
+      config.preview,
+    );
     this.#skillResolver = dependencies.skillResolver;
     this.#models = new GenerationModelRegistry(config, dependencies);
     this.#skills = normalizeSkillGroups(config.skills);
@@ -598,6 +611,7 @@ class VibyClient<Framework extends FrameworkId> implements Viby<Framework> {
       deploymentPreparation: this.#deploymentPreparation,
       browser: this.#browser,
       sandboxes: this.#sandboxes,
+      previews: this.#previews,
       deletedChatsMs: this.#deletedChatsMs,
       eventSinks: this.#eventSinks,
       integrations: this.integrations,
@@ -614,6 +628,7 @@ class VibyClient<Framework extends FrameworkId> implements Viby<Framework> {
   async close(): Promise<void> {
     await Promise.allSettled([...this.#workers].map((worker) => worker.stop()));
     await this.#registry.abortAll("Viby client closed.");
+    const preview = await Promise.allSettled([this.#previews.stopAll()]);
     const [sandboxes, toolSources, environment, integrations, repository] = await Promise.allSettled([
       this.#sandboxes.stopAll(),
       Promise.all(this.#toolSources.map((source) => source.close?.())),
@@ -621,6 +636,7 @@ class VibyClient<Framework extends FrameworkId> implements Viby<Framework> {
       this.integrations.close(),
       this.#repository.close(),
     ]);
+    if (preview[0]?.status === "rejected") throw preview[0].reason;
     if (sandboxes.status === "rejected") throw sandboxes.reason;
     if (toolSources.status === "rejected") throw toolSources.reason;
     if (environment.status === "rejected") throw environment.reason;
@@ -711,6 +727,7 @@ interface ScopedDependencies<Framework extends FrameworkId> {
   readonly deploymentPreparation: DeploymentPreparationConfig<Framework> | undefined;
   readonly browser: BrowserAdapter | undefined;
   readonly sandboxes: SandboxRegistry;
+  readonly previews: PreviewRegistry<Framework>;
   readonly deletedChatsMs: number | null;
   readonly eventSinks: ReadonlyMap<string, OutboundEventSink>;
   readonly integrations: IntegrationClient;
@@ -722,6 +739,7 @@ export class ScopedViby<Framework extends FrameworkId = FrameworkId> {
   readonly chats: ChatCollection<Framework>;
   readonly generations: GenerationCollection<Framework>;
   readonly sandboxes: SandboxCollection<Framework>;
+  readonly previews: PreviewCollection<Framework>;
   readonly integrations: ReturnType<IntegrationClient["forUser"]>;
 
   constructor(dependencies: ScopedDependencies<Framework>) {
@@ -729,10 +747,74 @@ export class ScopedViby<Framework extends FrameworkId = FrameworkId> {
     this.chats = new ChatCollection(dependencies);
     this.generations = new GenerationCollection(dependencies);
     this.sandboxes = new SandboxCollection(dependencies);
+    this.previews = new PreviewCollection(dependencies);
     this.integrations = dependencies.integrations.forUser(
       dependencies.scope,
       dependencies.repository,
     );
+  }
+}
+
+export class PreviewCollection<Framework extends FrameworkId = FrameworkId> {
+  readonly #dependencies: ScopedDependencies<Framework>;
+
+  constructor(dependencies: ScopedDependencies<Framework>) {
+    this.#dependencies = dependencies;
+  }
+
+  async get(id: string): Promise<Preview<Framework>> {
+    const data = await this.#dependencies.previews.get(
+      this.#dependencies.scope,
+      assertIdentifier(id, "Preview id"),
+    );
+    return new Preview(data, this.#dependencies);
+  }
+
+  list(options: PreviewSessionListOptions = {}): Promise<PreviewSessionData<Framework>[]> {
+    return this.#dependencies.previews.list(this.#dependencies.scope, options);
+  }
+
+  cleanupExpired(limit?: number): Promise<number> {
+    return this.#dependencies.previews.cleanupExpired(this.#dependencies.scope, limit);
+  }
+}
+
+export class Preview<Framework extends FrameworkId = FrameworkId> {
+  readonly #dependencies: ScopedDependencies<Framework>;
+  #data: PreviewSessionData<Framework>;
+
+  constructor(data: PreviewSessionData<Framework>, dependencies: ScopedDependencies<Framework>) {
+    this.#data = data;
+    this.#dependencies = dependencies;
+  }
+
+  get id(): string { return this.#data.id; }
+  get chatId(): string { return this.#data.chatId; }
+  get versionId(): string { return this.#data.versionId; }
+  get framework(): Framework { return this.#data.framework; }
+  get status(): PreviewSessionData["status"] { return this.#data.status; }
+  get url(): string | null { return this.#data.url; }
+
+  data(): PreviewSessionData<Framework> {
+    return this.#data;
+  }
+
+  async reconnect(signal?: AbortSignal): Promise<this> {
+    this.#data = await this.#dependencies.previews.reconnect(
+      this.#dependencies.scope,
+      this.id,
+      signal,
+    );
+    return this;
+  }
+
+  async stop(signal?: AbortSignal): Promise<this> {
+    this.#data = await this.#dependencies.previews.stop(
+      this.#dependencies.scope,
+      this.id,
+      signal,
+    );
+    return this;
   }
 }
 
@@ -1630,6 +1712,19 @@ export class Version<Framework extends FrameworkId = FrameworkId> {
       await this.entries(),
       (changes, input: AgentWorkspaceCommitInput) => this.apply({ ...input, changes }),
     );
+  }
+
+  /** Starts a durable sandbox-backed preview for this immutable source version. */
+  async preview(options: PreviewOpenOptions = {}): Promise<Preview<Framework>> {
+    const resolved = this.#dependencies.previews.resolve(options);
+    const sandbox = await this.sandbox(resolved.sandbox);
+    const data = await this.#dependencies.previews.open(
+      this.#dependencies.scope,
+      this.#data,
+      sandbox,
+      resolved,
+    );
+    return new Preview(data, this.#dependencies);
   }
 
   /** Pushes this complete immutable source snapshot through a connected repository integration. */

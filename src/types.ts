@@ -20,6 +20,7 @@ import type { DeploymentPreparationConfig } from "./deployment-preparation.js";
 import type { VibyStorage } from "./storage.js";
 import type { EnvironmentConfig } from "./environment.js";
 import type { ToolSourcesConfig, ToolSourceProposedAction } from "./tool-source.js";
+import type { PreviewConfig } from "./preview.js";
 
 export type FrameworkId =
   | "farm"
@@ -126,6 +127,8 @@ interface VibyBaseConfig<Framework extends FrameworkId = FrameworkId> {
   readonly skillResolver?: SkillResolverAdapter;
   readonly sandbox?: SandboxAdapter;
   readonly sandboxPolicy?: SandboxCommandPolicy;
+  /** Optional durable sandbox-backed preview lifecycle. */
+  readonly preview?: PreviewConfig;
   readonly agent?: AgentRunnerConfig;
   /** Host-configured tools selected and authorized independently for every chat. */
   readonly tools?: ToolSourcesConfig<Framework>;
