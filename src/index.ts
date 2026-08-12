@@ -9,6 +9,13 @@ export {
   Version,
 } from "./client.js";
 export { skillRead } from "./skills.js";
+export { defineDatabaseAdapter } from "./storage.js";
+export type {
+  DatabaseAdapter,
+  DatabaseAdapterContext,
+  DefineDatabaseAdapterInput,
+  VibyStorage,
+} from "./storage.js";
 export { DownloadArtifact } from "./download.js";
 export { AgentWorkspace } from "./agent-workspace.js";
 export { AgentProjectGenerator } from "./agent-runner.js";

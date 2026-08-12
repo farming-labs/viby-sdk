@@ -6,6 +6,8 @@ import {
   verifyPersistenceAdapter,
 } from "../src/persistence-conformance.js";
 import { postgresPersistence } from "../src/persistence-postgres.js";
+import { postgres } from "../src/storage-postgres.js";
+import { defineDatabaseAdapter } from "../src/storage.js";
 import type { PersistenceAdapter } from "../src/persistence.js";
 import type { GeneratorOutput } from "../src/generator.js";
 import { sha256 } from "../src/utils.js";
@@ -62,6 +64,37 @@ test("uses a custom persistence adapter without requiring DATABASE_URL", async (
   await viby.close();
 });
 
+test("configures structured state and artifacts through storage categories", async () => {
+  const database = new MemoryRepository();
+  const artifacts = {
+    id: "test-artifacts",
+    async put() {},
+    async get() { return null; },
+    async delete() {},
+  };
+  let receivedArtifacts: unknown;
+  const viby = createViby({
+    framework: "custom-runtime",
+    storage: {
+      database: defineDatabaseAdapter({
+        id: "memory",
+        open(context) {
+          receivedArtifacts = context.artifacts;
+          return database;
+        },
+      }),
+      artifacts,
+    },
+    engine: {
+      identity: { provider: "test", model: "categorized-storage" },
+      async generate() { return projectOutput(); },
+    },
+  });
+
+  assert.equal(receivedArtifacts, artifacts);
+  await viby.close();
+});
+
 test("passes the provider-neutral persistence conformance suite", async () => {
   const report = await verifyPersistenceAdapter({
     create: () => new MemoryRepository(),
@@ -92,6 +125,14 @@ test("validates explicit PostgreSQL persistence configuration", () => {
   );
 });
 
+test("defines the PostgreSQL database through the storage factory", () => {
+  assert.equal(postgres({ url: "postgresql://example.test/viby" }).id, "postgres");
+  assert.throws(
+    () => postgres({ url: "postgresql://example.test/one", databaseUrl: "postgresql://example.test/two" }),
+    /cannot provide both url and databaseUrl/,
+  );
+});
+
 test("rejects ambiguous artifact storage with custom persistence", () => {
   assert.throws(() => createViby({
     framework: "custom-runtime",
@@ -106,5 +147,17 @@ test("rejects ambiguous artifact storage with custom persistence", () => {
       identity: { provider: "test", model: "ambiguous-storage" },
       async generate() { return projectOutput(); },
     },
-  }), /custom persistence adapter owns artifact references/);
+  }), /raw custom database adapter owns artifact references/);
+});
+
+test("rejects ambiguous storage compatibility aliases", () => {
+  assert.throws(() => createViby({
+    framework: "custom-runtime",
+    storage: { database: new MemoryRepository() },
+    persistence: new MemoryRepository(),
+    engine: {
+      identity: { provider: "test", model: "ambiguous-database" },
+      async generate() { return projectOutput(); },
+    },
+  }), /storage.database or persistence, not both/);
 });

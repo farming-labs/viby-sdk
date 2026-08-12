@@ -90,6 +90,10 @@
       "types": "./dist/persistence-conformance.d.ts",
       "import": "./dist/persistence-conformance.js"
     },
+    "./storage/postgres": {
+      "types": "./dist/storage-postgres.d.ts",
+      "import": "./dist/storage-postgres.js"
+    },
     "./browser/conformance": {
       "types": "./dist/browser-conformance.d.ts",
       "import": "./dist/browser-conformance.js"

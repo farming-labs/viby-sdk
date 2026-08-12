@@ -158,6 +158,18 @@ try {
       "--input-type=module",
       "--eval",
       [
+        'import { postgres } from "@viby/sdk/storage/postgres";',
+        'if (typeof postgres !== "function") throw new Error("Postgres storage factory export is missing");',
+      ].join("\n"),
+    ],
+    { cwd: consumer },
+  );
+  await execute(
+    node,
+    [
+      "--input-type=module",
+      "--eval",
+      [
         'import { bitbucket, bitbucketRepository, BitbucketRepositoryError } from "@viby/sdk/integrations/bitbucket";',
         'if (typeof bitbucket !== "function") throw new Error("Bitbucket repository adapter export is missing");',
         'if (bitbucketRepository !== bitbucket) throw new Error("Bitbucket repository alias is invalid");',

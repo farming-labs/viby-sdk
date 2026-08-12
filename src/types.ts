@@ -17,6 +17,7 @@ import type {
   VibyTelemetry,
 } from "./telemetry.js";
 import type { DeploymentPreparationConfig } from "./deployment-preparation.js";
+import type { VibyStorage } from "./storage.js";
 
 export type FrameworkId =
   | "farm"
@@ -57,19 +58,21 @@ export type SkillGroups = {
 
 interface VibyBaseConfig<Framework extends FrameworkId = FrameworkId> {
   readonly framework: Framework;
+  /** Structured database, binary artifacts, connection metadata, and secret storage. */
+  readonly storage?: VibyStorage;
   /** Optional external capabilities grouped by their provider-neutral product category. */
   readonly integrations?: VibyIntegrations;
   /** Optional sandbox build contract used when a deployment adapter requires prebuilt files. */
   readonly deployment?: {
     readonly preparation?: DeploymentPreparationConfig<Framework>;
   };
-  /** Advanced durable connection-state override. Omit to use PostgreSQL through DATABASE_URL. */
+  /** @deprecated Use storage.connections. */
   readonly connectionStore?: IntegrationConnectionStore;
-  /** Advanced provider-secret override. Omit to use encrypted PostgreSQL through VIBY_SECRET_KEY. */
+  /** @deprecated Use storage.secrets. */
   readonly secretStore?: SecretStore;
-  /** Custom durable state implementation. Omit to use PostgreSQL through DATABASE_URL. */
+  /** @deprecated Use storage.database. */
   readonly persistence?: PersistenceAdapter;
-  /** External byte storage for attachments and generated binary artifacts. */
+  /** @deprecated Use storage.artifacts. */
   readonly artifactStore?: ArtifactStore;
   /** Provider-neutral browser used by preview inspection and visual evaluation workflows. */
   readonly browser?: BrowserAdapter;

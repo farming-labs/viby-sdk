@@ -17,13 +17,16 @@ import {
   type UserScope,
   type VersionFile,
   type Viby,
+  type VibyStorage,
 } from "@viby/sdk";
+import { postgres } from "@viby/sdk/storage/postgres";
 import { registerVibyMcpTools } from "@viby/sdk/mcp";
 
 declare const model: LanguageModel;
 declare const sandbox: SandboxAdapter;
 declare const sink: OutboundEventSink;
 declare const tracer: OpenTelemetryTracerLike;
+declare const storage: VibyStorage;
 
 const skills = {
   frontend: ["farming-labs/design-eng-skills/frontend-design"],
@@ -84,3 +87,5 @@ function exposeMcp(server: Parameters<typeof registerVibyMcpTools>[0]): void {
 void exerciseShippedApi;
 void exposeMcp;
 void signedOutboundEventSink;
+void postgres;
+void storage;

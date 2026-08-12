@@ -136,6 +136,7 @@ import {
 import { normalizeDesignEvaluation } from "./design-evaluations.js";
 import { normalizeChatMetadata } from "./metadata.js";
 import { SandboxRegistry, type SandboxSession } from "./sandbox.js";
+import { isDatabaseAdapter } from "./storage.js";
 import type {
   OutboundEventDeliveryData,
   OutboundEventReceipt,
@@ -378,15 +379,19 @@ class GenerationModelRegistry<Framework extends FrameworkId> {
 export function createViby<const Framework extends FrameworkId>(
   config: VibyConfig<Framework>,
 ): Viby<Framework> {
-  if (config.persistence && config.artifactStore) {
+  const storage = normalizeStorageConfig(config);
+  const database = storage.database ?? postgresPersistence({
+    ...(storage.artifacts ? { artifactStore: storage.artifacts } : {}),
+  });
+  if (!isDatabaseAdapter(database) && storage.explicitDatabase && storage.artifacts) {
     throw new ConfigurationError(
-      "A custom persistence adapter owns artifact references; pass artifactStore to that adapter instead of the top-level Viby config.",
+      "A raw custom database adapter owns artifact references; use defineDatabaseAdapter() to receive storage.artifacts during initialization.",
     );
   }
   return createVibyWithDependencies(config, {
-    repository: config.persistence ?? postgresPersistence({
-      ...(config.artifactStore ? { artifactStore: config.artifactStore } : {}),
-    }),
+    repository: isDatabaseAdapter(database)
+      ? database.open(storage.artifacts ? { artifacts: storage.artifacts } : {})
+      : database,
     ...(!config.engine ? {
       generator: new AgentProjectGenerator(config.model, config.agent),
       generators: Object.fromEntries(Object.entries(config.models ?? {}).map(([alias, model]) => (
@@ -404,17 +409,58 @@ export function createVibyWithDependencies<const Framework extends FrameworkId>(
   if (typeof config.framework !== "string" || config.framework.trim().length === 0) {
     throw new ConfigurationError("framework must be a non-empty string value.");
   }
+  const storage = normalizeStorageConfig(config);
   const integrationCount = configuredIntegrations(config.integrations).length;
   const integrations = dependencies.integrations ?? new IntegrationClient(
     config.integrations,
-    config.connectionStore ?? (integrationCount > 0
+    storage.connections ?? (integrationCount > 0
       ? new PostgresIntegrationConnectionStore()
       : null),
-    config.secretStore ?? (integrationCount > 0
+    storage.secrets ?? (integrationCount > 0
       ? new EncryptedPostgresSecretStore()
       : null),
   );
   return new VibyClient(config, { ...dependencies, integrations });
+}
+
+interface NormalizedStorageConfig {
+  readonly database: import("./persistence.js").PersistenceAdapter | import("./storage.js").DatabaseAdapter | undefined;
+  readonly explicitDatabase: boolean;
+  readonly artifacts: import("./artifact-store.js").ArtifactStore | undefined;
+  readonly connections: import("./integration-store.js").IntegrationConnectionStore | undefined;
+  readonly secrets: import("./integration-store.js").SecretStore | undefined;
+}
+
+function normalizeStorageConfig<Framework extends FrameworkId>(
+  config: VibyConfig<Framework>,
+): NormalizedStorageConfig {
+  if (config.storage !== undefined && (!config.storage || typeof config.storage !== "object")) {
+    throw new ConfigurationError("storage must be an object grouped by storage category.");
+  }
+  assertStorageAlias("database", config.storage?.database, "persistence", config.persistence);
+  assertStorageAlias("artifacts", config.storage?.artifacts, "artifactStore", config.artifactStore);
+  assertStorageAlias("connections", config.storage?.connections, "connectionStore", config.connectionStore);
+  assertStorageAlias("secrets", config.storage?.secrets, "secretStore", config.secretStore);
+  const artifacts = config.storage?.artifacts ?? config.artifactStore;
+  const configuredDatabase = config.storage?.database ?? config.persistence;
+  return {
+    database: configuredDatabase,
+    explicitDatabase: configuredDatabase !== undefined,
+    artifacts,
+    connections: config.storage?.connections ?? config.connectionStore,
+    secrets: config.storage?.secrets ?? config.secretStore,
+  };
+}
+
+function assertStorageAlias(
+  category: string,
+  nested: unknown,
+  alias: string,
+  legacy: unknown,
+): void {
+  if (nested !== undefined && legacy !== undefined) {
+    throw new ConfigurationError(`Configure storage.${category} or ${alias}, not both.`);
+  }
 }
 
 class VibyClient<Framework extends FrameworkId> implements Viby<Framework> {
