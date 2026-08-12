@@ -196,6 +196,7 @@ import {
   PostgresIntegrationConnectionStore,
 } from "./integration-store-postgres.js";
 import type { SecretStore, SecretStorePutInput } from "./integration-store.js";
+import type { ToolSource } from "./tool-source.js";
 
 const DEFAULT_POLL_INTERVAL_MS = 100;
 const DEFAULT_EVENT_LIMIT = 100;
@@ -543,6 +544,7 @@ class VibyClient<Framework extends FrameworkId> implements Viby<Framework> {
   readonly #workers = new Set<GenerationWorker<Framework>>();
   readonly #deletedChatsMs: number | null;
   readonly #eventSinks: ReadonlyMap<string, OutboundEventSink>;
+  readonly #toolSources: readonly ToolSource<Framework>[];
 
   constructor(
     config: VibyConfig<Framework>,
@@ -557,6 +559,9 @@ class VibyClient<Framework extends FrameworkId> implements Viby<Framework> {
     this.#environment = dependencies.environment;
     this.#deletedChatsMs = normalizeChatRetentionConfig(config.retention);
     this.#eventSinks = normalizeOutboundEventSinks(config.events);
+    this.#toolSources = Object.freeze([
+      ...new Set(Object.values(config.tools?.sources ?? {})),
+    ]);
     this.#sandboxes = new SandboxRegistry(this.#repository, config.sandboxPolicy);
     this.#skillResolver = dependencies.skillResolver;
     this.#models = new GenerationModelRegistry(config, dependencies);
@@ -609,13 +614,15 @@ class VibyClient<Framework extends FrameworkId> implements Viby<Framework> {
   async close(): Promise<void> {
     await Promise.allSettled([...this.#workers].map((worker) => worker.stop()));
     await this.#registry.abortAll("Viby client closed.");
-    const [sandboxes, environment, integrations, repository] = await Promise.allSettled([
+    const [sandboxes, toolSources, environment, integrations, repository] = await Promise.allSettled([
       this.#sandboxes.stopAll(),
+      Promise.all(this.#toolSources.map((source) => source.close?.())),
       this.#environment?.close(),
       this.integrations.close(),
       this.#repository.close(),
     ]);
     if (sandboxes.status === "rejected") throw sandboxes.reason;
+    if (toolSources.status === "rejected") throw toolSources.reason;
     if (environment.status === "rejected") throw environment.reason;
     if (integrations.status === "rejected") throw integrations.reason;
     if (repository.status === "rejected") throw repository.reason;
