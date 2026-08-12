@@ -1,0 +1,66 @@
+name: Live provider verification
+
+on:
+  workflow_dispatch:
+    inputs:
+      provider:
+        description: Provider suite to run
+        required: true
+        default: vercel
+        type: choice
+        options:
+          - github
+          - vercel
+          - cloudflare
+          - bitbucket
+          - all
+      confirm_cleanup:
+        description: Create and automatically delete disposable provider resources
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    if: ${{ inputs.confirm_cleanup }}
+    name: Verify ${{ inputs.provider }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: live-provider-tests
+    env:
+      VIBY_LIVE_PROVIDER_TESTS: "1"
+      VIBY_LIVE_PROVIDERS: ${{ inputs.provider }}
+      VIBY_LIVE_CLEANUP_FILE: .viby-live-cleanup.json
+      VIBY_LIVE_GITHUB_APP_ID: ${{ secrets.VIBY_LIVE_GITHUB_APP_ID }}
+      VIBY_LIVE_GITHUB_APP_PRIVATE_KEY: ${{ secrets.VIBY_LIVE_GITHUB_APP_PRIVATE_KEY }}
+      VIBY_LIVE_GITHUB_INSTALLATION_ID: ${{ secrets.VIBY_LIVE_GITHUB_INSTALLATION_ID }}
+      VIBY_LIVE_GITHUB_OWNER: ${{ secrets.VIBY_LIVE_GITHUB_OWNER }}
+      VIBY_LIVE_GITHUB_ACCOUNT_KIND: ${{ secrets.VIBY_LIVE_GITHUB_ACCOUNT_KIND }}
+      VIBY_LIVE_GITHUB_USER_TOKEN: ${{ secrets.VIBY_LIVE_GITHUB_USER_TOKEN }}
+      VIBY_LIVE_VERCEL_ACCESS_TOKEN: ${{ secrets.VIBY_LIVE_VERCEL_ACCESS_TOKEN }}
+      VIBY_LIVE_VERCEL_TEAM_ID: ${{ secrets.VIBY_LIVE_VERCEL_TEAM_ID }}
+      VIBY_LIVE_VERCEL_PROJECT_ID: ${{ secrets.VIBY_LIVE_VERCEL_PROJECT_ID }}
+      VIBY_LIVE_CLOUDFLARE_ACCOUNT_ID: ${{ secrets.VIBY_LIVE_CLOUDFLARE_ACCOUNT_ID }}
+      VIBY_LIVE_CLOUDFLARE_ACCESS_TOKEN: ${{ secrets.VIBY_LIVE_CLOUDFLARE_ACCESS_TOKEN }}
+      VIBY_LIVE_CLOUDFLARE_REFRESH_TOKEN: ${{ secrets.VIBY_LIVE_CLOUDFLARE_REFRESH_TOKEN }}
+      VIBY_LIVE_CLOUDFLARE_CLIENT_ID: ${{ secrets.VIBY_LIVE_CLOUDFLARE_CLIENT_ID }}
+      VIBY_LIVE_CLOUDFLARE_CLIENT_SECRET: ${{ secrets.VIBY_LIVE_CLOUDFLARE_CLIENT_SECRET }}
+      VIBY_LIVE_BITBUCKET_WORKSPACE: ${{ secrets.VIBY_LIVE_BITBUCKET_WORKSPACE }}
+      VIBY_LIVE_BITBUCKET_ACCESS_TOKEN: ${{ secrets.VIBY_LIVE_BITBUCKET_ACCESS_TOKEN }}
+      VIBY_LIVE_BITBUCKET_REFRESH_TOKEN: ${{ secrets.VIBY_LIVE_BITBUCKET_REFRESH_TOKEN }}
+      VIBY_LIVE_BITBUCKET_CLIENT_ID: ${{ secrets.VIBY_LIVE_BITBUCKET_CLIENT_ID }}
+      VIBY_LIVE_BITBUCKET_CLIENT_SECRET: ${{ secrets.VIBY_LIVE_BITBUCKET_CLIENT_SECRET }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run test:providers:live
+      - name: Recover any pending disposable resources
+        if: always()
+        run: npm run test:providers:cleanup
