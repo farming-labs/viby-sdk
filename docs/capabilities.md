@@ -77,6 +77,7 @@ Preview URLs exist only when the configured adapter exposes port URLs and the ho
 | Outbound events | signed CloudEvents-style envelopes with stable IDs and constant-time verification |
 | Durable delivery | database claims, retry backoff, lease fencing, inspection, dead letters, and explicit redrive |
 | HTTP streaming | `Last-Event-ID` parsing, standard SSE frames, request abort propagation, and Web `Response` headers |
+| Web API host | authenticated Web Request/Response routing for chats, messages, generation controls, SSE/event pages, tasks, versions, iteration, ZIP downloads, public integration callbacks, and host-owned previews |
 | Telemetry | provider-neutral hooks plus an OpenTelemetry-compatible tracer/meter adapter |
 | Cost attribution | host-defined currency/credit calculator, immutable attempt cost, cumulative generation cost, and usage parts |
 | Generation configuration | durable per-request model aliases, host instructions, categorized skill overlays, and JSON metadata |
@@ -110,7 +111,7 @@ Product authentication, provider-app registration, redirect routes, event schedu
 | Migration immutability | published migration SHA-256 checksums; changes require a new migration |
 | API compatibility | frozen compile fixture and additive runtime export manifests for package entry points |
 | Sandbox integration | shared conformance suite plus a real local Docker integration job |
-| Reference E2E | request-level chat → SSE → preview → iterate → ZIP download through real Viby objects and deterministic adapters |
+| Reference E2E | standard API host request-level chat → SSE → preview → iterate → ZIP download through real Viby objects and deterministic adapters |
 | Generated-project quality matrix | Farm, TanStack Start, and a custom framework ID across generation, runtime checks, preview HTTP, iteration, evaluation, and ZIP parity |
 | Live provider verification | explicit, environment-gated GitHub, Bitbucket, Vercel, and Cloudflare tests with disposable resources and failure-safe cleanup |
 | Package smoke test | packed artifact install, public import, CLI, and exported subpaths |

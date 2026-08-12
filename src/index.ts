@@ -44,6 +44,14 @@ export { DownloadArtifact } from "./download.js";
 export { AgentWorkspace } from "./agent-workspace.js";
 export { AgentProjectGenerator } from "./agent-runner.js";
 export { defineGenerationEngine } from "./generation-engine.js";
+export { createVibyApi, vibyApi } from "./api-host.js";
+export type {
+  VibyApi,
+  VibyApiAuthenticationResult,
+  VibyApiOptions,
+  VibyApiPreviewContext,
+  VibyApiPreviewResult,
+} from "./api-host.js";
 export {
   createToolSourceProposedAction,
   defineToolSource,

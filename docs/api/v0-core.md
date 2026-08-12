@@ -131,10 +131,11 @@ Viby separates a portable tool call from the credentialed connection used to ful
 - Signed event sinks ship durable generation events through an app-owned transport with stable IDs, HMAC verification, leases, retries, dead letters, and redrive; endpoint CRUD and scheduling remain app-owned.
 - Deployment and Git provider credentials stay behind the explicit connection and secret-store boundary and never enter model context by default.
 - Project environment variables use a provider-neutral metadata store plus the same isolated secret-store boundary. Secret values resolve only for an explicitly selected sandbox/build/deployment environment.
+- The Web-standard API host maps authenticated `Request` objects to chats, messages, generations, resumable streams, tasks, versions, downloads, callbacks, and host-owned previews without framework-specific route types.
 
 ## Prioritized parity backlog
 
-Capability discovery, the adapter conformance suite, background processes, readiness checks, durable sandbox leases, reconnect-by-ID, generation worker leases with heartbeats, sandbox command policy enforcement, immutable agent workspace change sets, typed durable message parts, permission-gated agent sandbox actions, source import adapters, file locks, retention-aware deletion, standard SSE/Web responses, scoped MCP tools, durable signed outbound delivery, OpenTelemetry hooks, and cost attribution are shipped.
+Capability discovery, the adapter conformance suite, background processes, readiness checks, durable sandbox leases, reconnect-by-ID, generation worker leases with heartbeats, sandbox command policy enforcement, immutable agent workspace change sets, typed durable message parts, permission-gated agent actions, inbound MCP sources, source import adapters, file locks, retention-aware deletion, standard SSE/Web responses, the Web API host, scoped MCP server tools, durable signed outbound delivery, OpenTelemetry hooks, and cost attribution are shipped.
 
 Generation-scoped model/skill configuration, durable multimodal input snapshots and outputs, and immutable design evaluation results are shipped.
 
