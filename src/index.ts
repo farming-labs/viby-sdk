@@ -12,8 +12,8 @@ export {
   defineSkillResolver,
   skillFrom,
   skillInline,
-  skillRead,
-} from "./skills.js";
+} from "./skill-resolver.js";
+export { skillRead } from "./skills.js";
 export { defineDatabaseAdapter } from "./storage.js";
 export type {
   DatabaseAdapter,
