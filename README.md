@@ -132,6 +132,45 @@ const viby = createViby({
 Objects are scoped under encoded tenant and user segments, checked against their SHA-256 metadata, and never exposed as public URLs. Set `forcePathStyle: true` when required by a local MinIO-compatible endpoint. The alias `@viby/sdk/artifact/s3` exports the same adapter for artifact-centric imports.
 Install the optional peer `@aws-sdk/client-s3` in applications that use this adapter.
 
+## Project environments and secrets
+
+Enable durable project environments with the PostgreSQL default and the same provider-neutral secret-store boundary used by integrations:
+
+```ts
+const viby = createViby({
+  framework: "farm",
+  model,
+  environment: {},
+});
+
+const chat = await viby.forUser({ tenantId, userId }).chats.get(chatId);
+
+await chat.environment.set({
+  environment: "preview",
+  name: "PUBLIC_API_ORIGIN",
+  value: "https://api.example.com",
+});
+
+await chat.environment.set({
+  environment: "preview",
+  name: "SERVICE_TOKEN",
+  value: serviceToken,
+  secret: true,
+});
+```
+
+`environment` is one type-safe string (`development`, `preview`, `production`, or a custom name), so the same variable may have a different value in each environment. `chat.environment.list()` returns public values but always returns `null` for secret values. Secret bytes live only in `storage.secrets`; the default encrypts them with `VIBY_SECRET_KEY`.
+
+Opt in to injection by naming an environment when opening a sandbox:
+
+```ts
+const sandbox = await version.sandbox({ environment: "development" });
+```
+
+Deployments automatically resolve the deployment's existing `environment` value. Prebuilt deployments inject those variables into sandbox creation and build commands; deployment adapters receive them just-in-time through `DeployVersionInput.environmentVariables`. Vercel source deployments pass them in the deployment request. Values are not copied into prompts, messages, events, telemetry, deployment history, or build-artifact command records. Explicit `preparation.env` values override the durable values for that one build.
+
+Advanced hosts may provide `environment: { store }` with any `EnvironmentVariableStore` and `storage: { secrets }` with any `SecretStore`. PostgreSQL metadata is available explicitly through `postgresEnvironmentVariables()` from `@viby/sdk/environment/postgres`.
+
 External account connections use the same tenant and user scope while keeping provider credentials out of ordinary records. Configure adapters under capability categories, set a separate 32-byte `VIBY_SECRET_KEY`, and run the normal migrations:
 
 ```ts

@@ -129,6 +129,7 @@ Viby separates a portable tool call from the credentialed connection used to ful
 - Viby operations can be registered as scoped MCP tools; MCP transport, discovery registries, OAuth grants, refresh tokens, and connection storage remain host-owned.
 - Signed event sinks ship durable generation events through an app-owned transport with stable IDs, HMAC verification, leases, retries, dead letters, and redrive; endpoint CRUD and scheduling remain app-owned.
 - Deployment and Git provider credentials stay behind the explicit connection and secret-store boundary and never enter model context by default.
+- Project environment variables use a provider-neutral metadata store plus the same isolated secret-store boundary. Secret values resolve only for an explicitly selected sandbox/build/deployment environment.
 
 ## Prioritized parity backlog
 
@@ -140,7 +141,7 @@ Visual evaluation workflows are shipped on the provider-neutral browser contract
 
 Persistence is also provider-neutral: `DATABASE_URL` selects the built-in PostgreSQL implementation, while `persistence` accepts a host-owned durable adapter verified by the reusable conformance suite. Custom adapters retain responsibility for their own transactions, migrations, credentials, and binary-store integration.
 
-GitHub, Bitbucket, Vercel, and Cloudflare adapters are shipped behind their provider-neutral capability contracts. Deployment preparation is also provider-neutral: adapters declare source or prebuilt input, any configured sandbox executes the host's framework build contract, and immutable output lives in the configured artifact store while raw downloads remain unchanged. The remaining backlog is additional opt-in providers; no vendor identifier is required by the core SDK.
+GitHub, Bitbucket, Vercel, and Cloudflare adapters are shipped behind their provider-neutral capability contracts. Deployment preparation is also provider-neutral: adapters declare source or prebuilt input, any configured sandbox executes the host's framework build contract, and immutable output lives in the configured artifact store while raw downloads remain unchanged. Durable project environments are shipped with public metadata, isolated secret bytes, explicit sandbox selection, and automatic deployment/build selection. The remaining backlog is additional opt-in providers; no vendor identifier is required by the core SDK.
 
 ## Persistence rules
 
@@ -151,7 +152,7 @@ Every portable parity feature follows these rules:
 3. Work claims, external actions, state transitions, failures, and cancellations are durably auditable.
 4. Successful source changes are stored in order and create immutable full snapshots with parent lineage.
 5. Exact resolved skills are content-addressed and linked to the generation that used them.
-6. Model, sandbox, and tool credentials are never persisted by Viby. Integration credentials exist only through the explicit secret-store boundary; the PostgreSQL reference encrypts them with a caller-owned key and ordinary records retain only opaque references.
+6. Model, sandbox, and tool credentials never enter ordinary Viby records. Integration credentials and project secret values exist only through the explicit secret-store boundary; the PostgreSQL reference encrypts them with a caller-owned key and ordinary records retain only opaque references.
 7. Provider-specific capabilities are discovered explicitly and never inferred from a provider name.
 8. Framework behavior comes from source and skills, not a hard-coded framework registry.
 

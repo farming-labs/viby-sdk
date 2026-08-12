@@ -18,6 +18,7 @@ import type {
 } from "./telemetry.js";
 import type { DeploymentPreparationConfig } from "./deployment-preparation.js";
 import type { VibyStorage } from "./storage.js";
+import type { EnvironmentConfig } from "./environment.js";
 
 export type FrameworkId =
   | "farm"
@@ -117,6 +118,8 @@ interface VibyBaseConfig<Framework extends FrameworkId = FrameworkId> {
   readonly artifactStore?: ArtifactStore;
   /** Provider-neutral browser used by preview inspection and visual evaluation workflows. */
   readonly browser?: BrowserAdapter;
+  /** Durable project environment variables. Omit to disable automatic injection. */
+  readonly environment?: EnvironmentConfig;
   readonly skills?: SkillGroups;
   /** Optional resolver for custom catalogs, databases, object stores, or Git-backed skill sources. */
   readonly skillResolver?: SkillResolverAdapter;

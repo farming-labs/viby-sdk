@@ -137,6 +137,11 @@ import { normalizeDesignEvaluation } from "./design-evaluations.js";
 import { normalizeChatMetadata } from "./metadata.js";
 import { SandboxRegistry, type SandboxSession } from "./sandbox.js";
 import { isDatabaseAdapter } from "./storage.js";
+import {
+  EnvironmentManager,
+  type EnvironmentVariableCollection,
+} from "./environment.js";
+import { PostgresEnvironmentVariableStore } from "./environment-postgres.js";
 import type {
   OutboundEventDeliveryData,
   OutboundEventReceipt,
@@ -190,6 +195,7 @@ import {
   EncryptedPostgresSecretStore,
   PostgresIntegrationConnectionStore,
 } from "./integration-store-postgres.js";
+import type { SecretStore, SecretStorePutInput } from "./integration-store.js";
 
 const DEFAULT_POLL_INTERVAL_MS = 100;
 const DEFAULT_EVENT_LIMIT = 100;
@@ -282,6 +288,7 @@ interface ClientDependencies<Framework extends FrameworkId> {
   readonly generators?: Readonly<Record<string, ProjectGenerator<Framework>>>;
   readonly skillResolver: SkillResolver;
   readonly integrations?: IntegrationClient;
+  readonly environment?: EnvironmentManager;
 }
 
 interface GenerationModelBinding<Framework extends FrameworkId> {
@@ -415,16 +422,31 @@ export function createVibyWithDependencies<const Framework extends FrameworkId>(
   }
   const storage = normalizeStorageConfig(config);
   const integrationCount = configuredIntegrations(config.integrations).length;
+  const environmentEnabled = config.environment !== undefined;
+  if (config.environment !== undefined && (!config.environment || typeof config.environment !== "object")) {
+    throw new ConfigurationError("environment must be an object when configured.");
+  }
+  const secretStore = storage.secrets ?? (integrationCount > 0 || environmentEnabled
+    ? new LazyDefaultSecretStore()
+    : null);
   const integrations = dependencies.integrations ?? new IntegrationClient(
     config.integrations,
     storage.connections ?? (integrationCount > 0
       ? new PostgresIntegrationConnectionStore()
       : null),
-    storage.secrets ?? (integrationCount > 0
-      ? new EncryptedPostgresSecretStore()
-      : null),
+    secretStore,
   );
-  return new VibyClient(config, { ...dependencies, integrations });
+  const environment = dependencies.environment ?? (environmentEnabled
+    ? new EnvironmentManager(
+        config.environment?.store ?? new PostgresEnvironmentVariableStore(),
+        secretStore!,
+      )
+    : undefined);
+  return new VibyClient(config, {
+    ...dependencies,
+    integrations,
+    ...(environment ? { environment } : {}),
+  });
 }
 
 interface NormalizedStorageConfig {
@@ -467,10 +489,48 @@ function assertStorageAlias(
   }
 }
 
+function unavailableEnvironmentVariables(): EnvironmentVariableCollection {
+  const unavailable = (): never => {
+    throw new ConfigurationError(
+      "Project environment variables are not configured. Add environment: {} to use the PostgreSQL default or provide environment.store.",
+    );
+  };
+  return {
+    set: async () => unavailable(),
+    list: async () => unavailable(),
+    delete: async () => unavailable(),
+  };
+}
+
+class LazyDefaultSecretStore implements SecretStore {
+  #store: EncryptedPostgresSecretStore | undefined;
+
+  put(scope: UserScope, input: SecretStorePutInput): Promise<string> {
+    return this.#get().put(scope, input);
+  }
+
+  get(scope: UserScope, reference: string): Promise<Uint8Array | null> {
+    return this.#get().get(scope, reference);
+  }
+
+  delete(scope: UserScope, reference: string): Promise<void> {
+    return this.#get().delete(scope, reference);
+  }
+
+  close(): Promise<void> {
+    return this.#store?.close() ?? Promise.resolve();
+  }
+
+  #get(): EncryptedPostgresSecretStore {
+    return this.#store ??= new EncryptedPostgresSecretStore();
+  }
+}
+
 class VibyClient<Framework extends FrameworkId> implements Viby<Framework> {
   readonly framework: Framework;
   readonly integrations: IntegrationClient;
   readonly #repository: Repository;
+  readonly #environment: EnvironmentManager | undefined;
   readonly #skillResolver: SkillResolver;
   readonly #models: GenerationModelRegistry<Framework>;
   readonly #skills: SkillGroups;
@@ -494,6 +554,7 @@ class VibyClient<Framework extends FrameworkId> implements Viby<Framework> {
     this.#deploymentPreparation = config.deployment?.preparation;
     this.#browser = config.browser;
     this.#repository = dependencies.repository;
+    this.#environment = dependencies.environment;
     this.#deletedChatsMs = normalizeChatRetentionConfig(config.retention);
     this.#eventSinks = normalizeOutboundEventSinks(config.events);
     this.#sandboxes = new SandboxRegistry(this.#repository, config.sandboxPolicy);
@@ -535,6 +596,7 @@ class VibyClient<Framework extends FrameworkId> implements Viby<Framework> {
       deletedChatsMs: this.#deletedChatsMs,
       eventSinks: this.#eventSinks,
       integrations: this.integrations,
+      environment: this.#environment,
     });
   }
 
@@ -547,12 +609,14 @@ class VibyClient<Framework extends FrameworkId> implements Viby<Framework> {
   async close(): Promise<void> {
     await Promise.allSettled([...this.#workers].map((worker) => worker.stop()));
     await this.#registry.abortAll("Viby client closed.");
-    const [sandboxes, integrations, repository] = await Promise.allSettled([
+    const [sandboxes, environment, integrations, repository] = await Promise.allSettled([
       this.#sandboxes.stopAll(),
+      this.#environment?.close(),
       this.integrations.close(),
       this.#repository.close(),
     ]);
     if (sandboxes.status === "rejected") throw sandboxes.reason;
+    if (environment.status === "rejected") throw environment.reason;
     if (integrations.status === "rejected") throw integrations.reason;
     if (repository.status === "rejected") throw repository.reason;
   }
@@ -643,6 +707,7 @@ interface ScopedDependencies<Framework extends FrameworkId> {
   readonly deletedChatsMs: number | null;
   readonly eventSinks: ReadonlyMap<string, OutboundEventSink>;
   readonly integrations: IntegrationClient;
+  readonly environment: EnvironmentManager | undefined;
 }
 
 export class ScopedViby<Framework extends FrameworkId = FrameworkId> {
@@ -820,10 +885,13 @@ export class GenerationCollection<Framework extends FrameworkId = FrameworkId> {
 export class Chat<Framework extends FrameworkId = FrameworkId> {
   readonly #data: ChatData<Framework>;
   readonly #dependencies: ScopedDependencies<Framework>;
+  readonly environment: EnvironmentVariableCollection;
 
   constructor(data: ChatData<Framework>, dependencies: ScopedDependencies<Framework>) {
     this.#data = data;
     this.#dependencies = dependencies;
+    this.environment = dependencies.environment?.forChat(dependencies.scope, data.id)
+      ?? unavailableEnvironmentVariables();
   }
 
   get id(): string { return this.#data.id; }
@@ -1655,6 +1723,23 @@ export class Version<Framework extends FrameworkId = FrameworkId> {
   ): Promise<DeploymentData> {
     if (!input) throw new ConfigurationError("A deployment target is required.");
     const context = await input.using.operationContext(input.signal);
+    const environmentVariables = this.#dependencies.environment
+      ? await this.#dependencies.environment.resolve(
+          this.#dependencies.scope,
+          this.chatId,
+          String(input.environment),
+        )
+      : {};
+    const runtimeInput = {
+      ...input,
+      environmentVariables,
+      ...(input.preparation
+        ? { preparation: {
+            ...input.preparation,
+            env: { ...environmentVariables, ...(input.preparation.env ?? {}) },
+          } }
+        : {}),
+    };
     const idempotencyKey = input.idempotencyKey?.trim() || `viby-${sha256([
       this.id,
       input.using.id,
@@ -1686,14 +1771,14 @@ export class Version<Framework extends FrameworkId = FrameworkId> {
     if (replay) return replay;
     try {
       const sourceFiles = input.using.sourceMode === "prebuilt"
-        ? await this.#preparedDeploymentFiles(started, input)
+        ? await this.#preparedDeploymentFiles(started, runtimeInput)
         : await materializeVersionSourceFiles(
             this.#dependencies.repository,
             this.#dependencies.scope,
             this.id,
             await this.entries(),
           );
-      const deployment = await deployVersionSource(sourceFiles, { ...input, idempotencyKey });
+      const deployment = await deployVersionSource(sourceFiles, { ...runtimeInput, idempotencyKey });
       const project = await input.using.projects.get({ id: deployment.projectId }, input.signal);
       if (!project) throw new NotFoundError("Deployed project");
       await this.#dependencies.repository.completeDeployment(
@@ -1759,6 +1844,7 @@ export class Version<Framework extends FrameworkId = FrameworkId> {
       );
     }
     const sandbox = await this.sandbox({
+      environment: String(input.environment),
       ...(input.preparation?.env ? { env: input.preparation.env } : {}),
       ...(input.signal ? { signal: input.signal } : {}),
     });
@@ -1794,6 +1880,13 @@ export class Version<Framework extends FrameworkId = FrameworkId> {
   }
 
   async sandbox(options: SandboxOpenOptions = {}): Promise<SandboxSession> {
+    const resolved = options.environment && this.#dependencies.environment
+      ? await this.#dependencies.environment.resolve(
+          this.#dependencies.scope,
+          this.chatId,
+          options.environment,
+        )
+      : {};
     return this.#dependencies.sandboxes.open(
       this.#dependencies.sandbox,
       this.#dependencies.scope,
@@ -1804,7 +1897,7 @@ export class Version<Framework extends FrameworkId = FrameworkId> {
         this.id,
         await this.entries(),
       ),
-      options,
+      { ...options, env: { ...resolved, ...(options.env ?? {}) } },
     );
   }
 

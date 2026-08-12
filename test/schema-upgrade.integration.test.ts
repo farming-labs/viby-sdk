@@ -86,6 +86,7 @@ test("upgrades a historical v0.2 schema without losing tenant data", {
       "0025_deployment_artifacts",
       "0026_message_finish_reasons",
       "0027_provider_neutral_skill_sources",
+      "0028_environment_variables",
     ]);
     assert.equal((await getMigrationStatus(databaseUrl.toString())).every((entry) => entry.applied), true);
     assert.deepEqual(await migrateDatabase(databaseUrl.toString()), []);
@@ -115,6 +116,7 @@ test("upgrades a historical v0.2 schema without losing tenant data", {
         integrationConnections: string | null;
         integrationSecrets: string | null;
         messageFinishReasonColumn: boolean;
+        environmentVariables: string | null;
       }[]>`
         SELECT
           to_regclass('viby.outbound_event_deliveries')::text AS deliveries,
@@ -150,6 +152,7 @@ test("upgrades a historical v0.2 schema without losing tenant data", {
             WHERE table_schema = 'viby' AND table_name = 'messages'
               AND column_name = 'finish_reason'
           ) AS "messageFinishReasonColumn",
+          to_regclass('viby.environment_variables')::text AS "environmentVariables",
           EXISTS (
             SELECT 1 FROM information_schema.columns
             WHERE table_schema = 'viby' AND table_name = 'version_files'
@@ -170,6 +173,7 @@ test("upgrades a historical v0.2 schema without losing tenant data", {
       assert.equal(row?.integrationConnections, "viby.integration_connections");
       assert.equal(row?.integrationSecrets, "viby.integration_secrets");
       assert.equal(row?.messageFinishReasonColumn, true);
+      assert.equal(row?.environmentVariables, "viby.environment_variables");
     } finally {
       await inspection.end({ timeout: 5 });
     }

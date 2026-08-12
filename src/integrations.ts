@@ -331,6 +331,8 @@ export interface DeployVersionInput<ProviderOptions = never> {
   readonly environment: DeploymentEnvironment;
   readonly files: readonly IntegrationSourceFile[];
   readonly idempotencyKey: string;
+  /** Resolved just-in-time by the host; adapters must never persist or log these values. */
+  readonly environmentVariables?: Readonly<Record<string, string>>;
   readonly providerOptions?: ProviderOptions;
 }
 

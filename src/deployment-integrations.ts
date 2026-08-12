@@ -47,6 +47,7 @@ export interface DeploySourceInput<ProjectOptions = never, DeployOptions = never
   readonly project: DeploymentProjectTarget<ProjectOptions>;
   readonly environment: DeploymentEnvironment;
   readonly idempotencyKey: string;
+  readonly environmentVariables?: Readonly<Record<string, string>>;
   readonly providerOptions?: DeployOptions;
   readonly signal?: AbortSignal;
 }
@@ -305,6 +306,9 @@ export async function deployVersionSource<ProjectOptions, DeployOptions>(
     environment,
     files,
     idempotencyKey,
+    ...(input.environmentVariables !== undefined
+      ? { environmentVariables: { ...input.environmentVariables } }
+      : {}),
     ...(input.providerOptions !== undefined ? { providerOptions: input.providerOptions } : {}),
   }, input.signal);
 }

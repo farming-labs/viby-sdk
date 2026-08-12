@@ -104,7 +104,7 @@ export interface IntegrationConnectionStore {
 
 export interface SecretStorePutInput {
   readonly bytes: Uint8Array;
-  readonly purpose: "authorization-session" | "integration-credential";
+  readonly purpose: "authorization-session" | "integration-credential" | "environment-variable";
   readonly expiresAt: Date | null;
 }
 

@@ -433,6 +433,7 @@ async function deployVersion(
       name: project.name,
       project: project.id,
       files: uploaded,
+      env: input.environmentVariables,
       target: target.target,
       customEnvironmentSlugOrId: target.customEnvironmentSlugOrId,
       meta: {

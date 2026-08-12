@@ -44,7 +44,7 @@ export interface VibyStorage {
   readonly artifacts?: ArtifactStore;
   /** Durable provider-connection metadata. PostgreSQL is the default when integrations exist. */
   readonly connections?: IntegrationConnectionStore;
-  /** Opaque provider credentials. Encrypted PostgreSQL is the default when integrations exist. */
+  /** Opaque provider credentials and project secret values. */
   readonly secrets?: SecretStore;
 }
 

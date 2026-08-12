@@ -36,6 +36,10 @@ try {
     "dist/node-migrations.d.ts",
     "dist/node-skills.js",
     "dist/node-skills.d.ts",
+    "dist/environment.js",
+    "dist/environment.d.ts",
+    "dist/environment-postgres.js",
+    "dist/environment-postgres.d.ts",
     "dist/cli.js",
     "dist/mcp.js",
     "dist/mcp.d.ts",
@@ -159,6 +163,21 @@ try {
         'if (typeof RepositoryIntegrationHandle !== "function") throw new Error("RepositoryIntegrationHandle export is missing");',
         'if (typeof DeploymentIntegrationHandle !== "function") throw new Error("DeploymentIntegrationHandle export is missing");',
         'if (skillRead("./skills").source !== "file") throw new Error("skillRead export is invalid");',
+      ].join("\n"),
+    ],
+    { cwd: consumer },
+  );
+  await execute(
+    node,
+    [
+      "--input-type=module",
+      "--eval",
+      [
+        'import { EnvironmentManager, normalizeEnvironmentVariableName } from "@viby/sdk/core";',
+        'import { postgresEnvironmentVariables } from "@viby/sdk/environment/postgres";',
+        'if (typeof EnvironmentManager !== "function") throw new Error("environment manager is missing");',
+        'if (normalizeEnvironmentVariableName("API_URL") !== "API_URL") throw new Error("environment name helper is invalid");',
+        'if (typeof postgresEnvironmentVariables !== "function") throw new Error("Postgres environment adapter is missing");',
       ].join("\n"),
     ],
     { cwd: consumer },
