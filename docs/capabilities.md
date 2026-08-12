@@ -110,6 +110,7 @@ Product authentication, provider-app registration, redirect routes, event schedu
 | Generated-project quality matrix | Farm, TanStack Start, and a custom framework ID across generation, runtime checks, preview HTTP, iteration, evaluation, and ZIP parity |
 | Live provider verification | explicit, environment-gated GitHub, Bitbucket, Vercel, and Cloudflare tests with disposable resources and failure-safe cleanup |
 | Package smoke test | packed artifact install, public import, CLI, and exported subpaths |
+| Runtime compatibility | Node 20/22/24, Bun package import, portable dependency-graph guard, and Web Request/Response/streams/crypto behavior |
 
 ## Deliberately outside the current release
 

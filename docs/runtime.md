@@ -37,3 +37,7 @@ Node-specific behavior lives behind dedicated entry points:
 | provider integrations and sandboxes | their existing explicit provider subpaths |
 
 Node adapters require Node.js 20 or newer. The package does not declare a global Node engine because doing so would incorrectly reject portable-core consumers such as Worker applications.
+
+## Compatibility gates
+
+CI runs the unit suite and portable-core import guard on Node.js 20, 22, and 24, then imports and exercises the published core entry point on Bun. The import guard walks the complete emitted ESM dependency graph from `@viby/sdk/core` and fails if any reachable module imports a Node built-in. It also exercises Web `Request`, `Response`, `Headers`, streams, text encoding, and Web Crypto behavior.

@@ -29,6 +29,33 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm test
+      - run: npm run build
+      - run: npm run test:runtime
+
+  bun:
+    name: Portable core (Bun)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: npm ci
+      - run: npm run build
+      - name: Import and exercise the portable package entry point
+        run: >-
+          bun --eval 'import { MESSAGE_PART_TYPES, generationEventCursor, skillInline }
+          from "@viby/sdk/core";
+          if (!MESSAGE_PART_TYPES.includes("tool-call")) throw new Error("missing message parts");
+          if (generationEventCursor(new Headers({"Last-Event-ID":"9"})) !== "9") throw new Error("invalid cursor");
+          if (skillInline({name:"rules",files:[{path:"SKILL.md",content:"# Rules"}]}).source !== "inline") throw new Error("invalid skill");'
+      - run: bun run scripts/runtime-bun.ts
+      - run: bun build dist/core.js --target=browser --outdir=/tmp/viby-portable-core
 
   build:
     name: Build and package
@@ -45,6 +72,7 @@ jobs:
       - run: npm run typecheck
       - run: npm run build
       - run: npm run test:compatibility
+      - run: npm run test:runtime
       - run: npm ci --prefix examples/reference
       - run: npm run typecheck --prefix examples/reference
       - run: npm run test:reference
