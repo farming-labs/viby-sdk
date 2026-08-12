@@ -1,6 +1,6 @@
 # v0 API v2 capability audit
 
-This document maps the official v0 Platform API v2 beta surface to Viby as reviewed on 2026-08-08. It is a capability audit, not a wire-compatibility promise and not an instruction to copy v0's hosted architecture.
+This document maps the official v0 Platform API v2 beta surface to Viby as reviewed on 2026-08-12. It is a capability audit, not a wire-compatibility promise and not an instruction to copy v0's hosted architecture.
 
 Viby remains framework-, model-, runtime-, storage-, and provider-agnostic. A capability belongs in core only when it is portable across those boundaries. Hosted URLs, credentials, deployment vendors, OAuth connections, and account policy remain application-owned or adapter-owned.
 
@@ -36,7 +36,7 @@ The official v2 documentation organizes the API around these resources and endpo
 | --- | --- | --- |
 | Chats | create sync/async/streaming; create from files, ZIP, or repository; list, get, update, duplicate, and delete; resume stream | portable chat and generation behavior belongs in core; privacy and hosted URLs are app-owned |
 | Chat files | get, update, download, and restore from a message | immutable version files, changes, downloads, and restore are core |
-| Preview and deployment | get preview, create Vercel project, deploy chat | preview belongs behind sandbox capability checks; project creation and deployment require future adapters |
+| Preview and deployment | get preview, create Vercel project, deploy chat | preview belongs behind sandbox capability checks; provider-neutral project and deployment workflows ship with Vercel and Cloudflare adapters |
 | Messages | list, get, send sync/async/streaming, resolve task sync/async/streaming, restore message | portable message history, parts, generation modes, tasks, and restore belong in core |
 | MCP servers | list, create, get, update, delete, and OAuth authorization | host-owned connection registry; portable tools may be passed into Viby without Viby owning OAuth |
 | Webhooks | list, create, get, update, and delete | signed provider-neutral event sinks over the durable cursor; endpoint registry remains app-owned |
