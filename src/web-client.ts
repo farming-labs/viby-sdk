@@ -19,6 +19,16 @@ import type {
   VersionData,
   VersionEntry,
 } from "./types.js";
+import type {
+  ToolSourceRegistrationData,
+  ToolSourceRegistrationListOptions,
+} from "./tool-source-registry.js";
+import type {
+  ConnectToolSourceInput,
+  ConnectToolSourceResult,
+  DisconnectToolSourceResult,
+  ToolSourceConnectionData,
+} from "./tool-source-authorization.js";
 
 const DEFAULT_BASE_URL = "/api/viby";
 const DEFAULT_MAX_RECONNECTS = 5;
@@ -44,6 +54,8 @@ export type VibyApiGenerationTask = VibyApiJson<GenerationTaskData>;
 export type VibyApiGenerationEvent = VibyApiJson<GenerationEvent>;
 export type VibyApiGeneratedArtifact = VibyApiJson<GeneratedArtifactData>;
 export type VibyApiToolCall = VibyApiJson<ToolCallData>;
+export type VibyApiToolSource = VibyApiJson<ToolSourceRegistrationData>;
+export type VibyApiToolSourceConnection = VibyApiJson<ToolSourceConnectionData>;
 
 export interface VibyWebClientOptions {
   /** Absolute or browser-relative API URL. Defaults to /api/viby. */
@@ -96,6 +108,22 @@ export interface VibyWebUpdateChatInput {
 export interface VibyWebDeleteChatInput {
   readonly retentionMs?: number | null;
 }
+
+export interface VibyWebCreateToolSourceInput {
+  readonly type: string;
+  readonly name: string;
+  readonly description?: string | null;
+  readonly configuration?: Readonly<Record<string, JsonValue>>;
+}
+
+export interface VibyWebUpdateToolSourceInput {
+  readonly name?: string;
+  readonly description?: string | null;
+  readonly configuration?: Readonly<Record<string, JsonValue>>;
+  readonly enabled?: boolean;
+}
+
+export type VibyWebConnectToolSourceInput = Omit<ConnectToolSourceInput, "signal">;
 
 export interface VibyWebGenerationReference {
   readonly id: string;
@@ -211,6 +239,17 @@ export interface VibyWebChatsClient<Framework extends FrameworkId = FrameworkId>
       options?: VibyWebRequestOptions,
     ): Promise<Result>;
   };
+  readonly toolSources: {
+    list(
+      chatId: string,
+      options?: VibyWebRequestOptions,
+    ): Promise<{ readonly toolSources: readonly VibyApiToolSource[] }>;
+    set(
+      chatId: string,
+      sourceIds: readonly string[],
+      options?: VibyWebRequestOptions,
+    ): Promise<{ readonly toolSources: readonly VibyApiToolSource[] }>;
+  };
 }
 
 export interface VibyWebGenerationsClient<Framework extends FrameworkId = FrameworkId> {
@@ -244,9 +283,46 @@ export interface VibyWebGenerationsClient<Framework extends FrameworkId = Framew
   ): Promise<{ readonly generation: VibyApiGeneration }>;
 }
 
+export interface VibyWebToolSourcesClient {
+  list(
+    options?: ToolSourceRegistrationListOptions & VibyWebRequestOptions,
+  ): Promise<{ readonly toolSources: readonly VibyApiToolSource[] }>;
+  create(
+    input: VibyWebCreateToolSourceInput,
+    options?: VibyWebRequestOptions,
+  ): Promise<{ readonly toolSource: VibyApiToolSource }>;
+  get(
+    sourceId: string,
+    options?: VibyWebRequestOptions,
+  ): Promise<{ readonly toolSource: VibyApiToolSource }>;
+  update(
+    sourceId: string,
+    input: VibyWebUpdateToolSourceInput,
+    options?: VibyWebRequestOptions,
+  ): Promise<{ readonly toolSource: VibyApiToolSource }>;
+  archive(
+    sourceId: string,
+    options?: VibyWebRequestOptions,
+  ): Promise<{ readonly toolSource: VibyApiToolSource }>;
+  connection(
+    sourceId: string,
+    options?: VibyWebRequestOptions,
+  ): Promise<{ readonly connection: VibyApiToolSourceConnection | null }>;
+  connect(
+    sourceId: string,
+    input: VibyWebConnectToolSourceInput,
+    options?: VibyWebRequestOptions,
+  ): Promise<{ readonly result: VibyApiJson<ConnectToolSourceResult> }>;
+  disconnect(
+    sourceId: string,
+    options?: VibyWebRequestOptions,
+  ): Promise<{ readonly result: VibyApiJson<DisconnectToolSourceResult> }>;
+}
+
 export interface VibyWebClient<Framework extends FrameworkId = FrameworkId> {
   readonly chats: VibyWebChatsClient<Framework>;
   readonly generations: VibyWebGenerationsClient<Framework>;
+  readonly toolSources: VibyWebToolSourcesClient;
 }
 
 export class VibyApiClientError extends Error {
@@ -403,6 +479,26 @@ export function createVibyWebClient<Framework extends FrameworkId = FrameworkId>
         request,
       ),
     }),
+    toolSources: Object.freeze({
+      list: (chatId: string, request: VibyWebRequestOptions = {}) => transport.json<{
+        readonly toolSources: readonly VibyApiToolSource[];
+      }>(
+        "GET",
+        `/chats/${segment(chatId)}/tool-sources`,
+        undefined,
+        undefined,
+        request,
+      ),
+      set: (chatId: string, sourceIds: readonly string[], request: VibyWebRequestOptions = {}) => (
+        transport.json<{ readonly toolSources: readonly VibyApiToolSource[] }>(
+          "PUT",
+          `/chats/${segment(chatId)}/tool-sources`,
+          { sourceIds },
+          undefined,
+          request,
+        )
+      ),
+    }),
   };
   const generations: VibyWebGenerationsClient<Framework> = {
     get: (generationId, request = {}) => transport.json(
@@ -449,7 +545,69 @@ export function createVibyWebClient<Framework extends FrameworkId = FrameworkId>
       request,
     ),
   };
-  return Object.freeze({ chats: Object.freeze(chats), generations: Object.freeze(generations) });
+  const toolSources: VibyWebToolSourcesClient = {
+    list: (input = {}) => transport.json(
+      "GET",
+      "/tool-sources",
+      undefined,
+      input,
+      input,
+    ),
+    create: (input, request = {}) => transport.json(
+      "POST",
+      "/tool-sources",
+      input,
+      undefined,
+      request,
+    ),
+    get: (sourceId, request = {}) => transport.json(
+      "GET",
+      `/tool-sources/${segment(sourceId)}`,
+      undefined,
+      undefined,
+      request,
+    ),
+    update: (sourceId, input, request = {}) => transport.json(
+      "PATCH",
+      `/tool-sources/${segment(sourceId)}`,
+      input,
+      undefined,
+      request,
+    ),
+    archive: (sourceId, request = {}) => transport.json(
+      "DELETE",
+      `/tool-sources/${segment(sourceId)}`,
+      undefined,
+      undefined,
+      request,
+    ),
+    connection: (sourceId, request = {}) => transport.json(
+      "GET",
+      `/tool-sources/${segment(sourceId)}/connection`,
+      undefined,
+      undefined,
+      request,
+    ),
+    connect: (sourceId, input, request = {}) => transport.json(
+      "POST",
+      `/tool-sources/${segment(sourceId)}/connect`,
+      input,
+      undefined,
+      request,
+    ),
+    disconnect: (sourceId, request = {}) => transport.json(
+      "POST",
+      `/tool-sources/${segment(sourceId)}/disconnect`,
+      undefined,
+      undefined,
+      request,
+    ),
+  };
+  return Object.freeze({
+    chats: Object.freeze(chats),
+    generations: Object.freeze(generations),
+    toolSources: Object.freeze(toolSources),
+  });
 }
 
 class WebClientTransport {

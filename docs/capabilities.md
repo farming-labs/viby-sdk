@@ -79,7 +79,7 @@ Preview URLs exist only when the configured adapter exposes port URLs and backgr
 | Outbound events | signed CloudEvents-style envelopes with stable IDs and constant-time verification |
 | Durable delivery | database claims, retry backoff, lease fencing, inspection, dead letters, and explicit redrive |
 | HTTP streaming | `Last-Event-ID` parsing, standard SSE frames, request abort propagation, and Web `Response` headers |
-| Web API host | authenticated Web Request/Response routing for chats, messages, generation controls, SSE/event pages, tasks, versions, iteration, ZIP downloads, public integration callbacks, and host-owned previews |
+| Web API host | authenticated Web Request/Response routing for chats, messages, generation controls, SSE/event pages, tasks, versions, iteration, ZIP downloads, tool-source registration/selection/connections, public provider callbacks, and host-owned previews |
 | Telemetry | provider-neutral hooks plus an OpenTelemetry-compatible tracer/meter adapter |
 | Cost attribution | host-defined currency/credit calculator, immutable attempt cost, cumulative generation cost, and usage parts |
 | Generation configuration | durable per-request model aliases, host instructions, categorized skill overlays, and JSON metadata |

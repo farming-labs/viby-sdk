@@ -26,6 +26,7 @@ import type {
   UserScope,
 } from "./types.js";
 import type { IntegrationCategory, IntegrationSourceFile } from "./integrations.js";
+import type { ToolSourceRegistrationStatus } from "./tool-source-registry.js";
 
 const DEFAULT_BASE_PATH = "/api/viby";
 const DEFAULT_BODY_BYTES = 10 * 1024 * 1024;
@@ -89,6 +90,10 @@ export function createVibyApi<Framework extends FrameworkId>(
           const result = await options.viby.integrations.callback(request);
           return withHeaders(json(result), options.headers);
         }
+        if (path === "/tool-sources/callback" && (request.method === "GET" || request.method === "POST")) {
+          const result = await options.viby.toolSources.callback(request);
+          return withHeaders(json(result), options.headers);
+        }
 
         const authenticated = await options.authenticate(request);
         if (authenticated instanceof Response) return withHeaders(authenticated, options.headers);
@@ -127,6 +132,10 @@ async function route<Framework extends FrameworkId>(
 
   if (segments[0] === "integrations") {
     return integrationRoute(request, segments, url, user, maxBodyBytes);
+  }
+
+  if (segments[0] === "tool-sources") {
+    return toolSourceRoute(request, segments, url, user, maxBodyBytes);
   }
 
   if (segments.length === 2 && segments[0] === "chats" && segments[1] === "imports") {
@@ -225,6 +234,18 @@ async function route<Framework extends FrameworkId>(
         return methodNotAllowed("PUT, DELETE");
       }
       return methodNotAllowed("GET, PUT, DELETE");
+    }
+
+    if (segments[2] === "tool-sources" && segments.length === 3) {
+      if (request.method === "GET") {
+        return json({ toolSources: (await chat.toolSources.list()).map((source) => source.data()) });
+      }
+      if (request.method === "PUT") {
+        const body = await requestObject(request, maxBodyBytes);
+        const selected = await chat.toolSources.set(stringArray(body.sourceIds, "sourceIds", 200));
+        return json({ toolSources: selected.map((source) => source.data()) });
+      }
+      return methodNotAllowed("GET, PUT");
     }
 
     if (segments.length === 3 && request.method === "GET") {
@@ -435,6 +456,94 @@ async function route<Framework extends FrameworkId>(
     return methodNotAllowed("GET, POST");
   }
 
+  return notFound();
+}
+
+async function toolSourceRoute<Framework extends FrameworkId>(
+  request: Request,
+  segments: readonly string[],
+  url: URL,
+  user: ScopedViby<Framework>,
+  maxBodyBytes: number,
+): Promise<Response> {
+  if (segments.length === 1) {
+    if (request.method === "GET") {
+      const sources = await user.toolSources.list({
+        ...(url.searchParams.has("status")
+          ? { status: toolSourceStatus(url.searchParams.get("status")) }
+          : {}),
+        ...(url.searchParams.has("type")
+          ? { type: requiredString(url.searchParams.get("type"), "type", 64) }
+          : {}),
+        ...(url.searchParams.has("limit") ? { limit: queryInteger(url, "limit") } : {}),
+      });
+      return json({ toolSources: sources.map((source) => source.data()) });
+    }
+    if (request.method === "POST") {
+      const body = await requestObject(request, maxBodyBytes);
+      const source = await user.toolSources.create({
+        type: requiredString(body.type, "type", 64),
+        name: requiredString(body.name, "name", 120),
+        ...(body.description === undefined
+          ? {}
+          : { description: body.description === null
+              ? null
+              : stringValue(body.description, "description", 1_000) }),
+        ...(body.configuration === undefined
+          ? {}
+          : { configuration: jsonObject(body.configuration, "configuration") }),
+      });
+      return json({ toolSource: source.data() }, 201);
+    }
+    return methodNotAllowed("GET, POST");
+  }
+
+  const source = await user.toolSources.get(requiredString(segments[1], "toolSourceId", 200));
+  if (segments.length === 2) {
+    if (request.method === "GET") return json({ toolSource: source.data() });
+    if (request.method === "PATCH") {
+      const body = await requestObject(request, maxBodyBytes);
+      await source.update({
+        ...(body.name === undefined ? {} : { name: requiredString(body.name, "name", 120) }),
+        ...(body.description === undefined
+          ? {}
+          : { description: body.description === null
+              ? null
+              : stringValue(body.description, "description", 1_000) }),
+        ...(body.configuration === undefined
+          ? {}
+          : { configuration: jsonObject(body.configuration, "configuration") }),
+        ...(body.enabled === undefined ? {} : { enabled: booleanValue(body.enabled, "enabled") }),
+      });
+      return json({ toolSource: source.data() });
+    }
+    if (request.method === "DELETE") {
+      await source.archive();
+      return json({ toolSource: source.data() });
+    }
+    return methodNotAllowed("GET, PATCH, DELETE");
+  }
+
+  if (segments.length === 3 && segments[2] === "connection") {
+    if (request.method !== "GET") return methodNotAllowed("GET");
+    return json({ connection: await source.connection() });
+  }
+  if (segments.length === 3 && segments[2] === "connect") {
+    if (request.method !== "POST") return methodNotAllowed("POST");
+    const body = await requestObject(request, maxBodyBytes);
+    const result = await source.connect({
+      callbackUrl: requiredString(body.callbackUrl, "callbackUrl", 2_000),
+      returnTo: requiredString(body.returnTo, "returnTo", 2_000),
+      ...(body.scopes === undefined ? {} : { scopes: stringArray(body.scopes, "scopes", 200) }),
+      ...(body.force === undefined ? {} : { force: booleanValue(body.force, "force") }),
+      signal: request.signal,
+    });
+    return json({ result }, result.status === "authorization-required" ? 202 : 200);
+  }
+  if (segments.length === 3 && segments[2] === "disconnect") {
+    if (request.method !== "POST") return methodNotAllowed("POST");
+    return json({ result: await source.disconnect(request.signal) });
+  }
   return notFound();
 }
 
@@ -1030,6 +1139,13 @@ function stringArray(value: unknown, name: string, itemMax: number): readonly st
 function integrationCategory(value: string | undefined): IntegrationCategory {
   if (value !== "repository" && value !== "deployment") {
     throw new ConfigurationError("Integration category must be repository or deployment.");
+  }
+  return value;
+}
+
+function toolSourceStatus(value: string | null): ToolSourceRegistrationStatus {
+  if (value !== "active" && value !== "disabled" && value !== "archived") {
+    throw new ConfigurationError("status must be active, disabled, or archived.");
   }
   return value;
 }
