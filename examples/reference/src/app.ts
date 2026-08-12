@@ -47,32 +47,33 @@ export function createReferenceApp<Framework extends FrameworkId>(
   options: ReferenceAppOptions<Framework>,
 ): ReferenceApp {
   const previews = new Map<string, ActivePreview>();
+  const preview = options.preview;
   const api = createVibyApi({
     viby: options.viby,
     basePath: "/api",
     // The example has one fixed user. Real products derive this from their auth session.
     authenticate: async () => options.scope,
-    preview: options.preview
-      ? async ({ version }) => {
-          const existing = previews.get(version.id);
-          if (existing) {
-            return {
-              url: existing.url,
-              provider: existing.session.provider,
-              leaseId: existing.session.leaseId ?? null,
-              cached: true,
-            };
-          }
-          const active = await startPreview(version, options.preview!);
-          previews.set(version.id, active);
+    ...(preview ? {
+      preview: async ({ version }) => {
+        const existing = previews.get(version.id);
+        if (existing) {
           return {
-            url: active.url,
-            provider: active.session.provider,
-            leaseId: active.session.leaseId ?? null,
-            cached: false,
+            url: existing.url,
+            provider: existing.session.provider,
+            leaseId: existing.session.leaseId ?? null,
+            cached: true,
           };
         }
-      : undefined,
+        const active = await startPreview(version, preview);
+        previews.set(version.id, active);
+        return {
+          url: active.url,
+          provider: active.session.provider,
+          leaseId: active.session.leaseId ?? null,
+          cached: false,
+        };
+      },
+    } : {}),
   });
   return {
     async fetch(request) {
