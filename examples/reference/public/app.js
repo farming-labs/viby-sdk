@@ -9,6 +9,8 @@ const elements = {
   conversation: document.querySelector("#conversation-scroll"),
   title: document.querySelector("#project-title"),
   framework: document.querySelector("#framework-chip"),
+  toolChip: document.querySelector("#tool-chip"),
+  toolLabel: document.querySelector("#tool-label"),
   download: document.querySelector("#download-button"),
   previewEmpty: document.querySelector("#preview-empty"),
   previewLoading: document.querySelector("#preview-loading"),
@@ -106,6 +108,7 @@ async function submitPrompt() {
       elements.title.textContent = payload.chat.title;
       elements.framework.textContent = payload.chat.framework;
     }
+    if (Array.isArray(payload.toolSources)) renderToolSources(payload.toolSources);
     state.generationId = payload.generation.id;
     await consumeEvents(state.generationId);
     const detail = await api(`/api/generations/${encodeURIComponent(state.generationId)}`);
@@ -248,6 +251,8 @@ async function openProject(chatId) {
     state.version = payload.versions[0] ?? null;
     elements.title.textContent = payload.chat.title;
     elements.framework.textContent = payload.chat.framework;
+    const selected = await api(`/api/chats/${encodeURIComponent(chatId)}/tool-sources`);
+    renderToolSources(selected.toolSources);
     for (const message of payload.messages) appendMessage(message.role, message.content, message.createdAt);
     if (state.version) {
       elements.versionLabel.textContent = `v${state.version.number}`;
@@ -385,6 +390,7 @@ function resetProject(render = true) {
   elements.empty.hidden = false;
   elements.title.textContent = "Untitled";
   elements.framework.textContent = "framework neutral";
+  renderToolSources([]);
   elements.download.disabled = true;
   elements.versionLabel.textContent = "No version";
   elements.composerLabel.textContent = "Describe your project";
@@ -450,6 +456,15 @@ function showError(message) { elements.errorCopy.textContent = message; elements
 function clearError() { elements.error.hidden = true; elements.errorCopy.textContent = ""; }
 function openSidebar() { elements.sidebar.classList.add("open"); elements.scrim.classList.add("open"); }
 function closeSidebar() { elements.sidebar.classList.remove("open"); elements.scrim.classList.remove("open"); }
+
+function renderToolSources(sources) {
+  const count = sources.length;
+  elements.toolLabel.textContent = count === 0 ? "No tools" : `${count} tool${count === 1 ? "" : "s"}`;
+  elements.toolChip.classList.toggle("connected", count > 0);
+  elements.toolChip.title = count === 0
+    ? "No tools selected"
+    : `Connected: ${sources.map((source) => source.name).join(", ")}`;
+}
 
 async function api(path, init = {}) {
   const response = await fetch(path, {

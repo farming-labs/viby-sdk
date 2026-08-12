@@ -1,46 +1,18 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { MockLanguageModelV4 } from "ai/test";
 import { strFromU8, unzipSync } from "fflate";
 import { createReferenceApp } from "../../examples/reference/src/app.ts";
 import { createVibyWithDependencies } from "../../src/client.ts";
 import { sandboxCapabilities } from "../../src/sandbox.ts";
 import { SkillResolver } from "../../src/skills.ts";
-import { sha256 } from "../../src/utils.ts";
+import { mcpAdapter } from "../../src/tool-source-mcp.ts";
 import { MemoryRepository } from "../helpers/memory-repository.ts";
 
-test("runs chat, stream, preview, iterate, and download through the reference app", async () => {
+test("runs connected tools, chat, stream, preview, iterate, and download through the reference app", async () => {
   const repository = new MemoryRepository();
-  const generatedInputs = [];
+  const toolCalls = [];
   const sandboxCalls = [];
-  let generationNumber = 0;
-  const generator = {
-    async generate(input, options) {
-      generatedInputs.push(input);
-      generationNumber += 1;
-      const source = `export const release = ${generationNumber};\n`;
-      await options?.onDelta?.(`release-${generationNumber}`);
-      return {
-        kind: "project",
-        title: "Reference workspace",
-        summary: `Completed product version ${generationNumber}.`,
-        files: [
-          file("package.json", JSON.stringify({
-            name: "reference-output",
-            scripts: { dev: "farm start" },
-          })),
-          file("src/main.ts", source),
-        ],
-        usage: {
-          inputTokens: 10,
-          inputTokenDetails: { noCacheTokens: 10, cacheReadTokens: 0, cacheWriteTokens: 0 },
-          outputTokens: 20,
-          outputTokenDetails: { textTokens: 20, reasoningTokens: 0 },
-          totalTokens: 30,
-        },
-        finishReason: "stop",
-      };
-    },
-  };
   const sandbox = {
     provider: "test-sandbox",
     capabilities: sandboxCapabilities({
@@ -71,13 +43,76 @@ test("runs chat, stream, preview, iterate, and download through the reference ap
       };
     },
   };
+  let connectedSourceId;
+  let modelStep = 0;
+  const responses = () => [
+    modelToolCall("context-1", `${connectedSourceId}__product_context`, { focus: "analytics" }),
+    modelToolCall("package-1", "workspace_write_file", {
+      path: "package.json",
+      content: JSON.stringify({ name: "reference-output", scripts: { dev: "farm start" } }),
+      mediaType: "application/json",
+    }),
+    modelToolCall("source-1", "workspace_write_file", {
+      path: "src/main.ts",
+      content: "export const release = 1;\n",
+      mediaType: "text/typescript",
+    }),
+    modelCompletion("Reference workspace", "Used connected context to create version one."),
+    modelToolCall("source-2", "workspace_write_file", {
+      path: "src/main.ts",
+      content: "export const release = 2;\n",
+      mediaType: "text/typescript",
+    }),
+    modelCompletion("Reference workspace", "Made the activity view denser."),
+  ];
   const viby = createVibyWithDependencies(
-    { framework: "farm", model: "test/reference", skills: {}, sandbox },
-    { repository, generator, skillResolver: new SkillResolver({}) },
+    {
+      framework: "farm",
+      model: new MockLanguageModelV4({
+        doGenerate: async () => responses()[modelStep++],
+      }),
+      skills: {},
+      sandbox,
+      agent: { maxSteps: 8, maxDurationMs: 10_000, maxTokens: 10_000 },
+      tools: {
+        adapters: {
+          mcp: mcpAdapter({
+            connect: async ({ source }) => ({
+              async listTools() {
+                return { tools: [{
+                  name: "product_context",
+                  description: "Read connected product context.",
+                  inputSchema: { type: "object" },
+                  annotations: { readOnlyHint: true },
+                }] };
+              },
+              async callTool(input) {
+                toolCalls.push([source.id, input.name]);
+                return {
+                  content: [{ type: "text", text: "Connected product context" }],
+                  structuredContent: { connected: true },
+                  isError: false,
+                };
+              },
+              async close() {},
+            }),
+          }),
+        },
+      },
+    },
+    { repository, skillResolver: new SkillResolver({}) },
   );
+  const scoped = viby.forUser({ tenantId: "reference-tenant", userId: "reference-user" });
+  const connected = await scoped.toolSources.create({
+    type: "mcp",
+    name: "Connected product tools",
+    configuration: { workspace: "reference" },
+  });
+  connectedSourceId = connected.id;
   const app = createReferenceApp({
     viby,
     scope: { tenantId: "reference-tenant", userId: "reference-user" },
+    defaultToolSourceIds: [connected.id],
     preview: {
       port: 4173,
       install: { command: "npm", args: ["install"] },
@@ -92,6 +127,12 @@ test("runs chat, stream, preview, iterate, and download through the reference ap
       body: JSON.stringify({ prompt: "Build a complete product analytics workspace." }),
     }, 201);
     assert.equal(created.chat.framework, "farm");
+    assert.deepEqual(created.toolSources.map((source) => source.id), [connected.id]);
+    assert.deepEqual(
+      (await requestJson(app, `/api/chats/${created.chat.id}/tool-sources`))
+        .toolSources.map((source) => source.id),
+      [connected.id],
+    );
 
     const initialStream = await app.fetch(request(
       `/api/generations/${created.generation.id}/events`,
@@ -106,6 +147,11 @@ test("runs chat, stream, preview, iterate, and download through the reference ap
     const initial = await requestJson(app, `/api/generations/${created.generation.id}`);
     assert.equal(initial.generation.status, "succeeded");
     assert.equal(initial.version.number, 1);
+    assert.deepEqual(toolCalls, [[connected.id, "product_context"]]);
+    assert.ok(initial.toolCalls.some((call) => (
+      call.name === `tool-source.${connected.id}.product_context`
+      && call.status === "succeeded"
+    )));
 
     const preview = await requestJson(app, `/api/versions/${initial.version.id}/preview`, {
       method: "POST",
@@ -128,7 +174,6 @@ test("runs chat, stream, preview, iterate, and download through the reference ap
     const iterated = await requestJson(app, `/api/generations/${iteration.generation.id}`);
     assert.equal(iterated.version.number, 2);
     assert.equal(iterated.version.parentVersionId, initial.version.id);
-    assert.equal(generatedInputs[1].previousFiles[1].content, "export const release = 1;\n");
 
     const download = await app.fetch(request(
       `/api/versions/${iterated.version.id}/download?chatId=${created.chat.id}`,
@@ -143,19 +188,35 @@ test("runs chat, stream, preview, iterate, and download through the reference ap
     assert.equal(restored.messages.length, 4);
     const listing = await requestJson(app, "/api/chats");
     assert.equal(listing.chats[0].id, created.chat.id);
+    assert.deepEqual(toolCalls, [[connected.id, "product_context"]]);
   } finally {
     await viby.close();
   }
 });
 
-function file(path, content) {
+const usage = {
+  inputTokens: { total: 10, noCache: 10, cacheRead: undefined, cacheWrite: undefined },
+  outputTokens: { total: 20, text: 20, reasoning: undefined },
+};
+
+function modelToolCall(toolCallId, toolName, input) {
   return {
-    path,
-    content,
-    mediaType: path.endsWith(".json") ? "application/json" : "text/typescript",
-    size: Buffer.byteLength(content),
-    checksum: sha256(content),
-    locked: false,
+    content: [{ type: "tool-call", toolCallId, toolName, input: JSON.stringify(input) }],
+    finishReason: { unified: "tool-calls", raw: undefined },
+    usage,
+    warnings: [],
+  };
+}
+
+function modelCompletion(title, summary) {
+  return {
+    content: [{
+      type: "text",
+      text: JSON.stringify({ outcome: "complete", title, summary, task: null }),
+    }],
+    finishReason: { unified: "stop", raw: undefined },
+    usage,
+    warnings: [],
   };
 }
 
