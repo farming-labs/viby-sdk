@@ -107,6 +107,12 @@ import type {
   RepositoryPushStatus,
 } from "./repository-history.js";
 import type {
+  CreatePreviewSessionRecord,
+  PreviewSessionData,
+  PreviewSessionListOptions,
+  PreviewStatus,
+} from "./preview.js";
+import type {
   BeginDeploymentRecord,
   CompleteDeploymentRecord,
   DeploymentHistoryStatus,
@@ -422,6 +428,25 @@ interface SandboxLeaseRow {
   updated_at: Date;
 }
 
+interface PreviewSessionRow {
+  id: string;
+  chat_id: string;
+  version_id: string;
+  sandbox_lease_id: string;
+  sandbox_provider: string;
+  framework: string;
+  port: number;
+  path: string;
+  url: string | null;
+  status: PreviewStatus;
+  error: string | null;
+  expires_at: Date;
+  ready_at: Date | null;
+  stopped_at: Date | null;
+  created_at: Date;
+  updated_at: Date;
+}
+
 interface RepositoryLinkRow {
   id: string;
   chat_id: string;
@@ -550,6 +575,7 @@ export class PostgresRepository implements Repository {
         AND to_regclass('viby.generation_events') IS NOT NULL
         AND to_regclass('viby.generation_tasks') IS NOT NULL
         AND to_regclass('viby.sandbox_leases') IS NOT NULL
+        AND to_regclass('viby.preview_sessions') IS NOT NULL
         AND to_regclass('viby.version_changes') IS NOT NULL
         AND to_regclass('viby.message_parts') IS NOT NULL
         AND to_regclass('viby.tool_calls') IS NOT NULL
@@ -3329,6 +3355,149 @@ export class PostgresRepository implements Repository {
     `;
   }
 
+  async createPreviewSession<Framework extends FrameworkId>(
+    scope: UserScope,
+    input: CreatePreviewSessionRecord<Framework>,
+  ): Promise<PreviewSessionData<Framework>> {
+    await this.assertReady();
+    const [row] = await this.#sql<PreviewSessionRow[]>`
+      INSERT INTO viby.preview_sessions (
+        id, tenant_id, user_id, chat_id, version_id, sandbox_lease_id,
+        sandbox_provider, framework, port, path, expires_at, created_at, updated_at
+      )
+      SELECT
+        ${input.id}, ${scope.tenantId}, ${scope.userId}, chat.id, version.id, lease.id,
+        ${input.sandboxProvider}, ${input.framework}, ${input.port}, ${input.path},
+        ${input.expiresAt}, ${input.now}, ${input.now}
+      FROM viby.chats AS chat
+      JOIN viby.versions AS version ON version.chat_id = chat.id
+      JOIN viby.sandbox_leases AS lease
+        ON lease.chat_id = chat.id AND lease.version_id = version.id
+      WHERE chat.id = ${input.chatId} AND version.id = ${input.versionId}
+        AND lease.id = ${input.sandboxLeaseId} AND lease.status = 'active'
+        AND lease.provider = ${input.sandboxProvider}
+        AND chat.tenant_id = ${scope.tenantId} AND chat.user_id = ${scope.userId}
+        AND version.tenant_id = ${scope.tenantId} AND version.user_id = ${scope.userId}
+        AND lease.tenant_id = ${scope.tenantId} AND lease.user_id = ${scope.userId}
+      ON CONFLICT (tenant_id, user_id, sandbox_lease_id) DO NOTHING
+      RETURNING *
+    `;
+    if (row) return mapPreviewSession<Framework>(row);
+    const [existing] = await this.#sql<PreviewSessionRow[]>`
+      SELECT * FROM viby.preview_sessions
+      WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+        AND sandbox_lease_id = ${input.sandboxLeaseId}
+      LIMIT 1
+    `;
+    if (!existing) throw new NotFoundError("Preview sandbox version");
+    return mapPreviewSession<Framework>(existing);
+  }
+
+  async getPreviewSession<Framework extends FrameworkId>(
+    scope: UserScope,
+    id: string,
+  ): Promise<PreviewSessionData<Framework> | null> {
+    await this.assertReady();
+    const [row] = await this.#sql<PreviewSessionRow[]>`
+      SELECT * FROM viby.preview_sessions
+      WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId} AND id = ${id}
+      LIMIT 1
+    `;
+    return row ? mapPreviewSession<Framework>(row) : null;
+  }
+
+  async listPreviewSessions<Framework extends FrameworkId>(
+    scope: UserScope,
+    options: PreviewSessionListOptions = {},
+  ): Promise<PreviewSessionData<Framework>[]> {
+    await this.assertReady();
+    const chatId = options.chatId ?? null;
+    const versionId = options.versionId ?? null;
+    const status = options.status ?? null;
+    const rows = await this.#sql<PreviewSessionRow[]>`
+      SELECT * FROM viby.preview_sessions
+      WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+        AND (${chatId}::uuid IS NULL OR chat_id = ${chatId})
+        AND (${versionId}::uuid IS NULL OR version_id = ${versionId})
+        AND (${status}::text IS NULL OR status = ${status})
+      ORDER BY created_at DESC, id DESC
+    `;
+    return rows.map(mapPreviewSession<Framework>);
+  }
+
+  async listExpiredPreviewSessions<Framework extends FrameworkId>(
+    scope: UserScope,
+    now: Date,
+    limit: number,
+  ): Promise<PreviewSessionData<Framework>[]> {
+    await this.assertReady();
+    const rows = await this.#sql<PreviewSessionRow[]>`
+      SELECT * FROM viby.preview_sessions
+      WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+        AND status IN ('starting', 'ready') AND expires_at <= ${now}
+      ORDER BY expires_at, id
+      LIMIT ${limit}
+    `;
+    return rows.map(mapPreviewSession<Framework>);
+  }
+
+  async markPreviewReady<Framework extends FrameworkId>(
+    scope: UserScope,
+    id: string,
+    url: string,
+    now: Date,
+  ): Promise<PreviewSessionData<Framework>> {
+    await this.assertReady();
+    const [row] = await this.#sql<PreviewSessionRow[]>`
+      UPDATE viby.preview_sessions SET
+        status = 'ready', url = ${url}, error = NULL,
+        ready_at = COALESCE(ready_at, ${now}), updated_at = ${now}
+      WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+        AND id = ${id} AND status IN ('starting', 'ready')
+      RETURNING *
+    `;
+    if (!row) throw new NotFoundError("Active preview session");
+    return mapPreviewSession<Framework>(row);
+  }
+
+  async failPreviewSession<Framework extends FrameworkId>(
+    scope: UserScope,
+    id: string,
+    error: string,
+    now: Date,
+  ): Promise<PreviewSessionData<Framework>> {
+    await this.assertReady();
+    const [row] = await this.#sql<PreviewSessionRow[]>`
+      UPDATE viby.preview_sessions SET
+        status = 'failed', error = ${error}, stopped_at = ${now}, updated_at = ${now}
+      WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+        AND id = ${id} AND status IN ('starting', 'ready')
+      RETURNING *
+    `;
+    if (!row) throw new NotFoundError("Active preview session");
+    return mapPreviewSession<Framework>(row);
+  }
+
+  async closePreviewSession<Framework extends FrameworkId>(
+    scope: UserScope,
+    id: string,
+    status: "stopped" | "expired",
+    now: Date,
+  ): Promise<PreviewSessionData<Framework>> {
+    await this.assertReady();
+    const [updated] = await this.#sql<PreviewSessionRow[]>`
+      UPDATE viby.preview_sessions SET
+        status = ${status}, stopped_at = ${now}, updated_at = ${now}
+      WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+        AND id = ${id} AND status IN ('starting', 'ready')
+      RETURNING *
+    `;
+    if (updated) return mapPreviewSession<Framework>(updated);
+    const existing = await this.getPreviewSession<Framework>(scope, id);
+    if (!existing) throw new NotFoundError("Preview session");
+    return existing;
+  }
+
   async #storeAttachments(
     scope: UserScope,
     input: CreateGenerationRecord,
@@ -4205,5 +4374,28 @@ function mapSandboxLease<Framework extends FrameworkId>(
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     stoppedAt: row.stopped_at,
+  };
+}
+
+function mapPreviewSession<Framework extends FrameworkId>(
+  row: PreviewSessionRow,
+): PreviewSessionData<Framework> {
+  return {
+    id: row.id,
+    chatId: row.chat_id,
+    versionId: row.version_id,
+    sandboxLeaseId: row.sandbox_lease_id,
+    sandboxProvider: row.sandbox_provider,
+    framework: row.framework as Framework,
+    port: row.port,
+    path: row.path,
+    url: row.url,
+    status: row.status,
+    error: row.error,
+    expiresAt: row.expires_at,
+    readyAt: row.ready_at,
+    stoppedAt: row.stopped_at,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
   };
 }

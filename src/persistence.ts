@@ -65,3 +65,10 @@ export type {
   DeploymentArtifactContent,
   DeploymentArtifactData,
 } from "./deployment-preparation.js";
+export type {
+  CreatePreviewSessionRecord,
+  PreviewSessionData,
+  PreviewSessionListOptions,
+  PreviewSessionStore,
+  PreviewStatus,
+} from "./preview.js";

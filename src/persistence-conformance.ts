@@ -19,6 +19,7 @@ export interface PersistenceConformanceReport {
     | "durable-generation"
     | "event-cursors"
     | "source-history"
+    | "preview-sessions"
     | "repository-history"
     | "deployment-history"
     | "deployment-artifacts"
@@ -130,6 +131,56 @@ export async function verifyPersistenceAdapter(
     assertConformance(child.parentVersionId === outcome.version.id, "Version lineage was not retained.");
     assertConformance((await chat.listVersions()).items.length === 2, "Version history was not durable.");
     checks.push("source-history");
+
+    const sandboxLeaseId = crypto.randomUUID();
+    const previewId = crypto.randomUUID();
+    const previewExpiresAt = new Date(Date.now() + 60_000);
+    await persistence.createSandboxLease(scope, {
+      id: sandboxLeaseId,
+      sandboxId: `sandbox-${suffix}`,
+      provider: "conformance-sandbox",
+      context: {
+        ...scope,
+        chatId: chat.id,
+        versionId: child.id,
+        framework: "persistence-conformance",
+      },
+      ports: [3000],
+      expiresAt: previewExpiresAt,
+    });
+    await persistence.createPreviewSession(scope, {
+      id: previewId,
+      chatId: chat.id,
+      versionId: child.id,
+      sandboxLeaseId,
+      sandboxProvider: "conformance-sandbox",
+      framework: "persistence-conformance",
+      port: 3000,
+      path: "/",
+      expiresAt: previewExpiresAt,
+      now: new Date(),
+    });
+    const readyPreview = await persistence.markPreviewReady(
+      scope,
+      previewId,
+      "https://preview.example.test/",
+      new Date(),
+    );
+    assertConformance(readyPreview.status === "ready" && readyPreview.url !== null,
+      "Preview readiness was not durable.");
+    assertConformance((await persistence.listPreviewSessions(scope, {
+      versionId: child.id,
+    }))[0]?.id === previewId, "Preview history was not queryable by version.");
+    const stoppedPreview = await persistence.closePreviewSession(
+      scope,
+      previewId,
+      "stopped",
+      new Date(),
+    );
+    assertConformance(stoppedPreview.status === "stopped" && stoppedPreview.stoppedAt !== null,
+      "Preview stop state was not durable.");
+    await persistence.closeSandboxLease(scope, sandboxLeaseId, "stopped");
+    checks.push("preview-sessions");
 
     const pushId = crypto.randomUUID();
     const pushKey = `conformance-${crypto.randomUUID()}`;

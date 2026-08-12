@@ -4,10 +4,23 @@ export {
   Generation,
   GenerationCollection,
   GenerationWorker,
+  Preview,
+  PreviewCollection,
   SandboxCollection,
   ScopedViby,
   Version,
 } from "./client.js";
+export { PreviewError, PreviewRegistry } from "./preview.js";
+export type {
+  CreatePreviewSessionRecord,
+  PreviewConfig,
+  PreviewOpenOptions,
+  PreviewSessionData,
+  PreviewSessionListOptions,
+  PreviewSessionStore,
+  PreviewStatus,
+  ResolvedPreviewOpenOptions,
+} from "./preview.js";
 export {
   defineSkillResolver,
   skillFrom,

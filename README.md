@@ -549,6 +549,32 @@ const reconnected = await userViby.sandboxes.reconnect(leaseId);
 
 `userViby.sandboxes.get(leaseId)` returns the portable lease metadata. Viby stores the provider name, opaque provider sandbox id, source version, framework, declared ports, state, and expiration. It never stores provider credentials, environment values, or vendor response payloads. E2B, Vercel Sandbox, and Cloudflare implement native reconnect today; other adapters fail through the capability gate.
 
+For the normal product flow, configure the framework's development command once and let Viby own the durable preview lifecycle:
+
+```ts
+const viby = createViby({
+  framework: "farm",
+  model,
+  sandbox,
+  preview: {
+    start: { command: "pnpm", args: ["dev", "--host", "0.0.0.0"] },
+    port: 3000,
+    path: "/",
+    environment: "preview",
+  },
+});
+
+const preview = await version.preview();
+preview.url;
+
+// After an application or worker restart:
+const restored = await viby.forUser({ tenantId, userId }).previews.get(preview.id);
+await restored.reconnect();
+await restored.stop();
+```
+
+Each preview is bound to one immutable version and one persisted sandbox lease. Viby records readiness, URL, failure, expiry, and stop state; `user.previews.list(...)` reloads history and `cleanupExpired()` closes stale records. The sandbox adapter still owns execution and URL creation, so this remains provider-neutral and does not imply Viby-managed hosting.
+
 Enforce one command policy across every adapter in the session core:
 
 ```ts
