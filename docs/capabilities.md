@@ -32,7 +32,7 @@ This inventory describes the current `@viby/sdk` source on `main`. “Shipped”
 | Agent trace | started, delta, completed, and failed events on the normal generation cursor |
 | Tool records | typed arguments/results, redaction, ownership, status, and external-effect idempotency |
 | Durable tool-source registry | tenant/user-scoped provider-neutral registrations, public configuration, adapter materialization, enable/disable/archive lifecycle, and explicit per-chat selection |
-| Tool-source connections | adapter-owned OAuth/authorization, hashed single-use state, callback substitution protection, refresh/revoke, durable connection metadata, and isolated secret-store credentials |
+| Tool-source connections | adapter-owned OAuth/authorization, hashed single-use state, callback substitution protection, refresh/revoke, durable connection metadata, isolated secret-store credentials, and a reusable provider-neutral adapter conformance suite |
 | Source import | validated UTF-8 file lists, ZIP archives, and provider-neutral source adapters |
 | Source policy | immutable locked files enforced across import, direct edits, model changes, and workspace tools |
 | Source history | immutable parent-linked versions, ordered changes, fork, restore, and message lookup |

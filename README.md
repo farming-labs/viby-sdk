@@ -145,6 +145,8 @@ await chat.toolSources.set([source.id]);
 
 Durable registrations are scoped to one tenant and user, selected explicitly per chat, and resolved into the same `ToolSource` interface used by static sources. They can be disabled, updated, or archived without changing generation code. The JSON `configuration` field rejects credential-like keys; authentication belongs in the separate secret-backed authorization lifecycle.
 
+Adapter authors can run `verifyToolSourceAdapter` from `@viby/sdk/tools/conformance` against a disposable registration. The caller supplies a harmless listed call and any fixture credential resolver; Viby checks identity, materialization, tool schemas, calls, credential isolation, JSON-safe results, and source cleanup without assuming MCP or a provider.
+
 Adapters may declare that lifecycle without exposing provider credentials to chats, messages, events, or the model:
 
 ```ts

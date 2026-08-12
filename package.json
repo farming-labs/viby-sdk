@@ -167,6 +167,10 @@
       "types": "./dist/tool-source-mcp.d.ts",
       "import": "./dist/tool-source-mcp.js"
     },
+    "./tools/conformance": {
+      "types": "./dist/tool-source-conformance.d.ts",
+      "import": "./dist/tool-source-conformance.js"
+    },
     "./package.json": "./package.json"
   },
   "bin": {
