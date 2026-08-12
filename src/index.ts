@@ -8,7 +8,12 @@ export {
   ScopedViby,
   Version,
 } from "./client.js";
-export { skillRead } from "./skills.js";
+export {
+  defineSkillResolver,
+  skillFrom,
+  skillInline,
+  skillRead,
+} from "./skills.js";
 export { defineDatabaseAdapter } from "./storage.js";
 export type {
   DatabaseAdapter,
@@ -392,6 +397,7 @@ export type {
   GenerationWaitOptions,
   IterateInput,
   JsonValue,
+  InlineSkillReference,
   LocalSkillReference,
   MessageData,
   MessagePart,
@@ -409,12 +415,16 @@ export type {
   QuestionTaskResolution,
   RecordDesignEvaluationInput,
   ResolvedSkill,
+  ResolverSkillReference,
   ResolveGenerationTaskInput,
   RestoreVersionInput,
   SkillCategory,
   SkillFile,
   SkillGroups,
   SkillReference,
+  SkillResolutionInput,
+  SkillResolutionOutput,
+  SkillResolverAdapter,
   SkillsShSkillId,
   SourceChange,
   SourceArtifactInput,

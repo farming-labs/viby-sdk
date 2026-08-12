@@ -235,7 +235,7 @@ interface SkillSnapshotRow {
   name: string;
   description: string;
   category: string;
-  source: "skills.sh" | "file";
+  source: string;
   locator: string;
   content_hash: string;
   files: ResolvedSkill["files"];

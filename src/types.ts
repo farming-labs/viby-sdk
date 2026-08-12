@@ -48,7 +48,48 @@ export interface LocalSkillReference {
   readonly path: string;
 }
 
-export type SkillReference = SkillsShSkillId | LocalSkillReference;
+/** An immutable skill supplied directly by the host without filesystem or network access. */
+export interface InlineSkillReference {
+  readonly source: "inline";
+  readonly name: string;
+  readonly description?: string;
+  readonly files: readonly SkillFile[];
+}
+
+/** An opaque, serializable locator owned by a configured skill resolver. */
+export interface ResolverSkillReference {
+  readonly source: "resolver";
+  readonly resolver: string;
+  readonly locator: string;
+  readonly metadata?: ChatMetadata;
+}
+
+export type SkillReference =
+  | SkillsShSkillId
+  | LocalSkillReference
+  | InlineSkillReference
+  | ResolverSkillReference;
+
+export interface SkillResolutionInput {
+  readonly reference: SkillReference;
+  readonly category: string;
+  readonly prompt: string;
+}
+
+export interface SkillResolutionOutput {
+  readonly name: string;
+  readonly description?: string;
+  readonly source?: string;
+  readonly locator?: string;
+  readonly contentHash?: string;
+  readonly files: readonly SkillFile[];
+}
+
+/** Resolves one host-owned reference. Return null to defer to another resolver or a built-in adapter. */
+export interface SkillResolverAdapter {
+  readonly id: string;
+  resolve(input: SkillResolutionInput): Promise<SkillResolutionOutput | null>;
+}
 
 export type SkillGroups = {
   readonly [category: string]: readonly SkillReference[] | undefined;
@@ -77,6 +118,8 @@ interface VibyBaseConfig<Framework extends FrameworkId = FrameworkId> {
   /** Provider-neutral browser used by preview inspection and visual evaluation workflows. */
   readonly browser?: BrowserAdapter;
   readonly skills?: SkillGroups;
+  /** Optional resolver for custom catalogs, databases, object stores, or Git-backed skill sources. */
+  readonly skillResolver?: SkillResolverAdapter;
   readonly sandbox?: SandboxAdapter;
   readonly sandboxPolicy?: SandboxCommandPolicy;
   readonly agent?: AgentRunnerConfig;
@@ -839,7 +882,7 @@ export interface ResolvedSkill {
   readonly name: string;
   readonly description: string;
   readonly category: string;
-  readonly source: "skills.sh" | "file";
+  readonly source: string;
   readonly locator: string;
   readonly contentHash: string;
   readonly files: readonly SkillFile[];
