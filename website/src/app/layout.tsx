@@ -2,9 +2,9 @@ import type { LayoutProps, Metadata } from "@farm.js/core";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Viby · Build vibe coding products",
+  title: "Viby · Infrastructure for AI software builders",
   description:
-    "Framework-neutral infrastructure for persistent, skill-guided vibe coding products.",
+    "Durable, provider-neutral infrastructure for building generation, iteration, preview, and shipping into your own coding product.",
   icons: {
     icon: [{ url: "/favicon.svg", type: "image/svg+xml", sizes: "any" }],
   },
