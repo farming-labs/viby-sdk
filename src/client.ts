@@ -213,6 +213,13 @@ import {
   type ToolSourceRegistrationListOptions,
   type UpdateToolSourceInput,
 } from "./tool-source-registry.js";
+import type {
+  CompleteToolSourceAuthorizationResult,
+  ConnectToolSourceInput,
+  ConnectToolSourceResult,
+  DisconnectToolSourceResult,
+  ToolSourceConnectionData,
+} from "./tool-source-authorization.js";
 
 const DEFAULT_POLL_INTERVAL_MS = 100;
 const DEFAULT_EVENT_LIMIT = 100;
@@ -272,6 +279,7 @@ export interface GenerationWorkerRunOptions {
 export interface Viby<Framework extends FrameworkId = FrameworkId> {
   readonly framework: Framework;
   readonly integrations: IntegrationClient;
+  readonly toolSources: ToolSourceAuthorizationCallbacks;
   forUser(scope: UserScope): ScopedViby<Framework>;
   worker(options: GenerationWorkerOptions): GenerationWorker<Framework>;
   close(): Promise<void>;
@@ -306,6 +314,7 @@ interface ClientDependencies<Framework extends FrameworkId> {
   readonly skillResolver: SkillResolver;
   readonly integrations?: IntegrationClient;
   readonly environment?: EnvironmentManager;
+  readonly secretStore?: SecretStore | null;
 }
 
 interface GenerationModelBinding<Framework extends FrameworkId> {
@@ -438,10 +447,12 @@ export function createVibyWithDependencies<const Framework extends FrameworkId>(
   const storage = normalizeStorageConfig(config);
   const integrationCount = configuredIntegrations(config.integrations).length;
   const environmentEnabled = config.environment !== undefined;
+  const authorizedToolSources = Object.values(config.tools?.adapters ?? {})
+    .some((adapter) => adapter.authorization !== undefined);
   if (config.environment !== undefined && (!config.environment || typeof config.environment !== "object")) {
     throw new ConfigurationError("environment must be an object when configured.");
   }
-  const secretStore = storage.secrets ?? (integrationCount > 0 || environmentEnabled
+  const secretStore = storage.secrets ?? (integrationCount > 0 || environmentEnabled || authorizedToolSources
     ? new LazyDefaultSecretStore()
     : null);
   const integrations = dependencies.integrations ?? new IntegrationClient(
@@ -460,6 +471,7 @@ export function createVibyWithDependencies<const Framework extends FrameworkId>(
   return new VibyClient(config, {
     ...dependencies,
     integrations,
+    secretStore,
     ...(environment ? { environment } : {}),
   });
 }
@@ -544,6 +556,7 @@ class LazyDefaultSecretStore implements SecretStore {
 class VibyClient<Framework extends FrameworkId> implements Viby<Framework> {
   readonly framework: Framework;
   readonly integrations: IntegrationClient;
+  readonly toolSources: ToolSourceAuthorizationCallbacks;
   readonly #repository: Repository;
   readonly #environment: EnvironmentManager | undefined;
   readonly #skillResolver: SkillResolver;
@@ -581,7 +594,9 @@ class VibyClient<Framework extends FrameworkId> implements Viby<Framework> {
     this.#toolSourceRegistry = new ToolSourceRegistry(
       this.#repository,
       config.tools?.adapters,
+      dependencies.secretStore ?? null,
     );
+    this.toolSources = new ToolSourceAuthorizationCallbacks(this.#toolSourceRegistry);
     this.#sandboxes = new SandboxRegistry(this.#repository, config.sandboxPolicy);
     this.#previews = new PreviewRegistry(
       this.#repository,
@@ -662,6 +677,19 @@ class VibyClient<Framework extends FrameworkId> implements Viby<Framework> {
     if (environment.status === "rejected") throw environment.reason;
     if (integrations.status === "rejected") throw integrations.reason;
     if (repository.status === "rejected") throw repository.reason;
+  }
+}
+
+/** Handles provider callbacks that are intentionally not tied to an authenticated browser request. */
+export class ToolSourceAuthorizationCallbacks {
+  readonly #registry: ToolSourceRegistry;
+
+  constructor(registry: ToolSourceRegistry) {
+    this.#registry = registry;
+  }
+
+  callback(request: Request | string): Promise<CompleteToolSourceAuthorizationResult> {
+    return this.#registry.callback(request);
   }
 }
 
@@ -894,6 +922,29 @@ export class RegisteredToolSource<Framework extends FrameworkId = FrameworkId> {
 
   data(): ToolSourceRegistrationData {
     return this.#data;
+  }
+
+  connection(): Promise<ToolSourceConnectionData | null> {
+    return this.#dependencies.toolSourceRegistry.connection(
+      this.#dependencies.scope,
+      this.id,
+    );
+  }
+
+  connect(input: ConnectToolSourceInput): Promise<ConnectToolSourceResult> {
+    return this.#dependencies.toolSourceRegistry.connect(
+      this.#dependencies.scope,
+      this.id,
+      input,
+    );
+  }
+
+  disconnect(signal?: AbortSignal): Promise<DisconnectToolSourceResult> {
+    return this.#dependencies.toolSourceRegistry.disconnect(
+      this.#dependencies.scope,
+      this.id,
+      signal,
+    );
   }
 
   async update(input: UpdateToolSourceInput): Promise<this> {

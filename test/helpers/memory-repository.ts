@@ -106,6 +106,13 @@ import type {
   ToolSourceRegistrationListOptions,
   UpdateToolSourceRegistrationRecord,
 } from "../../src/tool-source-registry.js";
+import type {
+  CreateToolSourceAuthorizationSessionRecord,
+  StoredToolSourceConnection,
+  ToolSourceAuthorizationSessionData,
+  UpdateToolSourceConnectionRecord,
+  UpsertToolSourceConnectionRecord,
+} from "../../src/tool-source-authorization.js";
 
 interface ScopedRecord {
   tenantId: string;
@@ -154,6 +161,11 @@ export class MemoryRepository implements Repository {
   readonly previewSessions = new Map<string, PreviewSessionData & ScopedRecord>();
   readonly toolSourceRegistrations = new Map<string, ToolSourceRegistrationData & ScopedRecord>();
   readonly chatToolSources = new Map<string, string[]>();
+  readonly toolSourceAuthorizationSessions = new Map<
+    string,
+    ToolSourceAuthorizationSessionData & ScopedRecord
+  >();
+  readonly toolSourceConnections = new Map<string, StoredToolSourceConnection & ScopedRecord>();
   readonly outboundDeliveries = new Map<string, MemoryOutboundEventDelivery>();
   readonly toolCalls = new Map<string, ToolCallData & ScopedRecord>();
   readonly repositoryLinks = new Map<string, RepositoryLinkData & ScopedRecord>();
@@ -2339,6 +2351,99 @@ export class MemoryRepository implements Repository {
     });
   }
 
+  async createToolSourceAuthorizationSession(
+    scope: UserScope,
+    input: CreateToolSourceAuthorizationSessionRecord,
+  ): Promise<ToolSourceAuthorizationSessionData> {
+    this.#activeToolSource(scope, input.toolSourceId);
+    const session = { ...input, consumedAt: null, ...scope };
+    this.toolSourceAuthorizationSessions.set(input.stateHash, session);
+    return publicToolSourceAuthorizationSession(session);
+  }
+
+  async getToolSourceAuthorizationSession(
+    stateHash: string,
+    now: Date,
+  ): Promise<{ scope: UserScope; session: ToolSourceAuthorizationSessionData } | null> {
+    const session = this.toolSourceAuthorizationSessions.get(stateHash);
+    if (!session || session.consumedAt || session.expiresAt.getTime() <= now.getTime()) return null;
+    return {
+      scope: { tenantId: session.tenantId, userId: session.userId },
+      session: publicToolSourceAuthorizationSession(session),
+    };
+  }
+
+  async consumeToolSourceAuthorizationSession(
+    stateHash: string,
+    consumedAt: Date,
+  ): Promise<{ scope: UserScope; session: ToolSourceAuthorizationSessionData } | null> {
+    const session = this.toolSourceAuthorizationSessions.get(stateHash);
+    if (!session || session.consumedAt || session.expiresAt.getTime() <= consumedAt.getTime()) return null;
+    const consumed = { ...session, consumedAt };
+    this.toolSourceAuthorizationSessions.set(stateHash, consumed);
+    return {
+      scope: { tenantId: consumed.tenantId, userId: consumed.userId },
+      session: publicToolSourceAuthorizationSession(consumed),
+    };
+  }
+
+  async getToolSourceConnection(
+    scope: UserScope,
+    toolSourceId: string,
+  ): Promise<StoredToolSourceConnection | null> {
+    const connection = this.toolSourceConnections.get(scopedChatKey(scope, toolSourceId));
+    return connection && inScope(connection, scope) ? publicToolSourceConnection(connection) : null;
+  }
+
+  async upsertToolSourceConnection(
+    scope: UserScope,
+    input: UpsertToolSourceConnectionRecord,
+  ): Promise<{ connection: StoredToolSourceConnection; replacedSecretRef: string | null }> {
+    this.#activeToolSource(scope, input.toolSourceId);
+    const key = scopedChatKey(scope, input.toolSourceId);
+    const current = this.toolSourceConnections.get(key);
+    const connection: StoredToolSourceConnection & ScopedRecord = {
+      id: current?.id ?? input.id,
+      toolSourceId: input.toolSourceId,
+      provider: input.provider,
+      account: structuredClone(input.account),
+      secretRef: input.secretRef,
+      status: "active",
+      scopes: [...input.scopes],
+      expiresAt: input.expiresAt,
+      createdAt: current?.createdAt ?? input.now,
+      updatedAt: input.now,
+      ...scope,
+    };
+    this.toolSourceConnections.set(key, connection);
+    return {
+      connection: publicToolSourceConnection(connection),
+      replacedSecretRef: current?.secretRef ?? null,
+    };
+  }
+
+  async updateToolSourceConnection(
+    scope: UserScope,
+    id: string,
+    input: UpdateToolSourceConnectionRecord,
+  ): Promise<StoredToolSourceConnection> {
+    const entry = [...this.toolSourceConnections.entries()].find(([, connection]) => (
+      connection.id === id && inScope(connection, scope)
+    ));
+    if (!entry) throw new NotFoundError("Tool source connection");
+    const [key, current] = entry;
+    const updated = {
+      ...current,
+      status: input.status,
+      secretRef: input.secretRef,
+      scopes: [...input.scopes],
+      expiresAt: input.expiresAt,
+      updatedAt: input.now,
+    };
+    this.toolSourceConnections.set(key, updated);
+    return publicToolSourceConnection(updated);
+  }
+
   #activeToolSource(scope: UserScope, id: string): ToolSourceRegistrationData & ScopedRecord {
     const source = this.toolSourceRegistrations.get(id);
     if (!source || !inScope(source, scope) || source.status !== "active") {
@@ -2510,6 +2615,20 @@ function publicToolSourceRegistration(
 ): ToolSourceRegistrationData {
   const { tenantId: _tenantId, userId: _userId, ...data } = record;
   return { ...data, configuration: structuredClone(data.configuration) };
+}
+
+function publicToolSourceAuthorizationSession(
+  record: ToolSourceAuthorizationSessionData & ScopedRecord,
+): ToolSourceAuthorizationSessionData {
+  const { tenantId: _tenantId, userId: _userId, ...data } = record;
+  return { ...data, scopes: [...data.scopes] };
+}
+
+function publicToolSourceConnection(
+  record: StoredToolSourceConnection & ScopedRecord,
+): StoredToolSourceConnection {
+  const { tenantId: _tenantId, userId: _userId, ...data } = record;
+  return { ...data, account: structuredClone(data.account), scopes: [...data.scopes] };
 }
 
 function scopedChatKey(scope: UserScope, chatId: string): string {

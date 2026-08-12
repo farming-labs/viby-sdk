@@ -6,6 +6,18 @@ import {
   type ToolSourceResolver,
 } from "./tool-source.js";
 import type { FrameworkId, JsonValue, UserScope } from "./types.js";
+import type { SecretStore } from "./integration-store.js";
+import {
+  ToolSourceAuthorizationManager,
+  type CompleteToolSourceAuthorizationResult,
+  type ConnectToolSourceInput,
+  type ConnectToolSourceResult,
+  type DisconnectToolSourceResult,
+  type ToolSourceAuthorizationAdapter,
+  type ToolSourceAuthorizationStore,
+  type ToolSourceConnectionData,
+  type ToolSourceCredentialContext,
+} from "./tool-source-authorization.js";
 import { createId } from "./utils.js";
 
 const MAX_CONFIGURATION_BYTES = 32_000;
@@ -96,11 +108,15 @@ export interface ToolSourceRegistryStore {
 export interface ToolSourceAdapterOpenInput {
   readonly source: ToolSourceRegistrationData;
   readonly scope: UserScope;
+  /** Resolves short-lived opaque credential bytes only inside the adapter boundary. */
+  readonly credential?: (signal?: AbortSignal) => Promise<ToolSourceCredentialContext>;
 }
 
 /** Materializes one durable, credential-free registration as the existing ToolSource contract. */
 export interface ToolSourceAdapter<Framework extends FrameworkId = FrameworkId> {
   readonly type: string;
+  /** Optional provider-neutral OAuth or authorization lifecycle for this source type. */
+  readonly authorization?: ToolSourceAuthorizationAdapter;
   open(input: ToolSourceAdapterOpenInput): ToolSource<Framework> | Promise<ToolSource<Framework>>;
   close?(): Promise<void>;
 }
@@ -129,16 +145,23 @@ export function defineToolSourceAdapter<Framework extends FrameworkId = Framewor
 /** Tenant-scoped durable registrations resolved into provider-neutral generation tools. */
 export class ToolSourceRegistry<Framework extends FrameworkId = FrameworkId>
 implements ToolSourceResolver<Framework> {
-  readonly #store: ToolSourceRegistryStore;
+  readonly #store: ToolSourceRegistryStore & ToolSourceAuthorizationStore;
   readonly #adapters: ReadonlyMap<string, ToolSourceAdapter<Framework>>;
   readonly #sources = new Map<string, Promise<ToolSource<Framework>>>();
+  readonly #authorization: ToolSourceAuthorizationManager;
 
   constructor(
-    store: ToolSourceRegistryStore,
+    store: ToolSourceRegistryStore & ToolSourceAuthorizationStore,
     adapters: Readonly<Record<string, ToolSourceAdapter<Framework>>> = {},
+    secrets: SecretStore | null = null,
   ) {
     this.#store = store;
     this.#adapters = normalizeAdapters(adapters);
+    this.#authorization = new ToolSourceAuthorizationManager(
+      store,
+      secrets,
+      (type) => this.#adapter(type),
+    );
   }
 
   get configured(): boolean {
@@ -217,6 +240,30 @@ implements ToolSourceResolver<Framework> {
     return archived;
   }
 
+  connection(scope: UserScope, id: string): Promise<ToolSourceConnectionData | null> {
+    return this.#authorization.connection(scope, id);
+  }
+
+  connect(
+    scope: UserScope,
+    id: string,
+    input: ConnectToolSourceInput,
+  ): Promise<ConnectToolSourceResult> {
+    return this.#authorization.connect(scope, id, input);
+  }
+
+  callback(request: Request | string): Promise<CompleteToolSourceAuthorizationResult> {
+    return this.#authorization.callback(request);
+  }
+
+  disconnect(
+    scope: UserScope,
+    id: string,
+    signal?: AbortSignal,
+  ): Promise<DisconnectToolSourceResult> {
+    return this.#authorization.disconnect(scope, id, signal);
+  }
+
   select(
     scope: UserScope,
     chatId: string,
@@ -269,9 +316,14 @@ implements ToolSourceResolver<Framework> {
     const key = cacheKey(scope, registration.id);
     let pending = this.#sources.get(key);
     if (!pending) {
-      pending = Promise.resolve(this.#adapter(registration.type).open({
+      const adapter = this.#adapter(registration.type);
+      const credential = adapter.authorization
+        ? (signal?: AbortSignal) => this.#authorization.credential(scope, registration.id, signal)
+        : undefined;
+      pending = Promise.resolve(adapter.open({
         source: registration,
         scope: { tenantId: scope.tenantId, userId: scope.userId },
+        ...(credential ? { credential } : {}),
       })).then((source) => {
         defineToolSource(source);
         if (source.id !== registration.id) {
@@ -279,7 +331,19 @@ implements ToolSourceResolver<Framework> {
             `Durable tool source adapter ${registration.type} returned id ${source.id}; expected ${registration.id}.`,
           );
         }
-        return source;
+        if (!credential) return source;
+        return defineToolSource<Framework>({
+          id: source.id,
+          async list(context) {
+            await credential(context.signal);
+            return source.list(context);
+          },
+          async call(call, context) {
+            await credential(context.signal);
+            return source.call(call, context);
+          },
+          ...(source.close ? { close: () => source.close!() } : {}),
+        });
       }).catch((error) => {
         this.#sources.delete(key);
         throw error;
@@ -320,6 +384,18 @@ function assertAdapter(adapter: ToolSourceAdapter): void {
   normalizeType(adapter.type);
   if (typeof adapter.open !== "function") {
     throw new ConfigurationError(`Tool source adapter ${adapter.type} must implement open().`);
+  }
+  if (adapter.authorization) {
+    const provider = adapter.authorization.provider?.trim();
+    if (!provider || !/^[a-zA-Z0-9_.-]{1,80}$/.test(provider)) {
+      throw new ConfigurationError(`Tool source adapter ${adapter.type} has an invalid authorization provider.`);
+    }
+    if (typeof adapter.authorization.startAuthorization !== "function"
+      || typeof adapter.authorization.completeAuthorization !== "function") {
+      throw new ConfigurationError(
+        `Tool source adapter ${adapter.type} authorization must implement startAuthorization() and completeAuthorization().`,
+      );
+    }
   }
 }
 

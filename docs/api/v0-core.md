@@ -23,7 +23,7 @@ Status meanings:
 | Source state | Read, replace, download, and restore current chat files | Read, change, download, fork, and restore immutable versions |
 | Preview | Hosted VM preview with a short-lived access token | Optional sandbox-backed preview session; never guaranteed by core |
 | Deployment | Creates and deploys a Vercel project | Future deployment adapter; no vendor identifiers in core records |
-| Tools | Hosted MCP server connections and agent actions | Shipped provider-neutral durable tool sources, per-chat selection, permission policy, source workspace tools, and host-owned credentials |
+| Tools | Hosted MCP server connections and agent actions | Shipped provider-neutral durable tool sources, per-chat selection, adapter-owned OAuth connections, permission policy, and source workspace tools |
 | Identity | v0 account/team, privacy, and write permissions | Host passes `tenantId` and `userId`; authorization stays app-owned |
 
 v0 v2 removed public version resources. Viby intentionally keeps immutable versions because deterministic downloads, branching, restoration, auditability, and provider-independent source history are core SDK properties. Applications may still present the simpler v0-style model by treating `chat.latestVersion()` as current workspace state.

@@ -121,6 +121,14 @@ import type {
   UpdateToolSourceRegistrationRecord,
 } from "./tool-source-registry.js";
 import type {
+  CreateToolSourceAuthorizationSessionRecord,
+  StoredToolSourceConnection,
+  ToolSourceAuthorizationSessionData,
+  UpdateToolSourceConnectionRecord,
+  UpsertToolSourceConnectionRecord,
+} from "./tool-source-authorization.js";
+import type { IntegrationConnectionStatus } from "./integration-store.js";
+import type {
   BeginDeploymentRecord,
   CompleteDeploymentRecord,
   DeploymentHistoryStatus,
@@ -466,6 +474,38 @@ interface ToolSourceRegistrationRow {
   updated_at: Date;
 }
 
+interface ToolSourceAuthorizationSessionRow {
+  tenant_id: string;
+  user_id: string;
+  id: string;
+  tool_source_id: string;
+  provider: string;
+  state_hash: string;
+  callback_url: string;
+  return_to: string;
+  scopes: string[];
+  session_secret_ref: string | null;
+  expires_at: Date;
+  consumed_at: Date | null;
+  created_at: Date;
+}
+
+interface ToolSourceConnectionRow {
+  id: string;
+  tool_source_id: string;
+  provider: string;
+  external_account_id: string;
+  external_account_name: string;
+  external_account_url: string | null;
+  external_account_metadata: Record<string, JsonValue> | null;
+  secret_ref: string | null;
+  status: IntegrationConnectionStatus;
+  scopes: string[];
+  expires_at: Date | null;
+  created_at: Date;
+  updated_at: Date;
+}
+
 interface RepositoryLinkRow {
   id: string;
   chat_id: string;
@@ -597,6 +637,8 @@ export class PostgresRepository implements Repository {
         AND to_regclass('viby.preview_sessions') IS NOT NULL
         AND to_regclass('viby.tool_sources') IS NOT NULL
         AND to_regclass('viby.chat_tool_sources') IS NOT NULL
+        AND to_regclass('viby.tool_source_authorization_sessions') IS NOT NULL
+        AND to_regclass('viby.tool_source_connections') IS NOT NULL
         AND to_regclass('viby.version_changes') IS NOT NULL
         AND to_regclass('viby.message_parts') IS NOT NULL
         AND to_regclass('viby.tool_calls') IS NOT NULL
@@ -3686,6 +3728,140 @@ export class PostgresRepository implements Repository {
     return rows.map(mapToolSourceRegistration);
   }
 
+  async createToolSourceAuthorizationSession(
+    scope: UserScope,
+    input: CreateToolSourceAuthorizationSessionRecord,
+  ): Promise<ToolSourceAuthorizationSessionData> {
+    await this.assertReady();
+    const [row] = await this.#sql<ToolSourceAuthorizationSessionRow[]>`
+      INSERT INTO viby.tool_source_authorization_sessions (
+        id, tenant_id, user_id, tool_source_id, provider, state_hash, callback_url,
+        return_to, scopes, session_secret_ref, expires_at, created_at
+      ) VALUES (
+        ${input.id}, ${scope.tenantId}, ${scope.userId}, ${input.toolSourceId},
+        ${input.provider}, ${input.stateHash}, ${input.callbackUrl}, ${input.returnTo},
+        ${this.#sql.array([...input.scopes])}, ${input.sessionSecretRef},
+        ${input.expiresAt}, ${input.createdAt}
+      )
+      RETURNING *
+    `;
+    if (!row) throw new Error("Tool source authorization session was not returned after creation.");
+    return mapToolSourceAuthorizationSession(row);
+  }
+
+  async getToolSourceAuthorizationSession(
+    stateHash: string,
+    now: Date,
+  ): Promise<{ scope: UserScope; session: ToolSourceAuthorizationSessionData } | null> {
+    await this.assertReady();
+    const [row] = await this.#sql<ToolSourceAuthorizationSessionRow[]>`
+      SELECT * FROM viby.tool_source_authorization_sessions
+      WHERE state_hash = ${stateHash} AND consumed_at IS NULL AND expires_at > ${now}
+      LIMIT 1
+    `;
+    return row ? {
+      scope: { tenantId: row.tenant_id, userId: row.user_id },
+      session: mapToolSourceAuthorizationSession(row),
+    } : null;
+  }
+
+  async consumeToolSourceAuthorizationSession(
+    stateHash: string,
+    consumedAt: Date,
+  ): Promise<{ scope: UserScope; session: ToolSourceAuthorizationSessionData } | null> {
+    await this.assertReady();
+    const [row] = await this.#sql<ToolSourceAuthorizationSessionRow[]>`
+      UPDATE viby.tool_source_authorization_sessions
+      SET consumed_at = ${consumedAt}
+      WHERE state_hash = ${stateHash} AND consumed_at IS NULL AND expires_at > ${consumedAt}
+      RETURNING *
+    `;
+    return row ? {
+      scope: { tenantId: row.tenant_id, userId: row.user_id },
+      session: mapToolSourceAuthorizationSession(row),
+    } : null;
+  }
+
+  async getToolSourceConnection(
+    scope: UserScope,
+    toolSourceId: string,
+  ): Promise<StoredToolSourceConnection | null> {
+    await this.assertReady();
+    const [row] = await this.#sql<ToolSourceConnectionRow[]>`
+      SELECT * FROM viby.tool_source_connections
+      WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+        AND tool_source_id = ${toolSourceId}
+      LIMIT 1
+    `;
+    return row ? mapToolSourceConnection(row) : null;
+  }
+
+  async upsertToolSourceConnection(
+    scope: UserScope,
+    input: UpsertToolSourceConnectionRecord,
+  ): Promise<{ connection: StoredToolSourceConnection; replacedSecretRef: string | null }> {
+    await this.assertReady();
+    return this.#sql.begin(async (sql) => {
+      const [current] = await sql<{ secret_ref: string | null }[]>`
+        SELECT secret_ref FROM viby.tool_source_connections
+        WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+          AND tool_source_id = ${input.toolSourceId}
+        FOR UPDATE
+      `;
+      const metadata = input.account.metadata
+        ? sql.json(JSON.parse(JSON.stringify(input.account.metadata)))
+        : null;
+      const [row] = await sql<ToolSourceConnectionRow[]>`
+        INSERT INTO viby.tool_source_connections (
+          id, tenant_id, user_id, tool_source_id, provider,
+          external_account_id, external_account_name, external_account_url,
+          external_account_metadata, secret_ref, status, scopes, expires_at,
+          created_at, updated_at
+        ) VALUES (
+          ${input.id}, ${scope.tenantId}, ${scope.userId}, ${input.toolSourceId},
+          ${input.provider}, ${input.account.id}, ${input.account.name},
+          ${input.account.url ?? null}, ${metadata}, ${input.secretRef}, 'active',
+          ${sql.array([...input.scopes])}, ${input.expiresAt}, ${input.now}, ${input.now}
+        )
+        ON CONFLICT (tenant_id, user_id, tool_source_id) DO UPDATE SET
+          provider = EXCLUDED.provider,
+          external_account_id = EXCLUDED.external_account_id,
+          external_account_name = EXCLUDED.external_account_name,
+          external_account_url = EXCLUDED.external_account_url,
+          external_account_metadata = EXCLUDED.external_account_metadata,
+          secret_ref = EXCLUDED.secret_ref,
+          status = 'active',
+          scopes = EXCLUDED.scopes,
+          expires_at = EXCLUDED.expires_at,
+          updated_at = EXCLUDED.updated_at
+        RETURNING *
+      `;
+      if (!row) throw new Error("Tool source connection was not returned after upsert.");
+      return {
+        connection: mapToolSourceConnection(row),
+        replacedSecretRef: current?.secret_ref ?? null,
+      };
+    });
+  }
+
+  async updateToolSourceConnection(
+    scope: UserScope,
+    id: string,
+    input: UpdateToolSourceConnectionRecord,
+  ): Promise<StoredToolSourceConnection> {
+    await this.assertReady();
+    const [row] = await this.#sql<ToolSourceConnectionRow[]>`
+      UPDATE viby.tool_source_connections SET
+        status = ${input.status}, secret_ref = ${input.secretRef},
+        scopes = ${this.#sql.array([...input.scopes])}, expires_at = ${input.expiresAt},
+        updated_at = ${input.now}
+      WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId} AND id = ${id}
+      RETURNING *
+    `;
+    if (!row) throw new NotFoundError("Tool source connection");
+    return mapToolSourceConnection(row);
+  }
+
   async #storeAttachments(
     scope: UserScope,
     input: CreateGenerationRecord,
@@ -4598,6 +4774,44 @@ function mapToolSourceRegistration(
     description: row.description,
     configuration: Object.freeze({ ...row.configuration }),
     status: row.status,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function mapToolSourceAuthorizationSession(
+  row: ToolSourceAuthorizationSessionRow,
+): ToolSourceAuthorizationSessionData {
+  return {
+    id: row.id,
+    toolSourceId: row.tool_source_id,
+    provider: row.provider,
+    stateHash: row.state_hash,
+    callbackUrl: row.callback_url,
+    returnTo: row.return_to,
+    scopes: Object.freeze([...row.scopes]),
+    sessionSecretRef: row.session_secret_ref,
+    expiresAt: row.expires_at,
+    consumedAt: row.consumed_at,
+    createdAt: row.created_at,
+  };
+}
+
+function mapToolSourceConnection(row: ToolSourceConnectionRow): StoredToolSourceConnection {
+  return {
+    id: row.id,
+    toolSourceId: row.tool_source_id,
+    provider: row.provider,
+    account: {
+      id: row.external_account_id,
+      name: row.external_account_name,
+      ...(row.external_account_url ? { url: row.external_account_url } : {}),
+      ...(row.external_account_metadata ? { metadata: row.external_account_metadata } : {}),
+    },
+    secretRef: row.secret_ref,
+    status: row.status,
+    scopes: Object.freeze([...row.scopes]),
+    expiresAt: row.expires_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
