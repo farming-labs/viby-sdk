@@ -106,6 +106,32 @@ const viby = createViby({
 
 Custom database implementations can use `defineDatabaseAdapter({ id, open })`; `open({ artifacts })` receives the independently selected artifact store. The durable interface remains exported as `PersistenceAdapter` from `@viby/sdk/persistence`, and its conformance suite remains at `@viby/sdk/persistence/conformance`. The former `persistence`, `artifactStore`, `connectionStore`, and `secretStore` fields remain deprecated compatibility aliases for one release line; configuring an alias and its corresponding `storage.*` category together is rejected.
 
+For production object storage, the S3-compatible adapter fits the same category and works with AWS S3, Cloudflare R2, MinIO, and compatible services:
+
+```ts
+import { s3 } from "@viby/sdk/storage/s3";
+
+const viby = createViby({
+  framework: "farm",
+  model,
+  storage: {
+    database: postgres({ url: env.DATABASE_URL }),
+    artifacts: s3({
+      bucket: env.S3_BUCKET,
+      region: env.S3_REGION,
+      endpoint: env.S3_ENDPOINT, // omit for AWS; set for R2 or MinIO
+      credentials: {
+        accessKeyId: env.S3_ACCESS_KEY_ID,
+        secretAccessKey: env.S3_SECRET_ACCESS_KEY,
+      },
+    }),
+  },
+});
+```
+
+Objects are scoped under encoded tenant and user segments, checked against their SHA-256 metadata, and never exposed as public URLs. Set `forcePathStyle: true` when required by a local MinIO-compatible endpoint. The alias `@viby/sdk/artifact/s3` exports the same adapter for artifact-centric imports.
+Install the optional peer `@aws-sdk/client-s3` in applications that use this adapter.
+
 External account connections use the same tenant and user scope while keeping provider credentials out of ordinary records. Configure adapters under capability categories, set a separate 32-byte `VIBY_SECRET_KEY`, and run the normal migrations:
 
 ```ts
