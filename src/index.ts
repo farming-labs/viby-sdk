@@ -9,6 +9,7 @@ export {
   PreviewCollection,
   RegisteredToolSource,
   RegisteredToolSourceCollection,
+  ToolSourceAuthorizationCallbacks,
   SandboxCollection,
   ScopedViby,
   Version,
@@ -85,6 +86,7 @@ export {
   defineToolSourceAdapter,
   ToolSourceRegistry,
 } from "./tool-source-registry.js";
+export type * from "./tool-source-authorization.js";
 export type {
   CreateToolSourceInput,
   CreateToolSourceRegistrationRecord,

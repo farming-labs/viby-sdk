@@ -89,6 +89,7 @@ test("upgrades a historical v0.2 schema without losing tenant data", {
       "0028_environment_variables",
       "0029_preview_sessions",
       "0030_tool_source_registry",
+      "0031_tool_source_authorization",
     ]);
     assert.equal((await getMigrationStatus(databaseUrl.toString())).every((entry) => entry.applied), true);
     assert.deepEqual(await migrateDatabase(databaseUrl.toString()), []);
@@ -119,6 +120,8 @@ test("upgrades a historical v0.2 schema without losing tenant data", {
         integrationSecrets: string | null;
         messageFinishReasonColumn: boolean;
         environmentVariables: string | null;
+        toolSourceConnections: string | null;
+        toolSourceAuthorizationSessions: string | null;
       }[]>`
         SELECT
           to_regclass('viby.outbound_event_deliveries')::text AS deliveries,
@@ -155,6 +158,9 @@ test("upgrades a historical v0.2 schema without losing tenant data", {
               AND column_name = 'finish_reason'
           ) AS "messageFinishReasonColumn",
           to_regclass('viby.environment_variables')::text AS "environmentVariables",
+          to_regclass('viby.tool_source_connections')::text AS "toolSourceConnections",
+          to_regclass('viby.tool_source_authorization_sessions')::text
+            AS "toolSourceAuthorizationSessions",
           EXISTS (
             SELECT 1 FROM information_schema.columns
             WHERE table_schema = 'viby' AND table_name = 'version_files'
@@ -176,6 +182,11 @@ test("upgrades a historical v0.2 schema without losing tenant data", {
       assert.equal(row?.integrationSecrets, "viby.integration_secrets");
       assert.equal(row?.messageFinishReasonColumn, true);
       assert.equal(row?.environmentVariables, "viby.environment_variables");
+      assert.equal(row?.toolSourceConnections, "viby.tool_source_connections");
+      assert.equal(
+        row?.toolSourceAuthorizationSessions,
+        "viby.tool_source_authorization_sessions",
+      );
     } finally {
       await inspection.end({ timeout: 5 });
     }

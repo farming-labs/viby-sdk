@@ -80,3 +80,11 @@ export type {
   ToolSourceRegistryStore,
   UpdateToolSourceRegistrationRecord,
 } from "./tool-source-registry.js";
+export type {
+  CreateToolSourceAuthorizationSessionRecord,
+  StoredToolSourceConnection,
+  ToolSourceAuthorizationSessionData,
+  ToolSourceAuthorizationStore,
+  UpdateToolSourceConnectionRecord,
+  UpsertToolSourceConnectionRecord,
+} from "./tool-source-authorization.js";

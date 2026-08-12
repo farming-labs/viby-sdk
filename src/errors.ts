@@ -107,6 +107,29 @@ export class IntegrationAuthorizationError extends VibyError {
   }
 }
 
+export class ToolSourceAuthorizationError extends VibyError {
+  readonly provider: string | null;
+
+  constructor(message: string, provider: string | null = null, options?: ErrorOptions) {
+    super("tool_source_authorization_failed", message, options);
+    this.name = "ToolSourceAuthorizationError";
+    this.provider = provider;
+  }
+}
+
+export class ToolSourceConnectionRequiredError extends VibyError {
+  readonly sourceId: string;
+
+  constructor(sourceId: string) {
+    super(
+      "tool_source_connection_required",
+      `Tool source ${sourceId} requires authorization.`,
+    );
+    this.name = "ToolSourceConnectionRequiredError";
+    this.sourceId = sourceId;
+  }
+}
+
 export class IntegrationConnectionRequiredError extends VibyError {
   readonly category: "repository" | "deployment";
   readonly integrationId: string;

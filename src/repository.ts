@@ -58,6 +58,7 @@ import type {
 import type { DeploymentHistoryStore } from "./deployment-history.js";
 import type { PreviewSessionStore } from "./preview.js";
 import type { ToolSourceRegistryStore } from "./tool-source-registry.js";
+import type { ToolSourceAuthorizationStore } from "./tool-source-authorization.js";
 
 export interface ImportChatRecord<Framework extends FrameworkId = FrameworkId> {
   readonly chatId: string;
@@ -350,7 +351,7 @@ export interface FailOutboundEventDeliveryRecord {
 }
 
 export interface Repository
-extends DeploymentHistoryStore, PreviewSessionStore, ToolSourceRegistryStore {
+extends DeploymentHistoryStore, PreviewSessionStore, ToolSourceRegistryStore, ToolSourceAuthorizationStore {
   assertReady(): Promise<void>;
   close(): Promise<void>;
   createChat<Framework extends FrameworkId>(

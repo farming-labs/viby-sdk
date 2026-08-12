@@ -145,6 +145,41 @@ await chat.toolSources.set([source.id]);
 
 Durable registrations are scoped to one tenant and user, selected explicitly per chat, and resolved into the same `ToolSource` interface used by static sources. They can be disabled, updated, or archived without changing generation code. The JSON `configuration` field rejects credential-like keys; authentication belongs in the separate secret-backed authorization lifecycle.
 
+Adapters may declare that lifecycle without exposing provider credentials to chats, messages, events, or the model:
+
+```ts
+const adapter = defineToolSourceAdapter({
+  type: "company-tools",
+  authorization: {
+    provider: "company-oauth",
+    startAuthorization: (input, context) => oauth.start(input, context),
+    completeAuthorization: (input, context) => oauth.complete(input, context),
+    refreshCredential: (credential, context) => oauth.refresh(credential, context),
+    revokeCredential: (credential, context) => oauth.revoke(credential, context),
+  },
+  open: ({ source, credential }) => openCompanyTools({ source, credential }),
+});
+
+const source = await user.toolSources.create({
+  type: "company-tools",
+  name: "Company tools",
+  configuration: { endpoint: "https://tools.example.com" },
+});
+
+const authorization = await source.connect({
+  callbackUrl: "https://app.example.com/tool-sources/callback",
+  returnTo: "/settings/tools",
+});
+
+// In the public callback handler:
+const completed = await viby.toolSources.callback(request);
+
+await source.connection();
+await source.disconnect();
+```
+
+Viby hashes single-use callback state, persists connection metadata with `storage.database`, and stores opaque authorization sessions and credentials only through `storage.secrets`. Credential resolution occurs inside the adapter boundary immediately before a selected source lists or calls tools. Products still own provider app registration, redirect routing, and user authentication.
+
 PostgreSQL remains the zero-configuration structured database: omit `storage.database`, set `DATABASE_URL`, and run `viby db migrate`. Storage is grouped by what Viby stores, while each value remains a provider-neutral adapter:
 
 ```ts

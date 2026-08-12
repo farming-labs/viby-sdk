@@ -21,6 +21,7 @@ export interface PersistenceConformanceReport {
     | "source-history"
     | "preview-sessions"
     | "tool-source-registry"
+    | "tool-source-authorization"
     | "repository-history"
     | "deployment-history"
     | "deployment-artifacts"
@@ -201,6 +202,81 @@ export async function verifyPersistenceAdapter(
     );
     assertConformance(selectedToolSources[0]?.id === toolSourceId,
       "Chat tool-source selection was not durable.");
+    const authorizationStateHash = sha256(`state-${suffix}`);
+    const authorizationSession = await persistence.createToolSourceAuthorizationSession(scope, {
+      id: crypto.randomUUID(),
+      toolSourceId,
+      provider: "conformance-oauth",
+      stateHash: authorizationStateHash,
+      callbackUrl: "https://app.example.test/tool-sources/callback",
+      returnTo: "/tools",
+      scopes: ["tools:read"],
+      sessionSecretRef: "session-secret-ref",
+      expiresAt: new Date(Date.now() + 60_000),
+      createdAt: new Date(),
+    });
+    assertConformance(authorizationSession.consumedAt === null,
+      "Tool-source authorization session was not durable.");
+    const pendingAuthorization = await persistence.getToolSourceAuthorizationSession(
+      authorizationStateHash,
+      new Date(),
+    );
+    assertConformance(pendingAuthorization?.scope.tenantId === scope.tenantId,
+      "Tool-source authorization session lost its tenant ownership.");
+    const consumedAuthorization = await persistence.consumeToolSourceAuthorizationSession(
+      authorizationStateHash,
+      new Date(),
+    );
+    assertConformance(consumedAuthorization?.session.consumedAt !== null
+      && await persistence.consumeToolSourceAuthorizationSession(
+        authorizationStateHash,
+        new Date(),
+      ) === null,
+    "Tool-source authorization state was not single use.");
+    const firstConnection = await persistence.upsertToolSourceConnection(scope, {
+      id: crypto.randomUUID(),
+      toolSourceId,
+      provider: "conformance-oauth",
+      account: { id: "account-1", name: "Conformance account" },
+      secretRef: "credential-ref-1",
+      scopes: ["tools:read"],
+      expiresAt: null,
+      now: new Date(),
+    });
+    assertConformance(firstConnection.connection.status === "active"
+      && firstConnection.replacedSecretRef === null,
+    "Tool-source connection was not created.");
+    const rotatedConnection = await persistence.upsertToolSourceConnection(scope, {
+      id: crypto.randomUUID(),
+      toolSourceId,
+      provider: "conformance-oauth",
+      account: { id: "account-1", name: "Conformance account" },
+      secretRef: "credential-ref-2",
+      scopes: ["tools:read", "tools:write"],
+      expiresAt: null,
+      now: new Date(),
+    });
+    assertConformance(rotatedConnection.replacedSecretRef === "credential-ref-1"
+      && (await persistence.getToolSourceConnection(scope, toolSourceId))?.scopes.length === 2
+      && await persistence.getToolSourceConnection(
+        { tenantId: scope.tenantId, userId: `outsider-${suffix}` },
+        toolSourceId,
+      ) === null,
+    "Tool-source connection rotation or tenant isolation failed.");
+    const revokedConnection = await persistence.updateToolSourceConnection(
+      scope,
+      rotatedConnection.connection.id,
+      {
+        status: "revoked",
+        secretRef: null,
+        scopes: rotatedConnection.connection.scopes,
+        expiresAt: null,
+        now: new Date(),
+      },
+    );
+    assertConformance(revokedConnection.status === "revoked" && revokedConnection.secretRef === null,
+      "Tool-source connection revocation was not durable.");
+    checks.push("tool-source-authorization");
     const disabledToolSource = await persistence.updateToolSourceRegistration(
       scope,
       toolSourceId,
