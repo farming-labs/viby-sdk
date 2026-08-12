@@ -313,7 +313,7 @@ class GenerationModelRegistry<Framework extends FrameworkId> {
       return;
     }
 
-    const defaultGenerator = dependencies.generator ?? new AgentProjectGenerator(config.model, config.agent);
+    const defaultGenerator = dependencies.generator ?? new AgentProjectGenerator(config.model, config.agent, config.tools);
     this.#addModel("default", config.model, defaultGenerator);
     for (const [alias, model] of Object.entries(config.models ?? {})) {
       if (alias === "default") {
@@ -322,7 +322,7 @@ class GenerationModelRegistry<Framework extends FrameworkId> {
       this.#addModel(
         alias,
         model,
-        dependencies.generators?.[alias] ?? new AgentProjectGenerator(model, config.agent),
+        dependencies.generators?.[alias] ?? new AgentProjectGenerator(model, config.agent, config.tools),
       );
     }
   }
@@ -400,9 +400,9 @@ export function createViby<const Framework extends FrameworkId>(
       ? database.open(storage.artifacts ? { artifacts: storage.artifacts } : {})
       : database,
     ...(!config.engine ? {
-      generator: new AgentProjectGenerator(config.model, config.agent),
+      generator: new AgentProjectGenerator(config.model, config.agent, config.tools),
       generators: Object.fromEntries(Object.entries(config.models ?? {}).map(([alias, model]) => (
-        [alias, new AgentProjectGenerator(model, config.agent)]
+        [alias, new AgentProjectGenerator(model, config.agent, config.tools)]
       ))),
     } : {}),
     skillResolver: new SkillResolver(
@@ -2716,6 +2716,15 @@ class GenerationRunner<Framework extends FrameworkId> {
           skills,
           tasks,
           attachments,
+          toolContext: {
+            ...scope,
+            chatId: chat.id,
+            generationId,
+            attemptId,
+            framework: chat.framework,
+            metadata: chat.metadata,
+            signal,
+          },
           ...(sandbox ? { sandbox } : {}),
         },
         {

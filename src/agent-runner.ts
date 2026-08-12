@@ -1,5 +1,6 @@
 import {
   isStepCount,
+  jsonSchema,
   Output,
   tool,
   ToolLoopAgent,
@@ -30,6 +31,13 @@ import type {
   PermissionTaskRequest,
 } from "./types.js";
 import { errorMessage } from "./utils.js";
+import {
+  createToolSourceProposedAction,
+  resolveToolSourcePolicy,
+  resolveToolSources,
+  type ToolSourceProposedAction,
+  type ToolSourcesConfig,
+} from "./tool-source.js";
 
 const DEFAULT_MAX_STEPS = 20;
 const DEFAULT_MAX_DURATION_MS = 300_000;
@@ -104,10 +112,16 @@ export class AgentProjectGenerator<Framework extends FrameworkId = FrameworkId>
 implements ProjectGenerator<Framework> {
   readonly #model: LanguageModel;
   readonly #config: NormalizedAgentRunnerConfig;
+  readonly #tools: ToolSourcesConfig<Framework> | undefined;
 
-  constructor(model: LanguageModel, config: AgentRunnerConfig | undefined = undefined) {
+  constructor(
+    model: LanguageModel,
+    config: AgentRunnerConfig | undefined = undefined,
+    tools: ToolSourcesConfig<Framework> | undefined = undefined,
+  ) {
     this.#model = model;
     this.#config = normalizeAgentRunnerConfig(config);
+    this.#tools = tools;
   }
 
   async generate(
@@ -117,8 +131,16 @@ implements ProjectGenerator<Framework> {
     const previousEntries = input.previousEntries ?? input.previousFiles;
     const workspace = new AgentWorkspace(previousEntries, async () => undefined);
     const budget = new AgentExecutionBudget(this.#config);
-    const approval = new AgentApprovalState();
-    const tools = createAgentTools(workspace, input, options, budget, this.#config, approval);
+    const approval = new AgentApprovalState(input.tasks);
+    const tools = await createAgentTools(
+      workspace,
+      input,
+      options,
+      budget,
+      this.#config,
+      approval,
+      this.#tools,
+    );
     const agent = new ToolLoopAgent({
       model: this.#model,
       instructions: createAgentInstructions(input),
@@ -202,13 +224,14 @@ implements ProjectGenerator<Framework> {
   }
 }
 
-function createAgentTools<Framework extends FrameworkId>(
+async function createAgentTools<Framework extends FrameworkId>(
   workspace: AgentWorkspace,
   input: GeneratorInput<Framework>,
   options: GeneratorOptions,
   budget: AgentExecutionBudget,
   config: NormalizedAgentRunnerConfig,
   approval: AgentApprovalState,
+  toolSources: ToolSourcesConfig<Framework> | undefined,
 ) {
   const workspaceTools = {
     workspace_list_files: tool({
@@ -321,7 +344,10 @@ function createAgentTools<Framework extends FrameworkId>(
     }),
   };
 
-  if (!input.sandbox) return workspaceTools;
+  const inboundTools = input.toolContext && toolSources
+    ? await createInboundAgentTools(input.toolContext, toolSources, options, approval)
+    : {};
+  if (!input.sandbox) return { ...workspaceTools, ...inboundTools };
   const sandboxTools = {
     ...(input.sandbox.supports("files") ? {
       sandbox_read_file: tool({
@@ -362,7 +388,7 @@ function createAgentTools<Framework extends FrameworkId>(
             grant = await input.sandbox!.authorizeCommand(commandInput);
           } catch (error) {
             if (error instanceof SandboxCommandApprovalRequiredError) {
-              approval.request(error);
+              approval.requestSandbox(error);
               return {
                 approvalRequired: true,
                 idempotencyKey: error.proposedAction.idempotencyKey,
@@ -424,7 +450,66 @@ function createAgentTools<Framework extends FrameworkId>(
       }),
     } : {}),
   };
-  return { ...workspaceTools, ...sandboxTools };
+  return { ...workspaceTools, ...sandboxTools, ...inboundTools };
+}
+
+async function createInboundAgentTools<Framework extends FrameworkId>(
+  context: NonNullable<GeneratorInput<Framework>["toolContext"]>,
+  config: ToolSourcesConfig<Framework>,
+  options: GeneratorOptions,
+  approval: AgentApprovalState,
+) {
+  const definitions = await resolveToolSources(config, context);
+  return Object.fromEntries(definitions.map(({ key, source, tool: definition }) => [
+    key,
+    tool({
+      description: definition.description,
+      inputSchema: jsonSchema<Readonly<Record<string, JsonValue>>>(definition.inputSchema as never),
+      execute: async (arguments_, { toolCallId }) => {
+        const proposedAction = createToolSourceProposedAction(
+          source.id,
+          definition.name,
+          arguments_,
+          context,
+        );
+        const resolved = approval.decision(proposedAction.idempotencyKey);
+        const decision = resolved ?? await resolveToolSourcePolicy(config, {
+          source: source.id,
+          tool: definition,
+          arguments: arguments_,
+          context,
+        });
+        if (decision === "deny") {
+          throw new ConfigurationError(`Inbound tool ${source.id}.${definition.name} was denied.`);
+        }
+        if (decision === "approval-required") {
+          approval.requestTool(proposedAction, definition.permissions ?? [
+            `tool.${source.id}.${definition.name}`,
+          ]);
+          return {
+            approvalRequired: true,
+            idempotencyKey: proposedAction.idempotencyKey,
+          };
+        }
+        return executeDurableTool(
+          options,
+          {
+            toolCallId,
+            name: `tool-source.${source.id}.${definition.name}`,
+            effect: definition.effect,
+            idempotencyKey: proposedAction.idempotencyKey,
+            arguments: arguments_,
+          },
+          null,
+          async () => source.call({
+            name: definition.name,
+            arguments: arguments_,
+            idempotencyKey: proposedAction.idempotencyKey,
+          }, context),
+        );
+      },
+    }),
+  ]));
 }
 
 interface DurableToolInput {
@@ -500,10 +585,28 @@ class AgentExecutionBudget {
 }
 
 class AgentApprovalState {
-  proposedAction: SandboxCommandApprovalRequiredError["proposedAction"] | null = null;
+  proposedAction: SandboxCommandApprovalRequiredError["proposedAction"] | ToolSourceProposedAction | null = null;
   #reason = "";
+  #permissions: readonly string[] = [];
+  readonly #decisions = new Map<string, "allow" | "deny">();
 
-  request(error: SandboxCommandApprovalRequiredError): void {
+  constructor(tasks: readonly import("./types.js").GenerationTaskData[]) {
+    for (const task of tasks) {
+      if (
+        task.kind === "permission"
+        && task.status === "resolved"
+        && task.resolution?.kind === "permission"
+        && (task.proposedAction || task.proposedToolAction)
+      ) {
+        this.#decisions.set(
+          (task.proposedAction ?? task.proposedToolAction)!.idempotencyKey,
+          task.resolution.decision,
+        );
+      }
+    }
+  }
+
+  requestSandbox(error: SandboxCommandApprovalRequiredError): void {
     if (
       this.proposedAction
       && this.proposedAction.idempotencyKey !== error.proposedAction.idempotencyKey
@@ -512,19 +615,45 @@ class AgentApprovalState {
     }
     this.proposedAction = error.proposedAction;
     this.#reason = error.reason;
+    this.#permissions = ["sandbox.command.run"];
+  }
+
+  requestTool(action: ToolSourceProposedAction, permissions: readonly string[]): void {
+    if (this.proposedAction && this.proposedAction.idempotencyKey !== action.idempotencyKey) {
+      throw new ConfigurationError("The agent requested multiple approvals in one execution step.");
+    }
+    this.proposedAction = action;
+    this.#reason = `Allow ${action.source}.${action.tool} to run with the proposed arguments?`;
+    this.#permissions = permissions;
+  }
+
+  decision(idempotencyKey: string): "allow" | "deny" | undefined {
+    return this.#decisions.get(idempotencyKey);
   }
 
   task(): PermissionTaskRequest {
     if (!this.proposedAction) throw new ConfigurationError("The proposed agent action is missing.");
-    const { command } = this.proposedAction;
-    const rendered = [command.command, ...command.args].join(" ");
+    if (this.proposedAction.type === "sandbox-command") {
+      const rendered = [
+        this.proposedAction.command.command,
+        ...this.proposedAction.command.args,
+      ].join(" ");
+      return {
+        kind: "permission",
+        title: "Approve sandbox command",
+        message: this.#reason,
+        action: `Run ${rendered}`,
+        permissions: this.#permissions,
+        proposedAction: this.proposedAction,
+      };
+    }
     return {
       kind: "permission",
-      title: "Approve sandbox command",
+      title: "Approve tool call",
       message: this.#reason,
-      action: `Run ${rendered}`,
-      permissions: ["sandbox.command.run"],
-      proposedAction: this.proposedAction,
+      action: `Call ${this.proposedAction.source}.${this.proposedAction.tool}`,
+      permissions: this.#permissions,
+      proposedToolAction: this.proposedAction,
     };
   }
 }
@@ -562,8 +691,8 @@ function createAgentPrompt<Framework extends FrameworkId>(input: GeneratorInput<
     kind: task.kind,
     status: task.status,
     resolution: task.resolution,
-    ...(task.kind === "permission" && task.proposedAction
-      ? { proposedAction: task.proposedAction }
+    ...(task.kind === "permission" && (task.proposedAction || task.proposedToolAction)
+      ? { proposedAction: task.proposedAction ?? task.proposedToolAction }
       : {}),
   })).join("\n");
   return [

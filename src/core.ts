@@ -17,6 +17,7 @@ export * from "./skill-resolver.js";
 export * from "./source-import.js";
 export * from "./storage.js";
 export * from "./telemetry.js";
+export * from "./tool-source.js";
 
 export type * from "./browser.js";
 export type * from "./deployment-history.js";

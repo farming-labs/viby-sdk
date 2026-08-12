@@ -163,6 +163,10 @@
       "types": "./dist/mcp.d.ts",
       "import": "./dist/mcp.js"
     },
+    "./tools/mcp": {
+      "types": "./dist/tool-source-mcp.d.ts",
+      "import": "./dist/tool-source-mcp.js"
+    },
     "./package.json": "./package.json"
   },
   "bin": {
@@ -218,6 +222,7 @@
     "@cloudflare/sandbox": "^0.12.5",
     "@daytona/sdk": "^0.203.0",
     "@modelcontextprotocol/server": "^2.0.0",
+    "@modelcontextprotocol/client": "^2.0.0",
     "@vercel/sandbox": "^3.0.0",
     "e2b": "^2.38.2",
     "modal": "^0.9.0",
@@ -237,6 +242,9 @@
       "optional": true
     },
     "@modelcontextprotocol/server": {
+      "optional": true
+    },
+    "@modelcontextprotocol/client": {
       "optional": true
     },
     "@vercel/sandbox": {

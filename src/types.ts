@@ -19,6 +19,7 @@ import type {
 import type { DeploymentPreparationConfig } from "./deployment-preparation.js";
 import type { VibyStorage } from "./storage.js";
 import type { EnvironmentConfig } from "./environment.js";
+import type { ToolSourcesConfig, ToolSourceProposedAction } from "./tool-source.js";
 
 export type FrameworkId =
   | "farm"
@@ -126,6 +127,8 @@ interface VibyBaseConfig<Framework extends FrameworkId = FrameworkId> {
   readonly sandbox?: SandboxAdapter;
   readonly sandboxPolicy?: SandboxCommandPolicy;
   readonly agent?: AgentRunnerConfig;
+  /** Host-configured tools selected and authorized independently for every chat. */
+  readonly tools?: ToolSourcesConfig<Framework>;
   readonly generation?: {
     readonly execution?: "embedded" | "worker";
   };
@@ -612,6 +615,7 @@ export interface PermissionTaskRequest {
   readonly action: string;
   readonly permissions: readonly string[];
   readonly proposedAction?: SandboxCommandProposedAction;
+  readonly proposedToolAction?: ToolSourceProposedAction;
 }
 
 export type GenerationTaskRequest =

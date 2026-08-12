@@ -44,6 +44,25 @@ export { DownloadArtifact } from "./download.js";
 export { AgentWorkspace } from "./agent-workspace.js";
 export { AgentProjectGenerator } from "./agent-runner.js";
 export { defineGenerationEngine } from "./generation-engine.js";
+export {
+  createToolSourceProposedAction,
+  defineToolSource,
+  resolveToolSourcePolicy,
+  resolveToolSources,
+} from "./tool-source.js";
+export type {
+  ResolvedToolSource,
+  ToolDefinition,
+  ToolSource,
+  ToolSourceCall,
+  ToolSourceContext,
+  ToolSourcePolicy,
+  ToolSourcePolicyDecision,
+  ToolSourcePolicyRequest,
+  ToolSourceProposedAction,
+  ToolSourceSelectionContext,
+  ToolSourcesConfig,
+} from "./tool-source.js";
 export { BrowserSession, openBrowserSession } from "./browser.js";
 export { openSandboxPreview } from "./browser-preview.js";
 export { accessibilityGate, consoleErrorGate } from "./visual-evaluation.js";
