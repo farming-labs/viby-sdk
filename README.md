@@ -24,6 +24,10 @@ npx viby db migrate
 
 Viby creates and maintains a dedicated `viby` Postgres schema. Your existing authentication and user tables remain the source of truth.
 
+## Runtime boundaries
+
+Use `@viby/sdk/core` for Web-standard contracts and helpers shared with browsers, Workers, Bun, or other runtimes. Use `@viby/sdk/node` for the full Node client; filesystem, PostgreSQL, migrations, Docker, Playwright, and provider SDKs stay behind explicit subpath exports. Existing `@viby/sdk` imports remain compatible throughout the 0.x line. See [the runtime boundary guide](docs/runtime.md).
+
 ## Create the SDK
 
 Pass one framework, one AI SDK model, and categorized skills:

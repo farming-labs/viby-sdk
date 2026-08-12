@@ -1,11 +1,9 @@
 import { readFile, readdir, stat } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import type {
-  ChatMetadata,
   InlineSkillReference,
   LocalSkillReference,
   ResolvedSkill,
-  ResolverSkillReference,
   SkillFile,
   SkillGroups,
   SkillReference,
@@ -14,7 +12,10 @@ import type {
   SkillsShSkillId,
 } from "./types.js";
 import { SkillResolutionError } from "./errors.js";
+import { defineSkillResolver } from "./skill-resolver.js";
 import { sha256 } from "./utils.js";
+
+export { defineSkillResolver, skillFrom, skillInline } from "./skill-resolver.js";
 
 const MAX_SKILL_FILES = 64;
 const MAX_SKILL_BYTES = 1_000_000;
@@ -55,53 +56,6 @@ export function skillRead(path: string): LocalSkillReference {
     throw new SkillResolutionError(path, "the path cannot be empty");
   }
   return { source: "file", path };
-}
-
-export function skillInline(input: {
-  readonly name: string;
-  readonly description?: string;
-  readonly files: readonly SkillFile[];
-}): InlineSkillReference {
-  return {
-    source: "inline",
-    name: input.name,
-    ...(input.description === undefined ? {} : { description: input.description }),
-    files: input.files.map((file) => ({ ...file })),
-  };
-}
-
-export function skillFrom(
-  resolver: string,
-  locator: string,
-  metadata?: ChatMetadata,
-): ResolverSkillReference {
-  if (resolver.trim().length === 0) {
-    throw new SkillResolutionError(resolver, "the resolver ID cannot be empty");
-  }
-  if (locator.trim().length === 0) {
-    throw new SkillResolutionError(locator, "the locator cannot be empty");
-  }
-  return {
-    source: "resolver",
-    resolver,
-    locator,
-    ...(metadata === undefined ? {} : { metadata: structuredClone(metadata) }),
-  };
-}
-
-export function defineSkillResolver<const Adapter extends SkillResolverAdapter>(
-  adapter: Adapter,
-): Adapter {
-  if (!adapter || typeof adapter !== "object") {
-    throw new SkillResolutionError("skillResolver", "the resolver must be an object");
-  }
-  if (!/^[a-zA-Z0-9][a-zA-Z0-9._/-]{0,99}$/.test(adapter.id)) {
-    throw new SkillResolutionError(adapter.id, "the resolver ID is invalid");
-  }
-  if (typeof adapter.resolve !== "function") {
-    throw new SkillResolutionError(adapter.id, "the resolver must implement resolve(input)");
-  }
-  return adapter;
 }
 
 export class SkillResolver {
