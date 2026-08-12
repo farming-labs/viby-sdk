@@ -55,17 +55,25 @@ export const viby = createViby({
 
 The model provider reads its own credential from your environment. Viby does not receive or store it. The default generator is a bounded AI SDK tool-loop agent: it reads and changes source through `AgentWorkspace`, emits durable tool and trace records, and returns either an immutable project result or a typed blocking task.
 
-PostgreSQL remains the zero-configuration durable backend: omit `persistence`, set `DATABASE_URL`, and run `viby db migrate`. Products that already own another database or durable service can provide the same provider-neutral boundary directly:
+PostgreSQL remains the zero-configuration structured database: omit `storage.database`, set `DATABASE_URL`, and run `viby db migrate`. Storage is grouped by what Viby stores, while each value remains a provider-neutral adapter:
 
 ```ts
+import { postgres } from "@viby/sdk/storage/postgres";
+import { fileSystemArtifactStore } from "@viby/sdk/artifact/filesystem";
+
 const viby = createViby({
   framework: "farm",
   model,
-  persistence: companyPersistence({ connection: companyDatabase }),
+  storage: {
+    database: postgres({ url: env.DATABASE_URL }),
+    artifacts: fileSystemArtifactStore({ directory: "/var/lib/viby/artifacts" }),
+  },
 });
 ```
 
-Custom persistence adapters own transactions, tenant isolation, durable event cursors, leases, retention, and artifact references; Viby never assumes their database, query language, or migration system. The interface and operation record types are exported from `@viby/sdk/persistence`, and adapter authors can run `verifyPersistenceAdapter` from `@viby/sdk/persistence/conformance` against a fresh isolated adapter. To configure PostgreSQL explicitly instead of using the environment shortcut, use `postgresPersistence` from `@viby/sdk/persistence/postgres`. When supplying custom persistence, pass its artifact store into the adapter itself; the top-level `artifactStore` option configures only the default PostgreSQL path.
+`storage.database` stores structured records: chats, messages, generations, versions, events, histories, and artifact references. `storage.artifacts` stores binary bytes: attachments, generated media, project entries, screenshots, and deployment output. The `DATABASE_URL` shortcut still selects PostgreSQL when `storage.database` is omitted.
+
+Custom database implementations can use `defineDatabaseAdapter({ id, open })`; `open({ artifacts })` receives the independently selected artifact store. The durable interface remains exported as `PersistenceAdapter` from `@viby/sdk/persistence`, and its conformance suite remains at `@viby/sdk/persistence/conformance`. The former `persistence`, `artifactStore`, `connectionStore`, and `secretStore` fields remain deprecated compatibility aliases for one release line; configuring an alias and its corresponding `storage.*` category together is rejected.
 
 External account connections use the same tenant and user scope while keeping provider credentials out of ordinary records. Configure adapters under capability categories, set a separate 32-byte `VIBY_SECRET_KEY`, and run the normal migrations:
 
@@ -78,7 +86,7 @@ const viby = createViby({
   framework: "farm",
   model,
   sandbox,
-  artifactStore,
+  storage: { artifacts: artifactStore },
   deployment: {
     preparation: {
       install: { command: "pnpm", args: ["install", "--frozen-lockfile"] },
@@ -118,7 +126,7 @@ const result = await user.integrations.repository.connect("github", {
 });
 ```
 
-`connect` returns an existing healthy connection or a single-use authorization URL. Complete every provider through one Web-standard callback with `viby.integrations.callback(request)`. Viby persists connection metadata and hashed authorization state in PostgreSQL; the default secret store encrypts OAuth/installation credentials with AES-256-GCM. Advanced products can provide `connectionStore` and `secretStore` implementations instead. No provider token is returned to application UI objects, generation events, or the model.
+`connect` returns an existing healthy connection or a single-use authorization URL. Complete every provider through one Web-standard callback with `viby.integrations.callback(request)`. Viby persists connection metadata and hashed authorization state in PostgreSQL; the default secret store encrypts OAuth/installation credentials with AES-256-GCM. Advanced products can provide `storage.connections` and `storage.secrets` implementations instead. No provider token is returned to application UI objects, generation events, or the model.
 
 After authorization, one reusable repository handle covers discovery, import, immutable-version pushes, branches, and pull requests:
 
@@ -174,7 +182,7 @@ deployment.url; // null until the provider has a URL
 
 The default idempotency key is stable for the version, integration, project, and environment. A safe retry reuses the persisted provider result or preparation artifact instead of rebuilding or creating another provider effect. Project creation remains explicit through `createIfMissing`. Use `version.deployments()` to reload durable history and `version.deploymentArtifact(deploymentId)` to retrieve a prepared artifact. The normal `version.download()` remains raw framework-native source and is never replaced by build output. Use `provider.projects` and `provider.deployments.get(...)` for the common lifecycle; cancellation is available only when the selected adapter supports it. Adapter authors can run `verifyDeploymentIntegration` from `@viby/sdk/integrations/deployment/conformance`.
 
-The included [Vercel adapter](./docs/integrations/vercel.md) accepts complete framework source and provider build settings. The included [Cloudflare adapter](./docs/integrations/cloudflare.md) declares prebuilt input and selects `dist` by default, so Viby prepares it automatically and never publishes raw framework source in place of a build. Prebuilt deployment requires both `sandbox` and `artifactStore`; either can be any conforming adapter.
+The included [Vercel adapter](./docs/integrations/vercel.md) accepts complete framework source and provider build settings. The included [Cloudflare adapter](./docs/integrations/cloudflare.md) declares prebuilt input and selects `dist` by default, so Viby prepares it automatically and never publishes raw framework source in place of a build. Prebuilt deployment requires both `sandbox` and `storage.artifacts`; either can be any conforming adapter.
 
 Binary attachments use a separate provider-neutral artifact store so PostgreSQL retains only queryable ownership, media metadata, checksums, and opaque storage references. The filesystem adapter is a reference implementation for development or hosts with a durable mounted volume:
 
@@ -184,11 +192,13 @@ import { fileSystemArtifactStore } from "@viby/sdk/artifact/filesystem";
 const viby = createViby({
   framework: "farm",
   model,
-  artifactStore: fileSystemArtifactStore({ directory: "/var/lib/viby/artifacts" }),
+  storage: {
+    artifacts: fileSystemArtifactStore({ directory: "/var/lib/viby/artifacts" }),
+  },
 });
 ```
 
-Configure `artifactStore` before accepting attachment bytes. Custom stores implement ordinary `put`, `get`, and idempotent `delete` methods and retain their own credentials. Adapter authors can verify byte roundtrips and defensive reads with `verifyArtifactStore` from `@viby/sdk/artifact/conformance`. Existing attachment bytes from older schemas remain readable through the explicit `postgres-legacy` migration marker; all new binary writes go to the configured store.
+Configure `storage.artifacts` before accepting attachment bytes. Custom stores implement ordinary `put`, `get`, and idempotent `delete` methods and retain their own credentials. Adapter authors can verify byte roundtrips and defensive reads with `verifyArtifactStore` from `@viby/sdk/artifact/conformance`. Existing attachment bytes from older schemas remain readable through the explicit `postgres-legacy` migration marker; all new binary writes go to the configured store.
 
 The same store holds durable binary output from a generation engine. AI SDK generated files are captured automatically; custom engines can return an `artifacts` array containing images, audio, video, documents, or arbitrary binary files. Viby persists ownership, ordering, MIME type, size, checksum, and the opaque store reference while keeping bytes outside PostgreSQL:
 
@@ -660,7 +670,7 @@ const viby = createViby({
   framework: "farm",
   model,
   browser: playwrightBrowser(),
-  artifactStore,
+  storage: { artifacts: artifactStore },
 });
 
 const result = await version.evaluateVisual({
@@ -982,7 +992,8 @@ Included now:
 
 - AI SDK model injection
 - categorized local and skills.sh-compatible skills
-- tenant- and user-scoped Postgres persistence
+- categorized provider-neutral database, artifact, connection, and secret storage
+- tenant- and user-scoped PostgreSQL default through `DATABASE_URL`
 - Viby-owned migrations
 - chats and messages
 - ordered typed message parts with generation and attempt ownership

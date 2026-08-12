@@ -10,8 +10,9 @@ This inventory describes the current `@viby/sdk` source on `main`. “Shipped”
 | Model selection | any AI SDK `LanguageModel` | host configures and owns provider credentials |
 | Generation engine | public provider-neutral engine plus conformance suite | host may replace the AI SDK shortcut with any agent, model runtime, or orchestrator |
 | Categorized skills | skills.sh slugs and `skillRead(...)` directories | host selects; Viby resolves and snapshots exact content |
-| Durable persistence | provider-neutral `PersistenceAdapter` and conformance suite; `DATABASE_URL` remains the PostgreSQL default | host may provide another durable implementation and owns its credentials and migrations |
-| Binary artifact storage | provider-neutral `ArtifactStore`, conformance suite, and filesystem reference adapter | host selects storage and owns its credentials; PostgreSQL keeps metadata and opaque references |
+| Categorized storage | `storage.database`, `storage.artifacts`, `storage.connections`, and `storage.secrets`; `DATABASE_URL` remains the PostgreSQL shortcut | host selects each provider-neutral implementation independently |
+| Structured database | provider-neutral database factory or raw `PersistenceAdapter` plus conformance suite | host may provide another durable implementation and owns its credentials and migrations |
+| Binary artifact storage | provider-neutral `ArtifactStore`, conformance suite, and filesystem reference adapter | host selects storage and owns its credentials; the database keeps metadata and opaque references |
 | Tenant isolation | `viby.forUser({ tenantId, userId })` | host authenticates; every Viby query enforces both IDs |
 | Viby API key | none | no managed Viby control plane is required |
 
