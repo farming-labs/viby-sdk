@@ -145,6 +145,8 @@ await chat.toolSources.set([source.id]);
 
 Durable registrations are scoped to one tenant and user, selected explicitly per chat, and resolved into the same `ToolSource` interface used by static sources. They can be disabled, updated, or archived without changing generation code. The JSON `configuration` field rejects credential-like keys; authentication belongs in the separate secret-backed authorization lifecycle.
 
+When a generation is queued, Viby stores the selected registrations' public configuration as immutable `generation.configuration.toolSources` snapshots. Workers and retries use those exact revisions even if the chat selection or registration changes later. Credentials are deliberately excluded and continue to resolve through the live isolated connection, so rotation and revocation remain effective.
+
 Adapters may declare that lifecycle without exposing provider credentials to chats, messages, events, or the model:
 
 ```ts

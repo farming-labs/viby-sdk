@@ -194,6 +194,7 @@ test("persists a durable generation, iteration, events, and download in Postgres
       instructions: "Use a compact product layout.",
       skills: { design: [] },
       metadata: { test: "postgres-generation-config" },
+      toolSources: [],
     });
     assert.equal(calls[0]?.instructions, "Use a compact product layout.");
     assert.deepEqual(calls[0]?.metadata, { test: "postgres-generation-config" });
