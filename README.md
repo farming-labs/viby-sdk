@@ -55,6 +55,33 @@ export const viby = createViby({
 
 The model provider reads its own credential from your environment. Viby does not receive or store it. The default generator is a bounded AI SDK tool-loop agent: it reads and changes source through `AgentWorkspace`, emits durable tool and trace records, and returns either an immutable project result or a typed blocking task.
 
+Skills can also come from an application-owned catalog, database, object store, or Git service. The configured resolver handles opaque references while built-in skills.sh, local-directory, and inline adapters remain available:
+
+```ts
+import { defineSkillResolver, skillFrom, skillInline } from "@viby/sdk";
+
+const skillResolver = defineSkillResolver({
+  id: "company/catalog",
+  async resolve({ reference }) {
+    if (typeof reference === "string" || reference.source !== "resolver") return null;
+    const snapshot = await catalog.get(reference.locator);
+    return { name: snapshot.name, files: snapshot.files };
+  },
+});
+
+const viby = createViby({
+  framework: "farm",
+  model,
+  skillResolver,
+  skills: {
+    design: [skillFrom("company/catalog", "design-system@4")],
+    core: [skillInline({ name: "product-rules", files: [{ path: "SKILL.md", content: rules }] })],
+  },
+});
+```
+
+Resolver locators and metadata are persisted with generation configuration, and exact resolved files are snapshotted once per generation. Credentials belong inside the resolver implementation, never in a reference or returned skill file.
+
 PostgreSQL remains the zero-configuration structured database: omit `storage.database`, set `DATABASE_URL`, and run `viby db migrate`. Storage is grouped by what Viby stores, while each value remains a provider-neutral adapter:
 
 ```ts

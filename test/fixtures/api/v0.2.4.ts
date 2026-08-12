@@ -1,12 +1,15 @@
 import type { LanguageModel } from "ai";
 import {
   createViby,
+  defineSkillResolver,
   generationEventCursor,
   generationEventStreamResponse,
   openTelemetry,
   sandboxCommandPolicy,
   signedOutboundEventSink,
   skillRead,
+  skillFrom,
+  skillInline,
   type ChatData,
   type GenerationEvent,
   type GenerationOutcome,
@@ -31,12 +34,26 @@ declare const storage: VibyStorage;
 const skills = {
   frontend: ["farming-labs/design-eng-skills/frontend-design"],
   testing: [skillRead("./skills/testing/SKILL.md")],
+  core: [skillInline({ name: "rules", files: [{ path: "SKILL.md", content: "# Rules" }] })],
+  design: [skillFrom("company/catalog", "design-system")],
 } satisfies SkillGroups;
+
+const skillResolver = defineSkillResolver({
+  id: "company/catalog",
+  async resolve({ reference }) {
+    if (typeof reference === "string" || reference.source !== "resolver") return null;
+    return {
+      name: reference.locator,
+      files: [{ path: "SKILL.md", content: `# ${reference.locator}` }],
+    };
+  },
+});
 
 const client = createViby({
   framework: "farm",
   model,
   skills,
+  skillResolver,
   sandbox,
   sandboxPolicy: sandboxCommandPolicy({ allowCommands: ["npm"] }),
   generation: { execution: "worker" },

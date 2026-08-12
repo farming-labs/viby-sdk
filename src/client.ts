@@ -398,7 +398,11 @@ export function createViby<const Framework extends FrameworkId>(
         [alias, new AgentProjectGenerator(model, config.agent)]
       ))),
     } : {}),
-    skillResolver: new SkillResolver(config.skills),
+    skillResolver: new SkillResolver(
+      config.skills,
+      undefined,
+      config.skillResolver ? [config.skillResolver] : [],
+    ),
   });
 }
 
@@ -2134,16 +2138,55 @@ function normalizeSkillGroups(value: SkillGroups | undefined): SkillGroups {
     }
     groups[category] = references.map((reference) => {
       if (typeof reference === "string") return reference as SkillReference;
-      if (
-        !reference
-        || typeof reference !== "object"
-        || reference.source !== "file"
-        || typeof reference.path !== "string"
-        || reference.path.trim().length === 0
-      ) {
+      if (!reference || typeof reference !== "object") {
         throw new ConfigurationError(`Generation skill reference in ${category} is invalid.`);
       }
-      return { source: "file", path: reference.path } as const;
+      if (reference.source === "file" && typeof reference.path === "string" && reference.path.trim()) {
+        return { source: "file", path: reference.path } as const;
+      }
+      if (
+        reference.source === "inline"
+        && typeof reference.name === "string"
+        && reference.name.trim()
+        && (reference.description === undefined || typeof reference.description === "string")
+        && Array.isArray(reference.files)
+      ) {
+        return {
+          source: "inline",
+          name: reference.name,
+          ...(reference.description === undefined ? {} : { description: reference.description }),
+          files: reference.files.map((file: unknown) => {
+            if (
+              !file
+              || typeof file !== "object"
+              || !("path" in file)
+              || typeof file.path !== "string"
+              || !("content" in file)
+              || typeof file.content !== "string"
+            ) {
+              throw new ConfigurationError(`Inline skill file in ${category} is invalid.`);
+            }
+            return { path: file.path, content: file.content };
+          }),
+        } as const;
+      }
+      if (
+        reference.source === "resolver"
+        && typeof reference.resolver === "string"
+        && reference.resolver.trim()
+        && typeof reference.locator === "string"
+        && reference.locator.trim()
+      ) {
+        return {
+          source: "resolver",
+          resolver: reference.resolver,
+          locator: reference.locator,
+          ...(reference.metadata === undefined
+            ? {}
+            : { metadata: normalizeChatMetadata(reference.metadata) }),
+        } as const;
+      }
+      throw new ConfigurationError(`Generation skill reference in ${category} is invalid.`);
     });
   }
   return groups;

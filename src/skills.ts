@@ -1,11 +1,16 @@
 import { readFile, readdir, stat } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import type {
+  ChatMetadata,
+  InlineSkillReference,
   LocalSkillReference,
   ResolvedSkill,
+  ResolverSkillReference,
   SkillFile,
   SkillGroups,
   SkillReference,
+  SkillResolverAdapter,
+  SkillResolutionOutput,
   SkillsShSkillId,
 } from "./types.js";
 import { SkillResolutionError } from "./errors.js";
@@ -52,14 +57,67 @@ export function skillRead(path: string): LocalSkillReference {
   return { source: "file", path };
 }
 
+export function skillInline(input: {
+  readonly name: string;
+  readonly description?: string;
+  readonly files: readonly SkillFile[];
+}): InlineSkillReference {
+  return {
+    source: "inline",
+    name: input.name,
+    ...(input.description === undefined ? {} : { description: input.description }),
+    files: input.files.map((file) => ({ ...file })),
+  };
+}
+
+export function skillFrom(
+  resolver: string,
+  locator: string,
+  metadata?: ChatMetadata,
+): ResolverSkillReference {
+  if (resolver.trim().length === 0) {
+    throw new SkillResolutionError(resolver, "the resolver ID cannot be empty");
+  }
+  if (locator.trim().length === 0) {
+    throw new SkillResolutionError(locator, "the locator cannot be empty");
+  }
+  return {
+    source: "resolver",
+    resolver,
+    locator,
+    ...(metadata === undefined ? {} : { metadata: structuredClone(metadata) }),
+  };
+}
+
+export function defineSkillResolver<const Adapter extends SkillResolverAdapter>(
+  adapter: Adapter,
+): Adapter {
+  if (!adapter || typeof adapter !== "object") {
+    throw new SkillResolutionError("skillResolver", "the resolver must be an object");
+  }
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9._/-]{0,99}$/.test(adapter.id)) {
+    throw new SkillResolutionError(adapter.id, "the resolver ID is invalid");
+  }
+  if (typeof adapter.resolve !== "function") {
+    throw new SkillResolutionError(adapter.id, "the resolver must implement resolve(input)");
+  }
+  return adapter;
+}
+
 export class SkillResolver {
   readonly #groups: SkillGroups;
   readonly #rootDirectory: string;
+  readonly #resolvers: readonly SkillResolverAdapter[];
   readonly #cache = new Map<string, Promise<Omit<ResolvedSkill, "category">>>();
 
-  constructor(groups: SkillGroups = {}, rootDirectory = process.cwd()) {
+  constructor(
+    groups: SkillGroups = {},
+    rootDirectory = process.cwd(),
+    resolvers: readonly SkillResolverAdapter[] = [],
+  ) {
     this.#groups = groups;
     this.#rootDirectory = rootDirectory;
+    this.#resolvers = resolvers.map(defineSkillResolver);
   }
 
   async resolveForPrompt(prompt: string, groups: SkillGroups = this.#groups): Promise<ResolvedSkill[]> {
@@ -74,7 +132,7 @@ export class SkillResolver {
 
     const resolved = await Promise.all(
       selected.map(async ({ category, reference }) => ({
-        ...(await this.#resolve(reference)),
+        ...(await this.#resolve(reference, category, prompt)),
         category,
       })),
     );
@@ -88,16 +146,37 @@ export class SkillResolver {
     });
   }
 
-  #resolve(reference: SkillReference): Promise<Omit<ResolvedSkill, "category">> {
-    const key = typeof reference === "string" ? `remote:${reference}` : `file:${reference.path}`;
+  #resolve(
+    reference: SkillReference,
+    category: string,
+    prompt: string,
+  ): Promise<Omit<ResolvedSkill, "category">> {
+    const key = `${category}:${JSON.stringify(reference)}`;
     const cached = this.#cache.get(key);
     if (cached) return cached;
 
-    const pending = typeof reference === "string"
-      ? resolveRemoteSkill(reference)
-      : resolveLocalSkill(reference, this.#rootDirectory);
+    const pending = this.#resolveUncached(reference, category, prompt);
     this.#cache.set(key, pending);
     return pending;
+  }
+
+  async #resolveUncached(
+    reference: SkillReference,
+    category: string,
+    prompt: string,
+  ): Promise<Omit<ResolvedSkill, "category">> {
+    for (const resolver of this.#resolvers) {
+      const output = await resolver.resolve({ reference, category, prompt });
+      if (output) return normalizeResolverOutput(resolver.id, reference, output);
+    }
+
+    if (typeof reference === "string") return resolveRemoteSkill(reference);
+    if (reference.source === "file") return resolveLocalSkill(reference, this.#rootDirectory);
+    if (reference.source === "inline") return resolveInlineSkill(reference);
+    throw new SkillResolutionError(
+      `${reference.resolver}:${reference.locator}`,
+      `no configured resolver handled ${reference.resolver}`,
+    );
   }
 }
 
@@ -117,6 +196,99 @@ export function selectCategories(prompt: string, configured: readonly string[]):
   }
 
   return [...selected];
+}
+
+function resolveInlineSkill(
+  reference: InlineSkillReference,
+): Promise<Omit<ResolvedSkill, "category">> {
+  const files = normalizeSkillFiles(reference.name, reference.files);
+  const name = normalizeSkillText(reference.name, "inline skill name");
+  return Promise.resolve({
+    name,
+    description: reference.description?.trim() ?? "",
+    source: "inline",
+    locator: name,
+    contentHash: hashSkillFiles(files),
+    files,
+  });
+}
+
+function normalizeResolverOutput(
+  resolverId: string,
+  reference: SkillReference,
+  output: SkillResolutionOutput,
+): Omit<ResolvedSkill, "category"> {
+  if (!output || typeof output !== "object") {
+    throw new SkillResolutionError(resolverId, "the resolver returned an invalid result");
+  }
+  const name = normalizeSkillText(output.name, "resolved skill name");
+  const source = normalizeSkillText(output.source ?? resolverId, "resolved skill source");
+  const locator = normalizeSkillText(
+    output.locator ?? skillReferenceLocator(reference),
+    "resolved skill locator",
+  );
+  const files = normalizeSkillFiles(locator, output.files);
+  const contentHash = hashSkillFiles(files);
+  if (output.contentHash !== undefined && output.contentHash !== contentHash) {
+    throw new SkillResolutionError(locator, "the resolver content hash does not match its files");
+  }
+  return {
+    name,
+    description: output.description?.trim() ?? "",
+    source,
+    locator,
+    contentHash,
+    files,
+  };
+}
+
+function normalizeSkillFiles(locator: string, value: readonly SkillFile[]): SkillFile[] {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new SkillResolutionError(locator, "a resolved skill must contain at least one file");
+  }
+  if (value.length > MAX_SKILL_FILES) {
+    throw new SkillResolutionError(locator, `a skill cannot contain more than ${MAX_SKILL_FILES} files`);
+  }
+  const seen = new Set<string>();
+  let totalBytes = 0;
+  return value.map((file) => {
+    if (!file || typeof file !== "object" || typeof file.path !== "string" || typeof file.content !== "string") {
+      throw new SkillResolutionError(locator, "resolved skill files must contain string paths and content");
+    }
+    const path = file.path.replaceAll("\\", "/");
+    if (
+      path.length === 0
+      || path.startsWith("/")
+      || path.includes("\0")
+      || path.split("/").some((segment: string) => segment === "" || segment === "." || segment === "..")
+    ) {
+      throw new SkillResolutionError(locator, `resolved skill file path is unsafe: ${file.path}`);
+    }
+    if (seen.has(path)) {
+      throw new SkillResolutionError(locator, `resolved skill file path is duplicated: ${path}`);
+    }
+    seen.add(path);
+    totalBytes += Buffer.byteLength(file.content);
+    if (totalBytes > MAX_SKILL_BYTES) {
+      throw new SkillResolutionError(locator, `a skill cannot exceed ${MAX_SKILL_BYTES} bytes`);
+    }
+    return { path, content: file.content };
+  });
+}
+
+function skillReferenceLocator(reference: SkillReference): string {
+  if (typeof reference === "string") return reference;
+  if (reference.source === "file") return reference.path;
+  if (reference.source === "inline") return reference.name;
+  return reference.locator;
+}
+
+function normalizeSkillText(value: string, label: string): string {
+  const normalized = typeof value === "string" ? value.trim() : "";
+  if (normalized.length === 0 || normalized.length > 500) {
+    throw new SkillResolutionError(label, `${label} must contain 1-500 characters`);
+  }
+  return normalized;
 }
 
 async function resolveLocalSkill(
