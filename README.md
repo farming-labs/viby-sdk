@@ -115,6 +115,36 @@ const viby = createViby({
 
 The core `ToolSource` contract also supports application catalogs, database-backed tools, and other protocols. MCP credentials remain inside the adapter callback. Viby gives every effectful call a stable idempotency key, persists redacted arguments/results, and resumes an approval-required call only after its permission task is resolved. Install the optional `@modelcontextprotocol/client` peer only when using the MCP adapter.
 
+Products that let every tenant add its own tools can register adapter types once and persist only public configuration:
+
+```ts
+import { defineToolSourceAdapter } from "@viby/sdk";
+
+const viby = createViby({
+  framework: "farm",
+  model,
+  tools: {
+    adapters: {
+      mcp: defineToolSourceAdapter({
+        type: "mcp",
+        open: ({ source }) => openRegisteredMcpSource(source),
+      }),
+    },
+  },
+});
+
+const user = viby.forUser({ tenantId, userId });
+const source = await user.toolSources.create({
+  type: "mcp",
+  name: "Company tools",
+  configuration: { endpoint: "https://tools.example.com/mcp" },
+});
+
+await chat.toolSources.set([source.id]);
+```
+
+Durable registrations are scoped to one tenant and user, selected explicitly per chat, and resolved into the same `ToolSource` interface used by static sources. They can be disabled, updated, or archived without changing generation code. The JSON `configuration` field rejects credential-like keys; authentication belongs in the separate secret-backed authorization lifecycle.
+
 PostgreSQL remains the zero-configuration structured database: omit `storage.database`, set `DATABASE_URL`, and run `viby db migrate`. Storage is grouped by what Viby stores, while each value remains a provider-neutral adapter:
 
 ```ts

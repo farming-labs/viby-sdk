@@ -33,6 +33,7 @@ import type {
   GeneratedArtifactContent,
   GeneratedArtifactData,
   GeneratedArtifactKind,
+  JsonValue,
   MessageData,
   MessagePart,
   MessagePartInput,
@@ -112,6 +113,13 @@ import type {
   PreviewSessionListOptions,
   PreviewStatus,
 } from "./preview.js";
+import type {
+  CreateToolSourceRegistrationRecord,
+  ToolSourceRegistrationData,
+  ToolSourceRegistrationListOptions,
+  ToolSourceRegistrationStatus,
+  UpdateToolSourceRegistrationRecord,
+} from "./tool-source-registry.js";
 import type {
   BeginDeploymentRecord,
   CompleteDeploymentRecord,
@@ -447,6 +455,17 @@ interface PreviewSessionRow {
   updated_at: Date;
 }
 
+interface ToolSourceRegistrationRow {
+  id: string;
+  type: string;
+  name: string;
+  description: string | null;
+  configuration: Record<string, JsonValue>;
+  status: ToolSourceRegistrationStatus;
+  created_at: Date;
+  updated_at: Date;
+}
+
 interface RepositoryLinkRow {
   id: string;
   chat_id: string;
@@ -576,6 +595,8 @@ export class PostgresRepository implements Repository {
         AND to_regclass('viby.generation_tasks') IS NOT NULL
         AND to_regclass('viby.sandbox_leases') IS NOT NULL
         AND to_regclass('viby.preview_sessions') IS NOT NULL
+        AND to_regclass('viby.tool_sources') IS NOT NULL
+        AND to_regclass('viby.chat_tool_sources') IS NOT NULL
         AND to_regclass('viby.version_changes') IS NOT NULL
         AND to_regclass('viby.message_parts') IS NOT NULL
         AND to_regclass('viby.tool_calls') IS NOT NULL
@@ -3498,6 +3519,173 @@ export class PostgresRepository implements Repository {
     return existing;
   }
 
+  async createToolSourceRegistration(
+    scope: UserScope,
+    input: CreateToolSourceRegistrationRecord,
+  ): Promise<ToolSourceRegistrationData> {
+    await this.assertReady();
+    const [row] = await this.#sql<ToolSourceRegistrationRow[]>`
+      INSERT INTO viby.tool_sources (
+        id, tenant_id, user_id, type, name, description, configuration,
+        status, created_at, updated_at
+      ) VALUES (
+        ${input.id}, ${scope.tenantId}, ${scope.userId}, ${input.type},
+        ${input.name}, ${input.description},
+        ${this.#sql.json(JSON.parse(JSON.stringify(input.configuration)))},
+        'active', ${input.now}, ${input.now}
+      )
+      RETURNING id, type, name, description, configuration, status, created_at, updated_at
+    `;
+    if (!row) throw new Error("Tool source registration was not returned after creation.");
+    return mapToolSourceRegistration(row);
+  }
+
+  async getToolSourceRegistration(
+    scope: UserScope,
+    id: string,
+  ): Promise<ToolSourceRegistrationData | null> {
+    await this.assertReady();
+    const [row] = await this.#sql<ToolSourceRegistrationRow[]>`
+      SELECT id, type, name, description, configuration, status, created_at, updated_at
+      FROM viby.tool_sources
+      WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId} AND id = ${id}
+      LIMIT 1
+    `;
+    return row ? mapToolSourceRegistration(row) : null;
+  }
+
+  async listToolSourceRegistrations(
+    scope: UserScope,
+    options: ToolSourceRegistrationListOptions = {},
+  ): Promise<readonly ToolSourceRegistrationData[]> {
+    await this.assertReady();
+    const status = options.status ?? null;
+    const type = options.type ?? null;
+    const rows = await this.#sql<ToolSourceRegistrationRow[]>`
+      SELECT id, type, name, description, configuration, status, created_at, updated_at
+      FROM viby.tool_sources
+      WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+        AND (${status}::text IS NULL OR status = ${status})
+        AND (${type}::text IS NULL OR type = ${type})
+      ORDER BY updated_at DESC, id DESC
+      LIMIT ${options.limit ?? 100}
+    `;
+    return rows.map(mapToolSourceRegistration);
+  }
+
+  async updateToolSourceRegistration(
+    scope: UserScope,
+    id: string,
+    input: UpdateToolSourceRegistrationRecord,
+  ): Promise<ToolSourceRegistrationData> {
+    await this.assertReady();
+    const hasName = input.name !== undefined;
+    const hasDescription = input.description !== undefined;
+    const hasConfiguration = input.configuration !== undefined;
+    const hasStatus = input.status !== undefined;
+    const [row] = await this.#sql<ToolSourceRegistrationRow[]>`
+      UPDATE viby.tool_sources SET
+        name = CASE WHEN ${hasName} THEN ${input.name ?? ""} ELSE name END,
+        description = CASE WHEN ${hasDescription} THEN ${input.description ?? null} ELSE description END,
+        configuration = CASE WHEN ${hasConfiguration}
+          THEN ${this.#sql.json(JSON.parse(JSON.stringify(input.configuration ?? {})))}
+          ELSE configuration END,
+        status = CASE WHEN ${hasStatus} THEN ${input.status ?? "active"} ELSE status END,
+        updated_at = ${input.now}
+      WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+        AND id = ${id} AND status <> 'archived'
+      RETURNING id, type, name, description, configuration, status, created_at, updated_at
+    `;
+    if (!row) throw new NotFoundError("Active tool source");
+    return mapToolSourceRegistration(row);
+  }
+
+  async archiveToolSourceRegistration(
+    scope: UserScope,
+    id: string,
+    now: Date,
+  ): Promise<ToolSourceRegistrationData> {
+    await this.assertReady();
+    return this.#sql.begin(async (sql) => {
+      const [row] = await sql<ToolSourceRegistrationRow[]>`
+        UPDATE viby.tool_sources SET status = 'archived', updated_at = ${now}
+        WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId} AND id = ${id}
+        RETURNING id, type, name, description, configuration, status, created_at, updated_at
+      `;
+      if (!row) throw new NotFoundError("Tool source");
+      await sql`
+        DELETE FROM viby.chat_tool_sources
+        WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+          AND tool_source_id = ${id}
+      `;
+      return mapToolSourceRegistration(row);
+    });
+  }
+
+  async replaceChatToolSources(
+    scope: UserScope,
+    chatId: string,
+    sourceIds: readonly string[],
+    now: Date,
+  ): Promise<readonly ToolSourceRegistrationData[]> {
+    await this.assertReady();
+    return this.#sql.begin(async (sql) => {
+      const [chat] = await sql<{ id: string }[]>`
+        SELECT id FROM viby.chats
+        WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+          AND id = ${chatId} AND deleted_at IS NULL
+        LIMIT 1
+      `;
+      if (!chat) throw new NotFoundError("Chat");
+      const rows = sourceIds.length === 0 ? [] : await sql<ToolSourceRegistrationRow[]>`
+        SELECT id, type, name, description, configuration, status, created_at, updated_at
+        FROM viby.tool_sources
+        WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+          AND id = ANY(${sql.array([...sourceIds])}::uuid[]) AND status = 'active'
+        ORDER BY array_position(${sql.array([...sourceIds])}::uuid[], id)
+      `;
+      if (rows.length !== sourceIds.length) {
+        throw new NotFoundError("Active tool source selection");
+      }
+      await sql`
+        DELETE FROM viby.chat_tool_sources
+        WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId} AND chat_id = ${chatId}
+      `;
+      if (sourceIds.length > 0) {
+        await sql`
+          INSERT INTO viby.chat_tool_sources (
+            tenant_id, user_id, chat_id, tool_source_id, created_at
+          )
+          SELECT ${scope.tenantId}, ${scope.userId}, ${chatId}, source_id, ${now}
+          FROM unnest(${sql.array([...sourceIds])}::uuid[]) AS source_id
+        `;
+      }
+      return rows.map(mapToolSourceRegistration);
+    });
+  }
+
+  async listChatToolSources(
+    scope: UserScope,
+    chatId: string,
+  ): Promise<readonly ToolSourceRegistrationData[]> {
+    await this.assertReady();
+    const rows = await this.#sql<ToolSourceRegistrationRow[]>`
+      SELECT source.id, source.type, source.name, source.description, source.configuration,
+        source.status, source.created_at, source.updated_at
+      FROM viby.chat_tool_sources AS selected
+      JOIN viby.tool_sources AS source
+        ON source.tenant_id = selected.tenant_id AND source.user_id = selected.user_id
+        AND source.id = selected.tool_source_id
+      JOIN viby.chats AS chat
+        ON chat.tenant_id = selected.tenant_id AND chat.user_id = selected.user_id
+        AND chat.id = selected.chat_id
+      WHERE selected.tenant_id = ${scope.tenantId} AND selected.user_id = ${scope.userId}
+        AND selected.chat_id = ${chatId} AND chat.deleted_at IS NULL
+      ORDER BY selected.created_at, selected.tool_source_id
+    `;
+    return rows.map(mapToolSourceRegistration);
+  }
+
   async #storeAttachments(
     scope: UserScope,
     input: CreateGenerationRecord,
@@ -4395,6 +4583,21 @@ function mapPreviewSession<Framework extends FrameworkId>(
     expiresAt: row.expires_at,
     readyAt: row.ready_at,
     stoppedAt: row.stopped_at,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function mapToolSourceRegistration(
+  row: ToolSourceRegistrationRow,
+): ToolSourceRegistrationData {
+  return {
+    id: row.id,
+    type: row.type,
+    name: row.name,
+    description: row.description,
+    configuration: Object.freeze({ ...row.configuration }),
+    status: row.status,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

@@ -7,6 +7,7 @@ import type {
   UserScope,
 } from "./types.js";
 import { ConfigurationError } from "./errors.js";
+import type { ToolSourceAdapter } from "./tool-source-registry.js";
 
 export interface ToolSourceContext<Framework extends FrameworkId = FrameworkId>
 extends UserScope {
@@ -59,14 +60,26 @@ export interface ToolSourceSelectionContext<Framework extends FrameworkId = Fram
   readonly context: ToolSourceContext<Framework>;
 }
 
+export interface ToolSourceResolver<Framework extends FrameworkId = FrameworkId> {
+  resolve(context: ToolSourceContext<Framework>): Promise<readonly ToolSource<Framework>[]>;
+}
+
 export interface ToolSourcesConfig<Framework extends FrameworkId = FrameworkId> {
-  readonly sources: Readonly<Record<string, ToolSource<Framework>>>;
+  /** Shared, process-configured sources. Existing applications may keep using only this path. */
+  readonly sources?: Readonly<Record<string, ToolSource<Framework>>>;
+  /** Registration types available to tenant-scoped durable sources. */
+  readonly adapters?: Readonly<Record<string, ToolSourceAdapter<Framework>>>;
   /** Select sources for each chat. Omit to expose every configured source. */
   readonly select?: (
     input: ToolSourceSelectionContext<Framework>,
   ) => readonly string[] | Promise<readonly string[]>;
   /** Defaults to allowing reads and requiring approval for writes/external effects. */
   readonly policy?: ToolSourcePolicy<Framework>;
+}
+
+export interface ToolSourcesRuntimeConfig<Framework extends FrameworkId = FrameworkId>
+extends ToolSourcesConfig<Framework> {
+  readonly registry?: ToolSourceResolver<Framework>;
 }
 
 export interface ResolvedToolSource<Framework extends FrameworkId = FrameworkId> {
@@ -91,11 +104,18 @@ export function defineToolSource<Framework extends FrameworkId = FrameworkId>(
 }
 
 export async function resolveToolSources<Framework extends FrameworkId>(
-  config: ToolSourcesConfig<Framework> | undefined,
+  config: ToolSourcesRuntimeConfig<Framework> | undefined,
   context: ToolSourceContext<Framework>,
 ): Promise<readonly ResolvedToolSource<Framework>[]> {
   if (!config) return [];
-  const entries = Object.entries(config.sources);
+  const durable = await config.registry?.resolve(context) ?? [];
+  const entries = [
+    ...Object.entries(config.sources ?? {}),
+    ...durable.map((source) => [source.id, source] as const),
+  ];
+  if (new Set(entries.map(([id]) => id)).size !== entries.length) {
+    throw new ConfigurationError("Static and durable tool source ids must be unique.");
+  }
   const available = entries.map(([id]) => id);
   const selected = config.select
     ? await config.select({ available: Object.freeze(available), context })
@@ -105,7 +125,7 @@ export async function resolveToolSources<Framework extends FrameworkId>(
   }
   const selectedIds = new Set(selected);
   for (const id of selectedIds) {
-    if (!config.sources[id]) {
+    if (!entries.some(([availableId]) => availableId === id)) {
       throw new ConfigurationError(`tools.select returned an unknown source id: ${id}`);
     }
   }

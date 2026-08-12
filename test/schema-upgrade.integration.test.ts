@@ -88,6 +88,7 @@ test("upgrades a historical v0.2 schema without losing tenant data", {
       "0027_provider_neutral_skill_sources",
       "0028_environment_variables",
       "0029_preview_sessions",
+      "0030_tool_source_registry",
     ]);
     assert.equal((await getMigrationStatus(databaseUrl.toString())).every((entry) => entry.applied), true);
     assert.deepEqual(await migrateDatabase(databaseUrl.toString()), []);

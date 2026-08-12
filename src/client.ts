@@ -202,7 +202,17 @@ import {
   PostgresIntegrationConnectionStore,
 } from "./integration-store-postgres.js";
 import type { SecretStore, SecretStorePutInput } from "./integration-store.js";
-import type { ToolSource } from "./tool-source.js";
+import type {
+  ToolSource,
+  ToolSourcesRuntimeConfig,
+} from "./tool-source.js";
+import {
+  ToolSourceRegistry,
+  type CreateToolSourceInput,
+  type ToolSourceRegistrationData,
+  type ToolSourceRegistrationListOptions,
+  type UpdateToolSourceInput,
+} from "./tool-source-registry.js";
 
 const DEFAULT_POLL_INTERVAL_MS = 100;
 const DEFAULT_EVENT_LIMIT = 100;
@@ -308,7 +318,11 @@ interface GenerationModelBinding<Framework extends FrameworkId> {
 class GenerationModelRegistry<Framework extends FrameworkId> {
   readonly #bindings = new Map<string, GenerationModelBinding<Framework>>();
 
-  constructor(config: VibyConfig<Framework>, dependencies: ClientDependencies<Framework>) {
+  constructor(
+    config: VibyConfig<Framework>,
+    dependencies: ClientDependencies<Framework>,
+    tools: ToolSourcesRuntimeConfig<Framework> | undefined,
+  ) {
     if (config.engine) {
       this.#addEngine("default", config.engine);
       for (const [alias, engine] of Object.entries(config.engines ?? {})) {
@@ -320,7 +334,7 @@ class GenerationModelRegistry<Framework extends FrameworkId> {
       return;
     }
 
-    const defaultGenerator = dependencies.generator ?? new AgentProjectGenerator(config.model, config.agent, config.tools);
+    const defaultGenerator = dependencies.generator ?? new AgentProjectGenerator(config.model, config.agent, tools);
     this.#addModel("default", config.model, defaultGenerator);
     for (const [alias, model] of Object.entries(config.models ?? {})) {
       if (alias === "default") {
@@ -329,7 +343,7 @@ class GenerationModelRegistry<Framework extends FrameworkId> {
       this.#addModel(
         alias,
         model,
-        dependencies.generators?.[alias] ?? new AgentProjectGenerator(model, config.agent, config.tools),
+        dependencies.generators?.[alias] ?? new AgentProjectGenerator(model, config.agent, tools),
       );
     }
   }
@@ -406,12 +420,6 @@ export function createViby<const Framework extends FrameworkId>(
     repository: isDatabaseAdapter(database)
       ? database.open(storage.artifacts ? { artifacts: storage.artifacts } : {})
       : database,
-    ...(!config.engine ? {
-      generator: new AgentProjectGenerator(config.model, config.agent, config.tools),
-      generators: Object.fromEntries(Object.entries(config.models ?? {}).map(([alias, model]) => (
-        [alias, new AgentProjectGenerator(model, config.agent, config.tools)]
-      ))),
-    } : {}),
     skillResolver: new SkillResolver(
       config.skills,
       undefined,
@@ -552,6 +560,7 @@ class VibyClient<Framework extends FrameworkId> implements Viby<Framework> {
   readonly #deletedChatsMs: number | null;
   readonly #eventSinks: ReadonlyMap<string, OutboundEventSink>;
   readonly #toolSources: readonly ToolSource<Framework>[];
+  readonly #toolSourceRegistry: ToolSourceRegistry<Framework>;
 
   constructor(
     config: VibyConfig<Framework>,
@@ -569,6 +578,10 @@ class VibyClient<Framework extends FrameworkId> implements Viby<Framework> {
     this.#toolSources = Object.freeze([
       ...new Set(Object.values(config.tools?.sources ?? {})),
     ]);
+    this.#toolSourceRegistry = new ToolSourceRegistry(
+      this.#repository,
+      config.tools?.adapters,
+    );
     this.#sandboxes = new SandboxRegistry(this.#repository, config.sandboxPolicy);
     this.#previews = new PreviewRegistry(
       this.#repository,
@@ -577,7 +590,10 @@ class VibyClient<Framework extends FrameworkId> implements Viby<Framework> {
       config.preview,
     );
     this.#skillResolver = dependencies.skillResolver;
-    this.#models = new GenerationModelRegistry(config, dependencies);
+    this.#models = new GenerationModelRegistry(config, dependencies, config.tools ? {
+      ...config.tools,
+      registry: this.#toolSourceRegistry,
+    } : undefined);
     this.#skills = normalizeSkillGroups(config.skills);
     this.#runner = new GenerationRunner({
       framework: this.framework,
@@ -612,6 +628,7 @@ class VibyClient<Framework extends FrameworkId> implements Viby<Framework> {
       browser: this.#browser,
       sandboxes: this.#sandboxes,
       previews: this.#previews,
+      toolSourceRegistry: this.#toolSourceRegistry,
       deletedChatsMs: this.#deletedChatsMs,
       eventSinks: this.#eventSinks,
       integrations: this.integrations,
@@ -629,9 +646,11 @@ class VibyClient<Framework extends FrameworkId> implements Viby<Framework> {
     await Promise.allSettled([...this.#workers].map((worker) => worker.stop()));
     await this.#registry.abortAll("Viby client closed.");
     const preview = await Promise.allSettled([this.#previews.stopAll()]);
-    const [sandboxes, toolSources, environment, integrations, repository] = await Promise.allSettled([
+    const [sandboxes, toolSources, toolSourceRegistry, environment, integrations, repository]
+      = await Promise.allSettled([
       this.#sandboxes.stopAll(),
       Promise.all(this.#toolSources.map((source) => source.close?.())),
+      this.#toolSourceRegistry.close(),
       this.#environment?.close(),
       this.integrations.close(),
       this.#repository.close(),
@@ -639,6 +658,7 @@ class VibyClient<Framework extends FrameworkId> implements Viby<Framework> {
     if (preview[0]?.status === "rejected") throw preview[0].reason;
     if (sandboxes.status === "rejected") throw sandboxes.reason;
     if (toolSources.status === "rejected") throw toolSources.reason;
+    if (toolSourceRegistry.status === "rejected") throw toolSourceRegistry.reason;
     if (environment.status === "rejected") throw environment.reason;
     if (integrations.status === "rejected") throw integrations.reason;
     if (repository.status === "rejected") throw repository.reason;
@@ -728,6 +748,7 @@ interface ScopedDependencies<Framework extends FrameworkId> {
   readonly browser: BrowserAdapter | undefined;
   readonly sandboxes: SandboxRegistry;
   readonly previews: PreviewRegistry<Framework>;
+  readonly toolSourceRegistry: ToolSourceRegistry<Framework>;
   readonly deletedChatsMs: number | null;
   readonly eventSinks: ReadonlyMap<string, OutboundEventSink>;
   readonly integrations: IntegrationClient;
@@ -740,6 +761,7 @@ export class ScopedViby<Framework extends FrameworkId = FrameworkId> {
   readonly generations: GenerationCollection<Framework>;
   readonly sandboxes: SandboxCollection<Framework>;
   readonly previews: PreviewCollection<Framework>;
+  readonly toolSources: RegisteredToolSourceCollection<Framework>;
   readonly integrations: ReturnType<IntegrationClient["forUser"]>;
 
   constructor(dependencies: ScopedDependencies<Framework>) {
@@ -748,6 +770,7 @@ export class ScopedViby<Framework extends FrameworkId = FrameworkId> {
     this.generations = new GenerationCollection(dependencies);
     this.sandboxes = new SandboxCollection(dependencies);
     this.previews = new PreviewCollection(dependencies);
+    this.toolSources = new RegisteredToolSourceCollection(dependencies);
     this.integrations = dependencies.integrations.forUser(
       dependencies.scope,
       dependencies.repository,
@@ -815,6 +838,106 @@ export class Preview<Framework extends FrameworkId = FrameworkId> {
       signal,
     );
     return this;
+  }
+}
+
+export class RegisteredToolSourceCollection<Framework extends FrameworkId = FrameworkId> {
+  readonly #dependencies: ScopedDependencies<Framework>;
+
+  constructor(dependencies: ScopedDependencies<Framework>) {
+    this.#dependencies = dependencies;
+  }
+
+  async create(input: CreateToolSourceInput): Promise<RegisteredToolSource<Framework>> {
+    const data = await this.#dependencies.toolSourceRegistry.create(
+      this.#dependencies.scope,
+      input,
+    );
+    return new RegisteredToolSource(data, this.#dependencies);
+  }
+
+  async get(id: string): Promise<RegisteredToolSource<Framework>> {
+    const data = await this.#dependencies.toolSourceRegistry.get(
+      this.#dependencies.scope,
+      assertIdentifier(id, "Tool source id"),
+    );
+    return new RegisteredToolSource(data, this.#dependencies);
+  }
+
+  async list(
+    options: ToolSourceRegistrationListOptions = {},
+  ): Promise<readonly RegisteredToolSource<Framework>[]> {
+    const records = await this.#dependencies.toolSourceRegistry.list(
+      this.#dependencies.scope,
+      options,
+    );
+    return records.map((data) => new RegisteredToolSource(data, this.#dependencies));
+  }
+}
+
+export class RegisteredToolSource<Framework extends FrameworkId = FrameworkId> {
+  readonly #dependencies: ScopedDependencies<Framework>;
+  #data: ToolSourceRegistrationData;
+
+  constructor(
+    data: ToolSourceRegistrationData,
+    dependencies: ScopedDependencies<Framework>,
+  ) {
+    this.#data = data;
+    this.#dependencies = dependencies;
+  }
+
+  get id(): string { return this.#data.id; }
+  get type(): string { return this.#data.type; }
+  get name(): string { return this.#data.name; }
+  get status(): ToolSourceRegistrationData["status"] { return this.#data.status; }
+
+  data(): ToolSourceRegistrationData {
+    return this.#data;
+  }
+
+  async update(input: UpdateToolSourceInput): Promise<this> {
+    this.#data = await this.#dependencies.toolSourceRegistry.update(
+      this.#dependencies.scope,
+      this.id,
+      input,
+    );
+    return this;
+  }
+
+  async archive(): Promise<this> {
+    this.#data = await this.#dependencies.toolSourceRegistry.archive(
+      this.#dependencies.scope,
+      this.id,
+    );
+    return this;
+  }
+}
+
+export class ChatToolSourceSelection<Framework extends FrameworkId = FrameworkId> {
+  readonly #chatId: string;
+  readonly #dependencies: ScopedDependencies<Framework>;
+
+  constructor(chatId: string, dependencies: ScopedDependencies<Framework>) {
+    this.#chatId = chatId;
+    this.#dependencies = dependencies;
+  }
+
+  async list(): Promise<readonly RegisteredToolSource<Framework>[]> {
+    const records = await this.#dependencies.toolSourceRegistry.selected(
+      this.#dependencies.scope,
+      this.#chatId,
+    );
+    return records.map((data) => new RegisteredToolSource(data, this.#dependencies));
+  }
+
+  async set(sourceIds: readonly string[]): Promise<readonly RegisteredToolSource<Framework>[]> {
+    const records = await this.#dependencies.toolSourceRegistry.select(
+      this.#dependencies.scope,
+      this.#chatId,
+      sourceIds.map((id) => assertIdentifier(id, "Tool source id")),
+    );
+    return records.map((data) => new RegisteredToolSource(data, this.#dependencies));
   }
 }
 
@@ -975,12 +1098,14 @@ export class Chat<Framework extends FrameworkId = FrameworkId> {
   readonly #data: ChatData<Framework>;
   readonly #dependencies: ScopedDependencies<Framework>;
   readonly environment: EnvironmentVariableCollection;
+  readonly toolSources: ChatToolSourceSelection<Framework>;
 
   constructor(data: ChatData<Framework>, dependencies: ScopedDependencies<Framework>) {
     this.#data = data;
     this.#dependencies = dependencies;
     this.environment = dependencies.environment?.forChat(dependencies.scope, data.id)
       ?? unavailableEnvironmentVariables();
+    this.toolSources = new ChatToolSourceSelection(data.id, dependencies);
   }
 
   get id(): string { return this.#data.id; }

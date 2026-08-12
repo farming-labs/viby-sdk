@@ -72,3 +72,11 @@ export type {
   PreviewSessionStore,
   PreviewStatus,
 } from "./preview.js";
+export type {
+  CreateToolSourceRegistrationRecord,
+  ToolSourceRegistrationData,
+  ToolSourceRegistrationListOptions,
+  ToolSourceRegistrationStatus,
+  ToolSourceRegistryStore,
+  UpdateToolSourceRegistrationRecord,
+} from "./tool-source-registry.js";

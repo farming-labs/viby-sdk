@@ -18,6 +18,7 @@ export * from "./source-import.js";
 export * from "./storage.js";
 export * from "./telemetry.js";
 export * from "./tool-source.js";
+export type * from "./tool-source-registry.js";
 export * from "./api-host.js";
 export * from "./web-client.js";
 export type * from "./preview.js";
