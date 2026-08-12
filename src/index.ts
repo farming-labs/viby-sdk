@@ -1,11 +1,14 @@
 export {
   createViby,
   Chat,
+  ChatToolSourceSelection,
   Generation,
   GenerationCollection,
   GenerationWorker,
   Preview,
   PreviewCollection,
+  RegisteredToolSource,
+  RegisteredToolSourceCollection,
   SandboxCollection,
   ScopedViby,
   Version,
@@ -78,6 +81,22 @@ export {
   resolveToolSourcePolicy,
   resolveToolSources,
 } from "./tool-source.js";
+export {
+  defineToolSourceAdapter,
+  ToolSourceRegistry,
+} from "./tool-source-registry.js";
+export type {
+  CreateToolSourceInput,
+  CreateToolSourceRegistrationRecord,
+  ToolSourceAdapter,
+  ToolSourceAdapterOpenInput,
+  ToolSourceRegistrationData,
+  ToolSourceRegistrationListOptions,
+  ToolSourceRegistrationStatus,
+  ToolSourceRegistryStore,
+  UpdateToolSourceInput,
+  UpdateToolSourceRegistrationRecord,
+} from "./tool-source-registry.js";
 export type {
   ResolvedToolSource,
   ToolDefinition,
@@ -89,7 +108,9 @@ export type {
   ToolSourcePolicyRequest,
   ToolSourceProposedAction,
   ToolSourceSelectionContext,
+  ToolSourceResolver,
   ToolSourcesConfig,
+  ToolSourcesRuntimeConfig,
 } from "./tool-source.js";
 export { BrowserSession, openBrowserSession } from "./browser.js";
 export { openSandboxPreview } from "./browser-preview.js";

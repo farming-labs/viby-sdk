@@ -27,5 +27,6 @@
   "0026_message_finish_reasons.sql": "3857f9945a4365e46877037b26dcc265f76baa8fa16181ffb82321f299092145",
   "0027_provider_neutral_skill_sources.sql": "564023dbe800e595da21a538d285c6211feb99b04778cd5648e3170d8ea9df88",
   "0028_environment_variables.sql": "45f3f9333aafd7bf774467ace30fd24a7eeb802d790c47355cc2383859b08782",
-  "0029_preview_sessions.sql": "369d0baae4b3020309c7984f5c5465f79041a76dd6c491dd73b9a213eefa3e6c"
+  "0029_preview_sessions.sql": "369d0baae4b3020309c7984f5c5465f79041a76dd6c491dd73b9a213eefa3e6c",
+  "0030_tool_source_registry.sql": "1d0cc0c18779d286fc7b03562ee15b3fb2c5dbb1fe647b75e38b088cde35d96d"
 }

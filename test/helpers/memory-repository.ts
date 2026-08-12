@@ -100,6 +100,12 @@ import type {
   PreviewSessionData,
   PreviewSessionListOptions,
 } from "../../src/preview.js";
+import type {
+  CreateToolSourceRegistrationRecord,
+  ToolSourceRegistrationData,
+  ToolSourceRegistrationListOptions,
+  UpdateToolSourceRegistrationRecord,
+} from "../../src/tool-source-registry.js";
 
 interface ScopedRecord {
   tenantId: string;
@@ -146,6 +152,8 @@ export class MemoryRepository implements Repository {
   readonly skills = new Map<string, ResolvedSkill[]>();
   readonly sandboxLeases = new Map<string, SandboxLeaseData & ScopedRecord>();
   readonly previewSessions = new Map<string, PreviewSessionData & ScopedRecord>();
+  readonly toolSourceRegistrations = new Map<string, ToolSourceRegistrationData & ScopedRecord>();
+  readonly chatToolSources = new Map<string, string[]>();
   readonly outboundDeliveries = new Map<string, MemoryOutboundEventDelivery>();
   readonly toolCalls = new Map<string, ToolCallData & ScopedRecord>();
   readonly repositoryLinks = new Map<string, RepositoryLinkData & ScopedRecord>();
@@ -481,6 +489,7 @@ export class MemoryRepository implements Repository {
       for (const [previewId, preview] of this.previewSessions) {
         if (preview.chatId === id && inScope(preview, scope)) this.previewSessions.delete(previewId);
       }
+      this.chatToolSources.delete(scopedChatKey(scope, id));
     }
     return ids.length;
   }
@@ -2228,6 +2237,124 @@ export class MemoryRepository implements Repository {
     return preview;
   }
 
+  async createToolSourceRegistration(
+    scope: UserScope,
+    input: CreateToolSourceRegistrationRecord,
+  ): Promise<ToolSourceRegistrationData> {
+    const source: ToolSourceRegistrationData & ScopedRecord = {
+      id: input.id,
+      type: input.type,
+      name: input.name,
+      description: input.description,
+      configuration: structuredClone(input.configuration),
+      status: "active",
+      createdAt: input.now,
+      updatedAt: input.now,
+      ...scope,
+    };
+    this.toolSourceRegistrations.set(source.id, source);
+    return publicToolSourceRegistration(source);
+  }
+
+  async getToolSourceRegistration(
+    scope: UserScope,
+    id: string,
+  ): Promise<ToolSourceRegistrationData | null> {
+    const source = this.toolSourceRegistrations.get(id);
+    return source && inScope(source, scope) ? publicToolSourceRegistration(source) : null;
+  }
+
+  async listToolSourceRegistrations(
+    scope: UserScope,
+    options: ToolSourceRegistrationListOptions = {},
+  ): Promise<readonly ToolSourceRegistrationData[]> {
+    return [...this.toolSourceRegistrations.values()]
+      .filter((source) => inScope(source, scope)
+        && (options.status === undefined || source.status === options.status)
+        && (options.type === undefined || source.type === options.type))
+      .sort((left, right) => right.updatedAt.getTime() - left.updatedAt.getTime())
+      .slice(0, options.limit ?? 100)
+      .map(publicToolSourceRegistration);
+  }
+
+  async updateToolSourceRegistration(
+    scope: UserScope,
+    id: string,
+    input: UpdateToolSourceRegistrationRecord,
+  ): Promise<ToolSourceRegistrationData> {
+    const source = this.#mutableToolSource(scope, id);
+    const updated: ToolSourceRegistrationData & ScopedRecord = {
+      ...source,
+      ...(input.name === undefined ? {} : { name: input.name }),
+      ...(input.description === undefined ? {} : { description: input.description }),
+      ...(input.configuration === undefined
+        ? {}
+        : { configuration: structuredClone(input.configuration) }),
+      ...(input.status === undefined ? {} : { status: input.status }),
+      updatedAt: input.now,
+    };
+    this.toolSourceRegistrations.set(id, updated);
+    return publicToolSourceRegistration(updated);
+  }
+
+  async archiveToolSourceRegistration(
+    scope: UserScope,
+    id: string,
+    now: Date,
+  ): Promise<ToolSourceRegistrationData> {
+    const source = this.toolSourceRegistrations.get(id);
+    if (!source || !inScope(source, scope)) throw new NotFoundError("Tool source");
+    const archived = { ...source, status: "archived" as const, updatedAt: now };
+    this.toolSourceRegistrations.set(id, archived);
+    for (const [key, sourceIds] of this.chatToolSources) {
+      if (key.startsWith(`${scope.tenantId}\0${scope.userId}\0`)) {
+        this.chatToolSources.set(key, sourceIds.filter((sourceId) => sourceId !== id));
+      }
+    }
+    return publicToolSourceRegistration(archived);
+  }
+
+  async replaceChatToolSources(
+    scope: UserScope,
+    chatId: string,
+    sourceIds: readonly string[],
+    _now: Date,
+  ): Promise<readonly ToolSourceRegistrationData[]> {
+    const chat = this.chats.get(chatId);
+    if (!chat || !inScope(chat, scope) || chat.deletedAt !== null) throw new NotFoundError("Chat");
+    const sources = sourceIds.map((id) => this.#activeToolSource(scope, id));
+    this.chatToolSources.set(scopedChatKey(scope, chatId), [...sourceIds]);
+    return sources.map(publicToolSourceRegistration);
+  }
+
+  async listChatToolSources(
+    scope: UserScope,
+    chatId: string,
+  ): Promise<readonly ToolSourceRegistrationData[]> {
+    const chat = this.chats.get(chatId);
+    if (!chat || !inScope(chat, scope) || chat.deletedAt !== null) return [];
+    return (this.chatToolSources.get(scopedChatKey(scope, chatId)) ?? []).flatMap((id) => {
+      const source = this.toolSourceRegistrations.get(id);
+      return source && inScope(source, scope) ? [publicToolSourceRegistration(source)] : [];
+    });
+  }
+
+  #activeToolSource(scope: UserScope, id: string): ToolSourceRegistrationData & ScopedRecord {
+    const source = this.toolSourceRegistrations.get(id);
+    if (!source || !inScope(source, scope) || source.status !== "active") {
+      throw new NotFoundError("Active tool source");
+    }
+    return source;
+  }
+
+  #mutableToolSource(scope: UserScope, id: string): ToolSourceRegistrationData & ScopedRecord {
+    const source = this.toolSourceRegistrations.get(id);
+    if (!source || !inScope(source, scope) || source.status === "archived") {
+      throw new NotFoundError("Mutable tool source");
+    }
+    return source;
+  }
+
   #addMessage(scope: UserScope, input: MemoryMessageInput): void {
     const message = createMemoryMessage(scope, input);
     this.messages.push(message);
@@ -2376,6 +2503,17 @@ function publicDeploymentArtifact(
     })),
     artifact: { ...data.artifact },
   };
+}
+
+function publicToolSourceRegistration(
+  record: ToolSourceRegistrationData & ScopedRecord,
+): ToolSourceRegistrationData {
+  const { tenantId: _tenantId, userId: _userId, ...data } = record;
+  return { ...data, configuration: structuredClone(data.configuration) };
+}
+
+function scopedChatKey(scope: UserScope, chatId: string): string {
+  return `${scope.tenantId}\0${scope.userId}\0${chatId}`;
 }
 
 function updateMemoryDeployment(

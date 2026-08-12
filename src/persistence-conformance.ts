@@ -20,6 +20,7 @@ export interface PersistenceConformanceReport {
     | "event-cursors"
     | "source-history"
     | "preview-sessions"
+    | "tool-source-registry"
     | "repository-history"
     | "deployment-history"
     | "deployment-artifacts"
@@ -181,6 +182,41 @@ export async function verifyPersistenceAdapter(
       "Preview stop state was not durable.");
     await persistence.closeSandboxLease(scope, sandboxLeaseId, "stopped");
     checks.push("preview-sessions");
+
+    const toolSourceId = crypto.randomUUID();
+    const createdToolSource = await persistence.createToolSourceRegistration(scope, {
+      id: toolSourceId,
+      type: "conformance",
+      name: "Persistence tools",
+      description: "Durable tool-source fixture.",
+      configuration: { endpoint: "https://tools.example.test/mcp" },
+      now: new Date(),
+    });
+    assertConformance(createdToolSource.status === "active", "Tool source was not created.");
+    const selectedToolSources = await persistence.replaceChatToolSources(
+      scope,
+      chat.id,
+      [toolSourceId],
+      new Date(),
+    );
+    assertConformance(selectedToolSources[0]?.id === toolSourceId,
+      "Chat tool-source selection was not durable.");
+    const disabledToolSource = await persistence.updateToolSourceRegistration(
+      scope,
+      toolSourceId,
+      { status: "disabled", now: new Date() },
+    );
+    assertConformance(disabledToolSource.status === "disabled",
+      "Tool-source status was not durable.");
+    const archivedToolSource = await persistence.archiveToolSourceRegistration(
+      scope,
+      toolSourceId,
+      new Date(),
+    );
+    assertConformance(archivedToolSource.status === "archived"
+      && (await persistence.listChatToolSources(scope, chat.id)).length === 0,
+    "Tool-source archive did not remove chat selection.");
+    checks.push("tool-source-registry");
 
     const pushId = crypto.randomUUID();
     const pushKey = `conformance-${crypto.randomUUID()}`;
