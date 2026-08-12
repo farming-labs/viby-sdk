@@ -143,6 +143,27 @@ const source = await user.toolSources.create({
 await chat.toolSources.set([source.id]);
 ```
 
+MCP has a built-in durable adapter, so the common path needs no custom materializer:
+
+```ts
+import { mcpAdapter } from "@viby/sdk/tools/mcp";
+
+const viby = createViby({
+  framework: "farm",
+  model,
+  tools: { adapters: { mcp: mcpAdapter() } },
+});
+
+const source = await user.toolSources.create({
+  type: "mcp",
+  name: "Product catalog",
+  configuration: { url: "https://tools.example.com/mcp" },
+});
+await chat.toolSources.set([source.id]);
+```
+
+Pass the existing provider-neutral `authorization` lifecycle to `mcpAdapter({ authorization })` for tenant-owned OAuth. The adapter sends the live opaque credential as a bearer token by default; `headers` and `connect` provide explicit escape hatches for custom schemes and transports. Only the URL and other public registration configuration are persisted.
+
 Durable registrations are scoped to one tenant and user, selected explicitly per chat, and resolved into the same `ToolSource` interface used by static sources. They can be disabled, updated, or archived without changing generation code. The JSON `configuration` field rejects credential-like keys; authentication belongs in the separate secret-backed authorization lifecycle.
 
 Adapters may declare that lifecycle without exposing provider credentials to chats, messages, events, or the model:

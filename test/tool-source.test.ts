@@ -15,7 +15,7 @@ import {
   resolveToolSources,
   type ToolSourceContext,
 } from "../src/tool-source.js";
-import { mcp } from "../src/tool-source-mcp.js";
+import { mcp, mcpAdapter } from "../src/tool-source-mcp.js";
 
 const context: ToolSourceContext<"farm"> = {
   tenantId: "tenant-a",
@@ -125,6 +125,127 @@ test("keeps MCP headers inside the transport factory", async () => {
   await assert.rejects(() => source.list(context));
   assert.equal(observedAuthorization, "Bearer secret-for-user-a");
   assert.equal(JSON.stringify(source).includes("secret-for-user-a"), false);
+});
+
+test("materializes durable MCP registrations through the provider-neutral adapter", async () => {
+  const server = new McpServer({ name: "durable-inbound-test", version: "1" });
+  server.registerTool("lookup", {
+    description: "Look up one durable item.",
+    inputSchema: z.object({ id: z.string() }),
+    annotations: { readOnlyHint: true },
+  }, async ({ id }) => ({
+    content: [{ type: "text", text: `durable:${id}` }],
+    structuredContent: { id, durable: true },
+  }));
+  const clients: Client[] = [];
+  const adapter = mcpAdapter<"farm">({
+    connect: async ({ source }) => {
+      assert.equal(source.configuration.workspace, "catalog-a");
+      const client = new Client({ name: "durable-inbound-client", version: "1" });
+      const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+      await Promise.all([client.connect(clientTransport), server.connect(serverTransport)]);
+      clients.push(client);
+      return client;
+    },
+  });
+  const now = new Date();
+  const source = await adapter.open({
+    source: {
+      id: "durable-catalog",
+      type: "mcp",
+      name: "Durable catalog",
+      description: null,
+      configuration: { workspace: "catalog-a" },
+      status: "active",
+      createdAt: now,
+      updatedAt: now,
+    },
+    scope: { tenantId: context.tenantId, userId: context.userId },
+  });
+  try {
+    assert.equal((await source.list(context))[0]?.name, "lookup");
+    assert.deepEqual(await source.call({
+      name: "lookup",
+      arguments: { id: "42" },
+      idempotencyKey: "durable-42",
+    }, context), {
+      content: [{ type: "text", text: "durable:42" }],
+      structuredContent: { id: "42", durable: true },
+      isError: false,
+    });
+  } finally {
+    await Promise.allSettled([source.close?.(), server.close(), ...clients.map((client) => client.close())]);
+  }
+});
+
+test("resolves authorized durable MCP credentials inside each HTTP request", async () => {
+  const observed: string[] = [];
+  let credentialCalls = 0;
+  const adapter = mcpAdapter<"farm">({
+    authorization: {
+      provider: "mcp-oauth",
+      async startAuthorization() { throw new Error("unused"); },
+      async completeAuthorization() { throw new Error("unused"); },
+    },
+    fetch: async (_input, init) => {
+      observed.push(new Headers(init?.headers).get("authorization") ?? "");
+      return new Response("unavailable", { status: 503 });
+    },
+  });
+  const now = new Date();
+  const source = await adapter.open({
+    source: {
+      id: "private-catalog",
+      type: "mcp",
+      name: "Private catalog",
+      description: null,
+      configuration: { url: "https://mcp.example.test" },
+      status: "active",
+      createdAt: now,
+      updatedAt: now,
+    },
+    scope: { tenantId: context.tenantId, userId: context.userId },
+    credential: async () => {
+      credentialCalls += 1;
+      return {
+        tenantId: context.tenantId,
+        userId: context.userId,
+        connectionId: "connection",
+        account: { id: "account", name: "Private catalog" },
+        credential: new TextEncoder().encode(`token-${credentialCalls}`),
+        scopes: ["tools.read"],
+      };
+    },
+  });
+  try {
+    await assert.rejects(() => source.list(context));
+    assert.ok(credentialCalls >= 1);
+    assert.equal(observed[0], "Bearer token-1");
+    assert.equal(JSON.stringify(source).includes("token-1"), false);
+  } finally {
+    await source.close?.();
+  }
+});
+
+test("validates durable MCP URL configuration before opening a connection", async () => {
+  const adapter = mcpAdapter();
+  const now = new Date();
+  await assert.rejects(
+    async () => adapter.open({
+      source: {
+        id: "unsafe-mcp",
+        type: "mcp",
+        name: "Unsafe MCP",
+        description: null,
+        configuration: { url: "http://remote.example.test/mcp" },
+        status: "active",
+        createdAt: now,
+        updatedAt: now,
+      },
+      scope: { tenantId: context.tenantId, userId: context.userId },
+    }),
+    /must use HTTPS/,
+  );
 });
 
 test("closes configured tool sources with the Viby client", async () => {
