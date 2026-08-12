@@ -127,6 +127,34 @@ test("keeps MCP headers inside the transport factory", async () => {
   assert.equal(JSON.stringify(source).includes("secret-for-user-a"), false);
 });
 
+test("closes configured tool sources with the Viby client", async () => {
+  let closeCalls = 0;
+  const source = defineToolSource<"farm">({
+    id: "lifecycle",
+    list: async () => [],
+    call: async () => null,
+    close: async () => { closeCalls += 1; },
+  });
+  const model = new MockLanguageModelV4({
+    doGenerate: modelCompletion("Unused", "Unused"),
+  });
+  const viby = createVibyWithDependencies(
+    {
+      framework: "farm",
+      model,
+      tools: { sources: { lifecycle: source } },
+    },
+    {
+      repository: new MemoryRepository(),
+      skillResolver: new SkillResolver({}),
+    },
+  );
+
+  await viby.close();
+
+  assert.equal(closeCalls, 1);
+});
+
 test("pauses an effectful inbound call and resumes it exactly once after approval", async () => {
   let calls = 0;
   const source = defineToolSource<"farm">({
