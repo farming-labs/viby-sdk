@@ -17,6 +17,34 @@ const api = createVibyApi({
 
 The host owns authentication. Returning `null` produces a JSON `401`; returning a `Response` preserves a product-specific redirect or denial. Every resource route after authentication uses the returned tenant/user scope. The integration callback is deliberately public because its hashed, single-use authorization state establishes the original scope.
 
+## Typed Web client
+
+`createVibyWebClient()` consumes this contract from browsers, Workers, Bun, Node, or another Web-compatible runtime. It owns route construction, attachment encoding, typed errors, binary download responses, and SSE reconnection from the last acknowledged cursor.
+
+```ts
+import { createVibyWebClient } from "@viby/sdk/core";
+
+const viby = createVibyWebClient<"farm">({
+  baseUrl: "/api/viby",
+  fetch: authenticatedFetch,
+});
+
+const { chat, generation } = await viby.chats.create({
+  title: "Analytics",
+  prompt: "Build a polished analytics dashboard",
+});
+
+for await (const event of viby.generations.stream(generation.id)) {
+  saveCursor(event.cursor);
+  render(event);
+}
+
+const state = await viby.generations.get(generation.id);
+const source = await viby.chats.versions.download(chat.id, state.version!.id);
+```
+
+Pass `after` to `generations.stream()` when restoring a cursor from application storage. The client sends it as `Last-Event-ID`, updates it after each event, and reconnects a prematurely closed retryable stream without replaying acknowledged events. Authentication remains host-owned: use `headers`, a header factory, or a custom `fetch` implementation to attach the product session.
+
 ## Routes
 
 All paths are relative to `basePath` (default `/api/viby`).

@@ -863,6 +863,27 @@ return generationEventStreamResponse(generation, { request });
 
 The helper reads `Last-Event-ID`, emits normal `id`, `event`, and JSON `data` fields, sends an SSE retry hint, propagates request cancellation, and returns a Web-standard `Response`.
 
+Browser and other Web-runtime consumers can use the matching typed client without recreating routes or SSE parsing:
+
+```ts
+import { createVibyWebClient } from "@viby/sdk/core";
+
+const viby = createVibyWebClient<"farm">({ baseUrl: "/api/viby" });
+const { chat, generation } = await viby.chats.create({
+  title: "Dashboard",
+  prompt: "Build a polished analytics dashboard",
+});
+
+for await (const event of viby.generations.stream(generation.id)) {
+  renderGenerationEvent(event);
+}
+
+const result = await viby.generations.get(generation.id);
+const zip = await viby.chats.versions.download(chat.id, result.version!.id);
+```
+
+The client supports dynamic authentication headers, binary downloads, base64 transport for byte attachments, typed API errors, and bounded automatic SSE reconnection from the latest durable cursor.
+
 For a complete product API, mount the Web-standard host in any server or framework:
 
 ```ts
