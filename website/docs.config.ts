@@ -16,12 +16,16 @@ const docs = defineDocs({
   theme: shadcn({
     ui: {
       layout: {
-        contentWidth: 680,
-        sidebarWidth: 272,
-        tocWidth: 232,
+        contentWidth: 640,
+        sidebarWidth: 288,
+        tocWidth: 256,
       },
     },
   }),
+  sidebar: {
+    flat: true,
+    collapsible: true,
+  },
   themeToggle: {
     enabled: true,
     default: "light",
@@ -56,32 +60,17 @@ export default {
     sidebar: [
       { label: "Overview", slug: "" },
       { label: "Capabilities", slug: "capabilities" },
-      {
-        label: "Build with Viby",
-        children: [
-          { label: "API v1", slug: "api/v1" },
-          { label: "Web API host", slug: "api-host" },
-          { label: "Runtime boundaries", slug: "runtime" },
-          { label: "Quality matrix", slug: "quality-matrix" },
-        ],
-      },
-      {
-        label: "Integrations",
-        children: [
-          { label: "GitHub", slug: "integrations/github" },
-          { label: "Vercel", slug: "integrations/vercel" },
-          { label: "Cloudflare", slug: "integrations/cloudflare" },
-          { label: "Bitbucket", slug: "integrations/bitbucket" },
-        ],
-      },
-      {
-        label: "Operations",
-        children: [
-          { label: "Live provider testing", slug: "live-provider-testing" },
-          { label: "Publishing", slug: "publishing" },
-          { label: "v0 capability reference", slug: "api/v0-core" },
-        ],
-      },
+      { label: "API v1", slug: "api/v1" },
+      { label: "Web API host", slug: "api-host" },
+      { label: "Runtime boundaries", slug: "runtime" },
+      { label: "Quality matrix", slug: "quality-matrix" },
+      { label: "GitHub integration", slug: "integrations/github" },
+      { label: "Vercel integration", slug: "integrations/vercel" },
+      { label: "Cloudflare integration", slug: "integrations/cloudflare" },
+      { label: "Bitbucket integration", slug: "integrations/bitbucket" },
+      { label: "Live provider testing", slug: "live-provider-testing" },
+      { label: "Publishing", slug: "publishing" },
+      { label: "v0 capability reference", slug: "api/v0-core" },
     ],
   },
 };

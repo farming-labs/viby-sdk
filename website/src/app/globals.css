@@ -1,7 +1,6 @@
 @import "@fontsource-variable/geist/wght.css";
 @import "@fontsource-variable/geist-mono/wght.css";
 @import "@farming-labs/theme/shadcn/css";
-@import "tailwindcss";
 
 :root {
   --font-sans: "Geist Variable", "Geist", ui-sans-serif, system-ui, sans-serif;
@@ -487,21 +486,28 @@ svg {
   }
 }
 
-/* Keep the shared shadcn documentation shell constrained and editorial. */
-#nd-docs-layout {
-  --fd-layout-width: 92rem;
+/* Farm renders the same document shell as the shared shadcn theme. Keep the
+ * adapter on that native content contract until this selector ships upstream. */
+#nd-docs-layout[data-fd-framework] article#nd-page {
+  width: 100%;
+  max-width: 704px;
+  justify-self: center;
+  padding: 32px 32px 64px;
 }
 
-#nd-sidebar {
-  font-family: var(--font-sans);
+#nd-docs-layout[data-fd-framework] figure.shiki {
+  width: 100%;
+  min-width: 0;
 }
 
-#nd-sidebar a[data-active="true"] {
-  font-weight: 560;
+#nd-docs-layout[data-fd-framework] figure.shiki > [role="region"] {
+  padding-inline: 1rem 2.75rem;
 }
 
-#nd-docs-layout article {
-  font-family: var(--font-sans);
+/* Published theme releases before the browser-layout parity fix still render
+ * the built-in pager alongside the themed pager. */
+#nd-docs-layout[data-fd-framework] #nd-page > div[class~="@container"] {
+  display: none !important;
 }
 
 @media (max-width: 980px) {
@@ -638,6 +644,11 @@ svg {
 
   .rail-item {
     display: none;
+  }
+
+  #nd-docs-layout[data-fd-framework] article#nd-page {
+    max-width: 100%;
+    padding: 24px 16px 48px;
   }
 }
 
