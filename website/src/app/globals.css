@@ -397,6 +397,51 @@ svg {
   padding: 32px 32px 64px;
 }
 
+/* The Farm adapter renders Fumadocs' browser shell. Its grid must stay in
+ * control instead of inheriting the standalone adapter's flex breakpoint. */
+@media (max-width: 1279px) {
+  #nd-docs-layout[data-fd-framework] {
+    --fd-toc-width: 0px !important;
+  }
+}
+
+@media (max-width: 1023px) {
+  #nd-docs-layout[data-fd-framework] {
+    display: grid;
+  }
+}
+
+@media (max-width: 767px) {
+  #nd-docs-layout[data-fd-framework] {
+    --fd-sidebar-width: 0px !important;
+  }
+}
+
+/* Keep the title, document actions, and metadata as one deliberate header
+ * region. The standalone adapter previously collapsed these rows together. */
+#nd-docs-layout[data-fd-framework] .fd-below-title-block {
+  margin: 0.75rem 0 2rem;
+}
+
+#nd-docs-layout[data-fd-framework] .fd-title-separator {
+  margin: 0 0 0.75rem;
+}
+
+#nd-docs-layout[data-fd-framework] .fd-page-actions,
+#nd-docs-layout[data-fd-framework] [data-page-actions] {
+  margin: 0 0 0.625rem;
+}
+
+#nd-docs-layout[data-fd-framework] .fd-page-meta {
+  margin: 0;
+}
+
+/* The current browser adapter still renders the rail-collapse trigger when
+ * collapsible is disabled. Keep the desktop shadcn rail stable. */
+#nd-sidebar button[aria-label="Collapse Sidebar"] {
+  display: none !important;
+}
+
 #nd-docs-layout[data-fd-framework] figure.shiki {
   width: 100%;
   min-width: 0;

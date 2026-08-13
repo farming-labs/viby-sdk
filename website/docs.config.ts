@@ -24,7 +24,7 @@ const docs = defineDocs({
   }),
   sidebar: {
     flat: true,
-    collapsible: true,
+    collapsible: false,
   },
   themeToggle: {
     enabled: true,
