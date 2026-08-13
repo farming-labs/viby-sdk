@@ -36,7 +36,7 @@ const docs = defineDocs({
     maxResults: 12,
   },
   breadcrumb: true,
-  readingTime: true,
+  readingTime: false,
   pageActions: {
     position: "below-title",
     copyMarkdown: true,

@@ -490,10 +490,66 @@ svg {
 #nd-docs-layout[data-fd-framework] figure.shiki {
   width: 100%;
   min-width: 0;
+  border: 1px solid var(--fd-shadcn-soft-border) !important;
+  border-radius: calc(var(--radius) * 0.9) !important;
+  background: var(--fd-shadcn-code) !important;
 }
 
 #nd-docs-layout[data-fd-framework] figure.shiki > [role="region"] {
-  padding-inline: 1rem 2.75rem;
+  padding-inline: 0;
+}
+
+html.dark #nd-docs-layout[data-fd-framework] figure.shiki {
+  background: var(--fd-shadcn-code) !important;
+}
+
+#nd-docs-layout[data-fd-framework] figure.shiki pre {
+  padding: 0.75rem 0 !important;
+}
+
+#nd-docs-layout[data-fd-framework] figure.shiki pre > code {
+  font-size: 0.8125rem !important;
+  line-height: 1.6 !important;
+}
+
+#nd-docs-layout[data-fd-framework]
+  figure.shiki
+  pre
+  > code
+  > :is(.line, [data-line]) {
+  min-height: 1.3rem;
+  padding-inline: 1rem 3rem !important;
+}
+
+/* The published theme still renders each shortcut key as a separate padded
+ * badge. Treat the shortcut as one compact keyboard hint instead. */
+#nd-docs-layout[data-fd-framework] button[data-search-full] {
+  border: 1px solid var(--fd-shadcn-soft-border) !important;
+  background: color-mix(in oklab, var(--fd-shadcn-control) 82%, transparent) !important;
+}
+
+#nd-docs-layout[data-fd-framework]
+  button[data-search-full]
+  > :is(div, span):has(> kbd) {
+  display: inline-flex !important;
+  min-width: 0 !important;
+  height: 1.25rem !important;
+  align-items: center !important;
+  gap: 0.1875rem !important;
+  border: 1px solid var(--fd-shadcn-soft-border) !important;
+  border-radius: calc(var(--radius) * 0.55) !important;
+  background: color-mix(in oklab, var(--color-fd-background) 72%, transparent) !important;
+  padding: 0 0.35rem !important;
+  line-height: 1 !important;
+}
+
+#nd-docs-layout[data-fd-framework] button[data-search-full] kbd {
+  min-width: 0 !important;
+  border: 0 !important;
+  background: transparent !important;
+  font-family: var(--fd-font-mono, "Geist Mono", ui-monospace, monospace) !important;
+  line-height: 1 !important;
+  padding: 0 !important;
 }
 
 /* Published theme releases before the browser-layout parity fix still render
