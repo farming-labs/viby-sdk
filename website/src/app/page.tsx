@@ -1,16 +1,28 @@
-const pixelOpacities = Array.from({ length: 352 }, (_, index) => {
-  const column = index % 32;
-  const row = Math.floor(index / 32);
-  const distanceFromCenter = Math.abs(column - 15.5);
-  const visibleWidth = 2.1 + row * 1.72;
+const signalClusters = [
+  { x: 156, y: 185 },
+  { x: 270, y: 164 },
+  { x: 458, y: 144 },
+  { x: 505, y: 170 },
+  { x: 617, y: 222 },
+  { x: 784, y: 282 },
+  { x: 866, y: 186 },
+  { x: 873, y: 363 },
+];
 
-  if (distanceFromCenter > visibleWidth) return 0;
-
-  const edgeFade = 1 - distanceFromCenter / visibleWidth;
-  const depth = (row + 1) / 11;
-  const texture = ((column * 11 + row * 7) % 9) / 90;
-  return Math.min(0.92, 0.06 + edgeFade * depth * 0.76 + texture);
-});
+const clusterPixels = [
+  [0, 0],
+  [10, 0],
+  [20, 0],
+  [-10, 10],
+  [0, 10],
+  [10, 10],
+  [20, 10],
+  [30, 10],
+  [0, 20],
+  [10, 20],
+  [20, 20],
+  [10, 30],
+];
 
 function VibyMark() {
   return (
@@ -58,9 +70,72 @@ function SiteHeader() {
       </nav>
 
       <a className="header-cta" href="/docs">
-        Get started
+        Get started <ArrowIcon />
       </a>
     </header>
+  );
+}
+
+function PixelNetwork() {
+  return (
+    <div className="network-visual" aria-hidden="true">
+      <div className="network-label">
+        <span>Generation network</span>
+        <span className="network-live"><i /> live</span>
+      </div>
+
+      <svg className="network-map" viewBox="0 0 1000 470" role="presentation">
+        <defs>
+          <pattern id="world-pixels" width="10" height="10" patternUnits="userSpaceOnUse">
+            <rect x="3.2" y="3.2" width="3.4" height="3.4" fill="currentColor" />
+          </pattern>
+          <linearGradient id="route-fade" x1="0" x2="1">
+            <stop offset="0" stopColor="white" stopOpacity="0" />
+            <stop offset="0.48" stopColor="white" stopOpacity="0.24" />
+            <stop offset="1" stopColor="white" stopOpacity="0" />
+          </linearGradient>
+        </defs>
+
+        <g className="world-shape">
+          <path d="M47 111 77 82l48-15 53 10 21 25 39 8 20 28-17 21-32-5-12 19 20 20-19 25-36-8-18 15-29-21-25 4-10-29-25-10-19-34Z" />
+          <path d="m230 233 43-12 41 20 17 40-13 36 4 31-18 34-15 46-18-14-4-39-21-28-9-36-24-31Z" />
+          <path d="m420 106 31-22 43 1 20 16 37-7 25 18 52-10 43 15 58-15 62 21 53-1 43 24-15 24 30 18-15 29-48-5-17 24-32-9-32 15-31-13-28 11-29-28-33-10-28 18-27-8-12-25-29-2-24-26-41 2-32-19-29-6-9-21 28-18Z" />
+          <path d="m478 205 47-12 39 20 22 39-8 34-26 26-9 44-26 28-24-29 1-37-24-24-8-38Z" />
+          <path d="m825 319 34-20 46 7 31 29-4 34-31 20-43-8-22-27Z" />
+          <path d="m907 205 17-11 22 7 7 17-19 10-20-8Z" />
+        </g>
+
+        <g className="network-routes">
+          <path d="M166 195C282 88 384 104 468 154" />
+          <path d="M280 174C388 248 493 249 627 232" />
+          <path d="M515 180C646 106 760 122 876 196" />
+          <path d="M627 232C720 221 750 249 794 292" />
+          <path d="M794 292C830 315 851 338 883 373" />
+        </g>
+
+        <g className="network-signal">
+          {signalClusters.flatMap((cluster, clusterIndex) =>
+            clusterPixels.map(([offsetX, offsetY], pixelIndex) => (
+              <rect
+                className={`signal-pixel signal-delay-${(clusterIndex + pixelIndex) % 5}`}
+                height="5"
+                key={`${clusterIndex}-${pixelIndex}`}
+                width="5"
+                x={cluster.x + offsetX}
+                y={cluster.y + offsetY}
+              />
+            )),
+          )}
+        </g>
+      </svg>
+
+      <div className="network-caption">
+        <span>Frameworks</span>
+        <span>Models</span>
+        <span>Runtimes</span>
+        <span>Providers</span>
+      </div>
+    </div>
   );
 }
 
@@ -70,20 +145,23 @@ export default function HomePage() {
       <SiteHeader />
 
       <section className="landing-hero" aria-labelledby="hero-title">
+        <PixelNetwork />
+
         <div className="hero-status">
           <span aria-hidden="true" />
-          Open source · provider neutral
+          Open source / provider neutral
         </div>
 
         <div className="hero-copy">
-          <h1 id="hero-title">
-            <span>Generate.</span>
-            <span>Iterate.</span>
-            <span>Ship.</span>
+          <p className="hero-kicker">Generation infrastructure for products</p>
+          <h1 id="hero-title" aria-label="Build the layer behind the prompt.">
+            <span className="hero-title-primary">Build the layer</span>
+            {" "}
+            <span>behind the prompt.</span>
           </h1>
-          <p>
-            The durable TypeScript SDK for building your own vibe coding product—without giving up
-            your framework, models, storage, or deployment stack.
+          <p className="hero-description">
+            A durable TypeScript SDK for turning conversations into working software—while you own
+            the framework, model, storage, and runtime.
           </p>
 
           <div className="hero-actions">
@@ -94,26 +172,28 @@ export default function HomePage() {
               className="hero-button hero-button-secondary"
               href="https://github.com/farming-labs/viby-sdk"
             >
-              <GitHubIcon /> View on GitHub
+              <GitHubIcon /> View source
             </a>
           </div>
+        </div>
 
+        <div className="hero-rail">
           <div className="install-command" aria-label="Install Viby with npm">
-            <span>$</span>
-            <code>npm install @viby/sdk ai</code>
+            <span>Install</span>
+            <code>npm i @viby/sdk ai</code>
           </div>
-        </div>
-
-        <div className="pixel-horizon" aria-hidden="true">
-          {pixelOpacities.map((opacity, index) => (
-            <span key={index} style={{ opacity }} />
-          ))}
-        </div>
-
-        <div className="hero-footnote" aria-hidden="true">
-          <span>Durable generations</span>
-          <span>Immutable source</span>
-          <span>Portable adapters</span>
+          <div className="rail-item">
+            <strong>01</strong>
+            <span>Durable runs</span>
+          </div>
+          <div className="rail-item">
+            <strong>02</strong>
+            <span>Immutable source</span>
+          </div>
+          <div className="rail-item">
+            <strong>03</strong>
+            <span>Portable adapters</span>
+          </div>
         </div>
       </section>
     </main>
