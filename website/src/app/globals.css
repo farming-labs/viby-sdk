@@ -505,9 +505,54 @@ svg {
 }
 
 /* Published theme releases before the browser-layout parity fix still render
- * the built-in pager alongside the themed pager. */
-#nd-docs-layout[data-fd-framework] #nd-page > div[class~="@container"] {
+ * the built-in pager alongside the themed pager. Do not depend on an adapter
+ * data attribute here: a cached browser shell may not carry the latest one. */
+#nd-page > div[class~="@container"] {
   display: none !important;
+}
+
+/* The current Farm adapter release models grouped navigation as disclosure
+ * folders. Keep the page links flat and restore shadcn's static section labels
+ * visually until the non-collapsible tree contract lands in the package. */
+#nd-sidebar[data-collapsed="false"] a[href="/docs/api/v1"],
+#nd-sidebar[data-collapsed="false"] a[href="/docs/integrations/github"],
+#nd-sidebar[data-collapsed="false"] a[href="/docs/live-provider-testing"],
+#nd-sidebar-mobile a[href="/docs/api/v1"],
+#nd-sidebar-mobile a[href="/docs/integrations/github"],
+#nd-sidebar-mobile a[href="/docs/live-provider-testing"] {
+  margin-top: 1.9rem;
+  overflow: visible !important;
+}
+
+#nd-sidebar[data-collapsed="false"] a[href="/docs/api/v1"]::before,
+#nd-sidebar[data-collapsed="false"] a[href="/docs/integrations/github"]::before,
+#nd-sidebar[data-collapsed="false"] a[href="/docs/live-provider-testing"]::before,
+#nd-sidebar-mobile a[href="/docs/api/v1"]::before,
+#nd-sidebar-mobile a[href="/docs/integrations/github"]::before,
+#nd-sidebar-mobile a[href="/docs/live-provider-testing"]::before {
+  position: absolute;
+  inset-inline-start: 0.5rem;
+  top: -1.45rem;
+  color: var(--color-fd-muted-foreground, #737373);
+  font-size: 0.8rem;
+  font-weight: 500;
+  line-height: 1rem;
+  pointer-events: none;
+}
+
+#nd-sidebar[data-collapsed="false"] a[href="/docs/api/v1"]::before,
+#nd-sidebar-mobile a[href="/docs/api/v1"]::before {
+  content: "Build with Viby";
+}
+
+#nd-sidebar[data-collapsed="false"] a[href="/docs/integrations/github"]::before,
+#nd-sidebar-mobile a[href="/docs/integrations/github"]::before {
+  content: "Integrations";
+}
+
+#nd-sidebar[data-collapsed="false"] a[href="/docs/live-provider-testing"]::before,
+#nd-sidebar-mobile a[href="/docs/live-provider-testing"]::before {
+  content: "Operations";
 }
 
 @media (max-width: 980px) {
