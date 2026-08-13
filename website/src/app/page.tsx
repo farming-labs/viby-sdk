@@ -1,68 +1,22 @@
-const capabilities = [
-  {
-    index: "01",
-    title: "Durable from the first prompt",
-    description:
-      "Chats, messages, generation attempts, events, tasks, and source versions remain addressable after restarts.",
-  },
-  {
-    index: "02",
-    title: "Portable at every boundary",
-    description:
-      "Choose the framework, model runtime, skills, storage, sandbox, browser, source provider, and deployment target.",
-  },
-  {
-    index: "03",
-    title: "Source your users can trust",
-    description:
-      "Every accepted change becomes an immutable version that can be restored, forked, downloaded, pushed, or deployed.",
-  },
-] as const;
+const pixelOpacities = Array.from({ length: 352 }, (_, index) => {
+  const column = index % 32;
+  const row = Math.floor(index / 32);
+  const distanceFromCenter = Math.abs(column - 15.5);
+  const visibleWidth = 2.1 + row * 1.72;
 
-const productLinks = [
-  {
-    title: "Generation",
-    description: "Stream durable runs and resume from any event cursor.",
-    href: "/docs/api/v1",
-  },
-  {
-    title: "Workspaces",
-    description: "Run tools against immutable source in isolated sandboxes.",
-    href: "/docs/capabilities",
-  },
-  {
-    title: "Integrations",
-    description: "Connect source control and deployment without changing the core.",
-    href: "/docs/integrations/github",
-  },
-] as const;
+  if (distanceFromCenter > visibleWidth) return 0;
 
-const quickStart = `const viby = createViby({
-  framework: "farm",
-  model,
-  storage: {
-    database: postgres(),
-    artifacts: artifactStore,
-  },
-  skills: {
-    design: [skillRead("./skills/design")],
-  },
-});`;
-
-const pixelOpacities = Array.from({ length: 96 }, (_, index) => {
-  const column = index % 12;
-  const row = Math.floor(index / 12);
-  const horizontal = column / 11;
-  const centerDistance = Math.abs(row - 3.5) / 4;
-  const wave = ((column * 7 + row * 3) % 10) / 100;
-  return Math.max(0.035, Math.min(0.86, horizontal * 0.72 - centerDistance * 0.13 + wave));
+  const edgeFade = 1 - distanceFromCenter / visibleWidth;
+  const depth = (row + 1) / 11;
+  const texture = ((column * 11 + row * 7) % 9) / 90;
+  return Math.min(0.92, 0.06 + edgeFade * depth * 0.76 + texture);
 });
 
-function BrandMark() {
+function VibyMark() {
   return (
-    <span className="wordmark-mark" aria-hidden="true">
+    <span className="viby-mark" aria-hidden="true">
       {Array.from({ length: 9 }, (_, index) => (
-        <span className={[0, 2, 3, 5, 7].includes(index) ? "is-active" : ""} key={index} />
+        <span className={[0, 2, 3, 5, 6, 8].includes(index) ? "is-visible" : ""} key={index} />
       ))}
     </span>
   );
@@ -71,7 +25,12 @@ function BrandMark() {
 function ArrowIcon() {
   return (
     <svg aria-hidden="true" fill="none" viewBox="0 0 16 16">
-      <path d="M3 8h9M8.5 4.5 12 8l-3.5 3.5" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" />
+      <path
+        d="M3 8h9M8.5 4.5 12 8l-3.5 3.5"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
     </svg>
   );
 }
@@ -84,247 +43,79 @@ function GitHubIcon() {
   );
 }
 
-function ChevronIcon() {
-  return (
-    <svg aria-hidden="true" fill="none" viewBox="0 0 12 12">
-      <path d="m3 4.5 3 3 3-3" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-}
-
 function SiteHeader() {
   return (
-    <header className="site-header">
-      <div className="site-header-inner">
-        <a className="wordmark" href="/" aria-label="Viby home">
-          <BrandMark />
-          <span>Viby</span>
-        </a>
+    <header className="landing-header">
+      <a className="landing-wordmark" href="/" aria-label="Viby home">
+        <VibyMark />
+        <span>Viby</span>
+      </a>
 
-        <nav className="site-nav" aria-label="Primary navigation">
-          <details className="nav-dropdown">
-            <summary>
-              Platform <ChevronIcon />
-            </summary>
-            <div className="nav-dropdown-panel">
-              <p>Build on Viby</p>
-              {productLinks.map((link) => (
-                <a href={link.href} key={link.title}>
-                  <span>{link.title}</span>
-                  <small>{link.description}</small>
-                </a>
-              ))}
-            </div>
-          </details>
-          <a href="/docs">Docs</a>
-          <a href="/docs/capabilities">Capabilities</a>
-          <a href="/docs/quality-matrix">Quality</a>
-        </nav>
+      <nav className="landing-nav" aria-label="Primary navigation">
+        <a href="/docs">Documentation</a>
+        <a href="/docs/capabilities">Capabilities</a>
+        <a href="https://github.com/farming-labs/viby-sdk">GitHub</a>
+      </nav>
 
-        <div className="header-actions">
-          <a
-            className="github-link"
-            href="https://github.com/farming-labs/viby-sdk"
-            aria-label="View Viby on GitHub"
-          >
-            <GitHubIcon />
-          </a>
-          <a className="button button-primary button-small" href="/docs">
-            Get started
-          </a>
-          <details className="mobile-menu">
-            <summary aria-label="Open navigation">
-              <span />
-              <span />
-            </summary>
-            <nav aria-label="Mobile navigation">
-              <a href="/docs">Docs</a>
-              <a href="/docs/capabilities">Capabilities</a>
-              <a href="/docs/quality-matrix">Quality</a>
-              <a href="https://github.com/farming-labs/viby-sdk">GitHub</a>
-            </nav>
-          </details>
-        </div>
-      </div>
+      <a className="header-cta" href="/docs">
+        Get started
+      </a>
     </header>
-  );
-}
-
-function PixelField() {
-  return (
-    <div className="pixel-field" aria-hidden="true">
-      {pixelOpacities.map((opacity, index) => (
-        <span key={index} style={{ opacity }} />
-      ))}
-    </div>
   );
 }
 
 export default function HomePage() {
   return (
-    <div className="site-shell">
+    <main className="landing-shell">
       <SiteHeader />
 
-      <main>
-        <section className="hero" aria-labelledby="hero-title">
-          <div className="hero-copy">
-            <p className="hero-kicker">
-              <span aria-hidden="true" />
-              Open-source infrastructure for AI software builders
-            </p>
-            <h1 id="hero-title">Build the coding product only you can imagine.</h1>
-            <p className="hero-description">
-              Viby is the durable, provider-neutral SDK behind generation, iteration, source
-              history, tools, previews, downloads, and shipping. You own the product experience;
-              Viby makes its infrastructure dependable.
-            </p>
+      <section className="landing-hero" aria-labelledby="hero-title">
+        <div className="hero-status">
+          <span aria-hidden="true" />
+          Open source · provider neutral
+        </div>
 
-            <div className="hero-actions">
-              <a className="button button-primary" href="/docs">
-                Start building <ArrowIcon />
-              </a>
-              <a className="button button-secondary" href="https://github.com/farming-labs/viby-sdk">
-                <GitHubIcon /> View on GitHub
-              </a>
-            </div>
+        <div className="hero-copy">
+          <h1 id="hero-title">
+            <span>Generate.</span>
+            <span>Iterate.</span>
+            <span>Ship.</span>
+          </h1>
+          <p>
+            The durable TypeScript SDK for building your own vibe coding product—without giving up
+            your framework, models, storage, or deployment stack.
+          </p>
 
-            <div className="install-command" aria-label="Install Viby with npm">
-              <span>npm</span>
-              <code>install @viby/sdk ai</code>
-            </div>
-          </div>
-
-          <div className="hero-stage" aria-label="A durable Viby generation moving from prompt to preview">
-            <PixelField />
-            <div className="stage-toolbar">
-              <div>
-                <span className="stage-status" aria-hidden="true" />
-                Generation run
-              </div>
-              <span>durable · resumable</span>
-            </div>
-
-            <div className="stage-content">
-              <div className="prompt-card">
-                <span className="stage-label">Prompt</span>
-                <p>Build a precise analytics workspace with complete loading and empty states.</p>
-                <div className="prompt-tags" aria-label="Generation configuration">
-                  <span>Farm</span>
-                  <span>Design skill</span>
-                  <span>Postgres</span>
-                </div>
-              </div>
-
-              <ol className="run-timeline">
-                <li className="is-complete">
-                  <span aria-hidden="true">✓</span>
-                  <div>
-                    <strong>Plan accepted</strong>
-                    <small>Requirements and permissions persisted</small>
-                  </div>
-                </li>
-                <li className="is-complete">
-                  <span aria-hidden="true">✓</span>
-                  <div>
-                    <strong>Source generated</strong>
-                    <small>Immutable version v7 · 14 files</small>
-                  </div>
-                </li>
-                <li className="is-current">
-                  <span aria-hidden="true" />
-                  <div>
-                    <strong>Preview ready</strong>
-                    <small>Sandbox healthy · visual checks passed</small>
-                  </div>
-                </li>
-              </ol>
-            </div>
-
-            <div className="stage-footer">
-              <span>event_0187</span>
-              <strong>Ready to iterate</strong>
-            </div>
-          </div>
-        </section>
-
-        <section className="ownership-strip" aria-label="Viby product principles">
-          <span>Framework agnostic</span>
-          <span>Runtime portable</span>
-          <span>Storage owned</span>
-          <span>Provider neutral</span>
-        </section>
-
-        <section className="capability-list" aria-labelledby="capabilities-title">
-          <div className="section-heading">
-            <p className="eyebrow">The core contract</p>
-            <h2 id="capabilities-title">Infrastructure without the lock-in.</h2>
-            <p>
-              Start with one model and a database URL. Replace each boundary only when your product
-              needs more control.
-            </p>
-          </div>
-
-          <div className="capability-rows">
-            {capabilities.map((capability) => (
-              <article className="capability-row" key={capability.index}>
-                <span className="capability-index">{capability.index}</span>
-                <h3>{capability.title}</h3>
-                <p>{capability.description}</p>
-              </article>
-            ))}
-          </div>
-        </section>
-
-        <section className="config-section" aria-labelledby="config-title">
-          <div className="config-copy">
-            <p className="eyebrow">A small API, intentionally</p>
-            <h2 id="config-title">Simple to start. Open where it matters.</h2>
-            <p>
-              Keep the convenient path for a new product, then bring custom engines, adapters, and
-              policies without rewriting the application around Viby.
-            </p>
-            <a className="text-link" href="/docs/api/v1">
-              Read the API contract <ArrowIcon />
+          <div className="hero-actions">
+            <a className="hero-button hero-button-primary" href="/docs">
+              Start building <ArrowIcon />
+            </a>
+            <a
+              className="hero-button hero-button-secondary"
+              href="https://github.com/farming-labs/viby-sdk"
+            >
+              <GitHubIcon /> View on GitHub
             </a>
           </div>
 
-          <div className="code-proof" aria-label="Viby configuration example">
-            <div className="code-proof-header">
-              <span>viby.config.ts</span>
-              <span>TypeScript</span>
-            </div>
-            <pre>
-              <code>{quickStart}</code>
-            </pre>
-            <div className="code-proof-footer">
-              <span className="status-dot" aria-hidden="true" />
-              <span>Application-owned configuration</span>
-            </div>
+          <div className="install-command" aria-label="Install Viby with npm">
+            <span>$</span>
+            <code>npm install @viby/sdk ai</code>
           </div>
-        </section>
-
-        <section className="closing-cta" aria-labelledby="closing-title">
-          <div>
-            <p className="eyebrow">Start with the contract</p>
-            <h2 id="closing-title">Give your product a durable foundation.</h2>
-          </div>
-          <a className="button button-inverse" href="/docs">
-            Explore the documentation <ArrowIcon />
-          </a>
-        </section>
-      </main>
-
-      <footer className="site-footer">
-        <a className="wordmark footer-wordmark" href="/" aria-label="Viby home">
-          <BrandMark />
-          <span>Viby</span>
-        </a>
-        <span>Open source by Farming Labs</span>
-        <div>
-          <a href="/docs">Docs</a>
-          <a href="https://github.com/farming-labs/viby-sdk">GitHub</a>
         </div>
-      </footer>
-    </div>
+
+        <div className="pixel-horizon" aria-hidden="true">
+          {pixelOpacities.map((opacity, index) => (
+            <span key={index} style={{ opacity }} />
+          ))}
+        </div>
+
+        <div className="hero-footnote" aria-hidden="true">
+          <span>Durable generations</span>
+          <span>Immutable source</span>
+          <span>Portable adapters</span>
+        </div>
+      </section>
+    </main>
   );
 }

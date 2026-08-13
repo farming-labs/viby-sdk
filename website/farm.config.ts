@@ -24,7 +24,7 @@ const serializedThemeScriptPlugin = definePlugin({
 export default withDocs(
   defineConfig({
     theme: {
-      default: "system",
+      default: "light",
     },
     plugins: [serializedThemeScriptPlugin],
   }),
