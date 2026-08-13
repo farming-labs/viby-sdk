@@ -420,7 +420,7 @@ svg {
 /* Keep the title, document actions, and metadata as one deliberate header
  * region. The standalone adapter previously collapsed these rows together. */
 #nd-docs-layout[data-fd-framework] .fd-below-title-block {
-  margin: 0.75rem 0 2rem;
+  margin: 0.75rem 0 2.5rem;
 }
 
 #nd-docs-layout[data-fd-framework] .fd-title-separator {
@@ -434,6 +434,51 @@ svg {
 
 #nd-docs-layout[data-fd-framework] .fd-page-meta {
   margin: 0;
+}
+
+/* @farming-labs/docs now gives every adapter the same fd-page-body /
+ * fd-docs-content contract. These selectors keep that shared shadcn rhythm
+ * available while this site still consumes the preceding published release. */
+#nd-docs-layout[data-fd-framework]
+  #nd-page
+  .prose
+  p:not(:where(.not-prose, .not-prose *)) {
+  margin: 0 0 1.25rem !important;
+}
+
+#nd-docs-layout[data-fd-framework] #nd-page .prose h2 {
+  margin: 2.75rem 0 1rem !important;
+}
+
+#nd-docs-layout[data-fd-framework] #nd-page .prose h3 {
+  margin: 2rem 0 0.75rem !important;
+}
+
+#nd-docs-layout[data-fd-framework]
+  #nd-page
+  .prose
+  :is(ul, ol):not(:where(.not-prose, .not-prose *)) {
+  margin: 0 0 1.5rem !important;
+}
+
+#nd-docs-layout[data-fd-framework]
+  #nd-page
+  .prose
+  li:not(:where(.not-prose, .not-prose *))
+  + li {
+  margin-top: 0.5rem !important;
+}
+
+#nd-docs-layout[data-fd-framework] #nd-page .prose .fd-table-wrapper {
+  margin: 1.25rem 0 2.5rem !important;
+}
+
+#nd-docs-layout[data-fd-framework] #nd-page .prose :is(figure.shiki, blockquote, details) {
+  margin: 1.5rem 0 2rem !important;
+}
+
+#nd-docs-layout[data-fd-framework] #nd-page .prose hr:not(.fd-title-separator) {
+  margin: 3rem 0 !important;
 }
 
 /* The current browser adapter still renders the rail-collapse trigger when
