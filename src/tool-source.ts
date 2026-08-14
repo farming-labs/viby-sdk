@@ -7,7 +7,10 @@ import type {
   UserScope,
 } from "./types.js";
 import { ConfigurationError } from "./errors.js";
-import type { ToolSourceAdapter } from "./tool-source-registry.js";
+import type {
+  ToolSourceAdapter,
+  ToolSourceRegistrationSnapshot,
+} from "./tool-source-registry.js";
 
 export interface ToolSourceContext<Framework extends FrameworkId = FrameworkId>
 extends UserScope {
@@ -16,6 +19,8 @@ extends UserScope {
   readonly attemptId: string;
   readonly framework: Framework;
   readonly metadata: ChatMetadata;
+  /** Durable registrations captured when the generation was queued. */
+  readonly toolSourceSnapshots?: readonly ToolSourceRegistrationSnapshot[];
   readonly signal?: AbortSignal;
 }
 

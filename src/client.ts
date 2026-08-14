@@ -1352,6 +1352,10 @@ export class Chat<Framework extends FrameworkId = FrameworkId> {
       this.#dependencies.models,
     );
     const attachments = normalizeAttachments(input.attachments);
+    const toolSources = await this.#dependencies.toolSourceRegistry.snapshot(
+      this.#dependencies.scope,
+      this.id,
+    );
     const generationId = createId();
     const attemptId = createId();
     await this.#dependencies.repository.createGeneration(this.#dependencies.scope, {
@@ -1362,7 +1366,7 @@ export class Chat<Framework extends FrameworkId = FrameworkId> {
       prompt,
       modelProvider: selected.model.provider,
       modelId: selected.model.id,
-      configuration: selected.configuration,
+      configuration: { ...selected.configuration, toolSources },
       attachments,
     });
     this.#dependencies.runner.schedule(this.#dependencies.scope, generationId, attemptId);
@@ -3001,6 +3005,9 @@ class GenerationRunner<Framework extends FrameworkId> {
             attemptId,
             framework: chat.framework,
             metadata: chat.metadata,
+            ...(generation.configuration.toolSources === undefined
+              ? {}
+              : { toolSourceSnapshots: generation.configuration.toolSources }),
             signal,
           },
           ...(sandbox ? { sandbox } : {}),
