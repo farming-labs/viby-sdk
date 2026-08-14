@@ -217,19 +217,19 @@ class VercelSandboxInstance implements SandboxInstance {
       ...(command.signal ? { signal: command.signal } : {}),
       ...streams,
     });
-    if (isVercelCommandHandle(result)) {
-      throw new Error("Vercel returned a detached command for a blocking run.");
-    }
     const outputOptions = signalOptions(command.signal);
+    const completed = isVercelCommandResult(result)
+      ? result
+      : await result.wait(outputOptions);
     const [stdout, stderr] = await Promise.all([
-      result.stdout(outputOptions),
-      result.stderr(outputOptions),
+      completed.stdout(outputOptions),
+      completed.stderr(outputOptions),
     ]);
     return {
-      exitCode: result.exitCode,
+      exitCode: completed.exitCode,
       stdout,
       stderr,
-      durationMs: result.durationMs ?? Math.max(0, performance.now() - startedAt),
+      durationMs: completed.durationMs ?? Math.max(0, performance.now() - startedAt),
     };
   }
 
@@ -313,6 +313,12 @@ function isVercelCommandHandle(
   value: VercelCommandResult | VercelCommandHandle,
 ): value is VercelCommandHandle {
   return "cmdId" in value && typeof value.wait === "function" && typeof value.kill === "function";
+}
+
+function isVercelCommandResult(
+  value: VercelCommandResult | VercelCommandHandle,
+): value is VercelCommandResult {
+  return "exitCode" in value && typeof value.exitCode === "number";
 }
 
 function outputStreams(

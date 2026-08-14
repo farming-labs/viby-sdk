@@ -63,9 +63,13 @@ class FakeVercelClient implements VercelSandboxClient {
         async stderr() { return ""; },
       } satisfies VercelCommandHandle;
     }
+    const client = this;
     return {
+      cmdId: "cmd_finished",
       exitCode: 2,
       durationMs: 18,
+      async wait() { return this; },
+      async kill() { client.backgroundKilled += 1; },
       async stdout() { return "out\n"; },
       async stderr() { return "err\n"; },
     };
