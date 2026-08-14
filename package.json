@@ -167,6 +167,10 @@
       "types": "./dist/tool-source-mcp.d.ts",
       "import": "./dist/tool-source-mcp.js"
     },
+    "./tools/conformance": {
+      "types": "./dist/tool-source-conformance.d.ts",
+      "import": "./dist/tool-source-conformance.js"
+    },
     "./package.json": "./package.json"
   },
   "bin": {
@@ -174,6 +178,10 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
+    "docs:build": "npm --prefix website run build",
+    "docs:dev": "npm --prefix website run dev --",
+    "docs:install": "npm ci --prefix website",
+    "docs:typecheck": "npm --prefix website run typecheck",
     "typecheck": "tsc --noEmit",
     "test": "npm run test:unit",
     "test:unit": "node --import tsx --test test/*.test.ts test/*.test.mjs",
