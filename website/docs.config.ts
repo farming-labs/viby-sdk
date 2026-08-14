@@ -59,6 +59,7 @@ export default {
   navigation: {
     sidebar: [
       { label: "Overview", slug: "" },
+      { label: "Credentials", slug: "credentials" },
       { label: "Capabilities", slug: "capabilities" },
       { label: "API v1", slug: "api/v1" },
       { label: "Web API host", slug: "api-host" },

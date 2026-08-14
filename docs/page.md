@@ -40,6 +40,8 @@ export const viby = createViby({
 
 - [Shipped capabilities](/docs/capabilities) — the current core, adapter, integration, and
   verification inventory.
+- [Credentials and provider setup](/docs/credentials) — create server credentials, connect
+  user-owned providers, and verify the secure callback flow.
 - [Viby API v1](/docs/api/v1) — the public contract for chats, generations, versions, and tasks.
 - [Web API host](/docs/api-host) — mount the framework-neutral `Request` and `Response` surface.
 - [Runtime boundaries](/docs/runtime) — choose the portable core or explicit Node adapters.
