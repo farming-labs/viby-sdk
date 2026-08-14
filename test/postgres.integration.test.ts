@@ -8,6 +8,7 @@ import type { LanguageModel, LanguageModelUsage } from "ai";
 import { MockLanguageModelV4 } from "ai/test";
 import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
 import { createVibyWithDependencies } from "../src/client.js";
+import { frameworkSkill } from "../src/framework-skills.js";
 import { AgentProjectGenerator } from "../src/agent-runner.js";
 import { fileSystemArtifactStore } from "../src/artifact-filesystem.js";
 import type { GeneratorInput, GeneratorOutput, ProjectGenerator } from "../src/generator.js";
@@ -192,7 +193,10 @@ test("persists a durable generation, iteration, events, and download in Postgres
     assert.deepEqual(outcome.generation.configuration, {
       model: "default",
       instructions: "Use a compact product layout.",
-      skills: { design: [] },
+      skills: {
+        core: [frameworkSkill("farmjs")],
+        design: [],
+      },
       metadata: { test: "postgres-generation-config" },
       toolSources: [],
     });
