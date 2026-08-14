@@ -18,7 +18,7 @@ import {
   type ToolSourceConnectionData,
   type ToolSourceCredentialContext,
 } from "./tool-source-authorization.js";
-import { createId } from "./utils.js";
+import { assertIdentifier, createId } from "./utils.js";
 
 const MAX_CONFIGURATION_BYTES = 32_000;
 const MAX_LIST_LIMIT = 200;
@@ -45,6 +45,17 @@ export interface ToolSourceRegistrationData {
   readonly status: ToolSourceRegistrationStatus;
   readonly createdAt: Date;
   readonly updatedAt: Date;
+}
+
+/** JSON-safe immutable public registration retained with a durable generation. */
+export interface ToolSourceRegistrationSnapshot {
+  readonly id: string;
+  readonly type: string;
+  readonly name: string;
+  readonly description: string | null;
+  readonly configuration: Readonly<Record<string, JsonValue>>;
+  readonly createdAt: string;
+  readonly updatedAt: string;
 }
 
 export interface CreateToolSourceRegistrationRecord {
@@ -286,9 +297,23 @@ implements ToolSourceResolver<Framework> {
     return this.#store.listChatToolSources(scope, chatId);
   }
 
+  async snapshot(
+    scope: UserScope,
+    chatId: string,
+  ): Promise<readonly ToolSourceRegistrationSnapshot[]> {
+    const selected = await this.#store.listChatToolSources(scope, chatId);
+    return Object.freeze(selected
+      .filter((source) => source.status === "active")
+      .map(snapshotRegistration));
+  }
+
   async resolve(context: ToolSourceContext<Framework>): Promise<readonly ToolSource<Framework>[]> {
-    const registrations = await this.#store.listChatToolSources(context, context.chatId);
-    const active = registrations.filter((source) => source.status === "active");
+    const registrations = context.toolSourceSnapshots === undefined
+      ? await this.#store.listChatToolSources(context, context.chatId)
+      : context.toolSourceSnapshots.map(registrationFromSnapshot);
+    const active = context.toolSourceSnapshots === undefined
+      ? registrations.filter((source) => source.status === "active")
+      : registrations;
     return Promise.all(active.map((source) => this.#open(context, source)));
   }
 
@@ -313,7 +338,7 @@ implements ToolSourceResolver<Framework> {
   }
 
   #open(scope: UserScope, registration: ToolSourceRegistrationData): Promise<ToolSource<Framework>> {
-    const key = cacheKey(scope, registration.id);
+    const key = cacheKey(scope, registration.id, registrationRevision(registration));
     let pending = this.#sources.get(key);
     if (!pending) {
       const adapter = this.#adapter(registration.type);
@@ -354,11 +379,46 @@ implements ToolSourceResolver<Framework> {
   }
 
   async #closeCached(scope: UserScope, id: string): Promise<void> {
-    const pending = this.#sources.get(cacheKey(scope, id));
-    this.#sources.delete(cacheKey(scope, id));
-    const source = await pending?.catch(() => null);
-    await source?.close?.();
+    const prefix = cacheKeyPrefix(scope, id);
+    const pending = [...this.#sources.entries()]
+      .filter(([key]) => key.startsWith(prefix))
+      .map(([key, source]) => {
+        this.#sources.delete(key);
+        return source;
+      });
+    const sources = await Promise.all(pending.map((source) => source.catch(() => null)));
+    await Promise.all(sources.map((source) => source?.close?.()));
   }
+}
+
+function snapshotRegistration(source: ToolSourceRegistrationData): ToolSourceRegistrationSnapshot {
+  return Object.freeze({
+    id: source.id,
+    type: source.type,
+    name: source.name,
+    description: source.description,
+    configuration: deepFreeze(structuredClone(source.configuration)),
+    createdAt: source.createdAt.toISOString(),
+    updatedAt: source.updatedAt.toISOString(),
+  });
+}
+
+function registrationFromSnapshot(snapshot: ToolSourceRegistrationSnapshot): ToolSourceRegistrationData {
+  const createdAt = new Date(snapshot.createdAt);
+  const updatedAt = new Date(snapshot.updatedAt);
+  if (Number.isNaN(createdAt.getTime()) || Number.isNaN(updatedAt.getTime())) {
+    throw new ConfigurationError(`Tool source snapshot ${snapshot.id} has an invalid revision timestamp.`);
+  }
+  return {
+    id: assertIdentifier(snapshot.id, "Tool source snapshot id"),
+    type: normalizeType(snapshot.type),
+    name: normalizeName(snapshot.name),
+    description: normalizeDescription(snapshot.description),
+    configuration: normalizeConfiguration(snapshot.configuration),
+    status: "active",
+    createdAt,
+    updatedAt,
+  };
 }
 
 function normalizeAdapters<Framework extends FrameworkId>(
@@ -470,6 +530,20 @@ function deepFreeze<Value extends JsonValue>(value: Value): Value {
   return value;
 }
 
-function cacheKey(scope: UserScope, id: string): string {
-  return `${scope.tenantId}\0${scope.userId}\0${id}`;
+function cacheKeyPrefix(scope: UserScope, id: string): string {
+  return `${scope.tenantId}\0${scope.userId}\0${id}\0`;
+}
+
+function cacheKey(scope: UserScope, id: string, revision: string): string {
+  return `${cacheKeyPrefix(scope, id)}${revision}`;
+}
+
+function registrationRevision(source: ToolSourceRegistrationData): string {
+  return JSON.stringify({
+    type: source.type,
+    name: source.name,
+    description: source.description,
+    configuration: source.configuration,
+    updatedAt: source.updatedAt.toISOString(),
+  });
 }

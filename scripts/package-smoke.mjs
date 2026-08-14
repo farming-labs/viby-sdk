@@ -89,6 +89,8 @@ try {
     "dist/repository-integration-conformance.d.ts",
     "dist/deployment-integration-conformance.js",
     "dist/deployment-integration-conformance.d.ts",
+    "dist/tool-source-conformance.js",
+    "dist/tool-source-conformance.d.ts",
     "dist/integration-github.js",
     "dist/integration-github.d.ts",
     "dist/integration-bitbucket.js",
@@ -420,6 +422,18 @@ try {
       [
         'import { verifySandboxAdapter } from "@viby/sdk/sandbox/conformance";',
         'if (typeof verifySandboxAdapter !== "function") throw new Error("sandbox conformance export is missing");',
+      ].join("\n"),
+    ],
+    { cwd: consumer },
+  );
+  await execute(
+    node,
+    [
+      "--input-type=module",
+      "--eval",
+      [
+        'import { verifyToolSourceAdapter } from "@viby/sdk/tools/conformance";',
+        'if (typeof verifyToolSourceAdapter !== "function") throw new Error("tool source conformance export is missing");',
       ].join("\n"),
     ],
     { cwd: consumer },

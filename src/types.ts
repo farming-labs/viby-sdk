@@ -20,6 +20,7 @@ import type { DeploymentPreparationConfig } from "./deployment-preparation.js";
 import type { VibyStorage } from "./storage.js";
 import type { EnvironmentConfig } from "./environment.js";
 import type { ToolSourcesConfig, ToolSourceProposedAction } from "./tool-source.js";
+import type { ToolSourceRegistrationSnapshot } from "./tool-source-registry.js";
 import type { PreviewConfig } from "./preview.js";
 
 export type FrameworkId =
@@ -571,6 +572,8 @@ export interface GenerationConfigurationData {
   readonly instructions: string | null;
   readonly skills: SkillGroups;
   readonly metadata: ChatMetadata;
+  /** Exact public durable tool-source revisions selected when this generation was queued. */
+  readonly toolSources?: readonly ToolSourceRegistrationSnapshot[];
 }
 
 export interface GenerationAttemptData {

@@ -253,6 +253,87 @@ test("connects chat-selected durable sources to the default generation agent", a
   }
 });
 
+test("snapshots selected public registrations before a durable worker runs", async () => {
+  const repository = new MemoryRepository();
+  const observedRevisions: unknown[] = [];
+  const adapter = defineToolSourceAdapter<"farm">({
+    type: "fixture",
+    open: ({ source }) => ({
+      id: source.id,
+      list: async () => [{
+        name: "lookup",
+        description: "Read the snapshotted public configuration.",
+        inputSchema: { type: "object" },
+        effect: "read",
+      }],
+      call: async () => {
+        observedRevisions.push(source.configuration.revision);
+        return { revision: source.configuration.revision ?? null };
+      },
+    }),
+  });
+  const config = {
+    framework: "farm" as const,
+    model: new MockLanguageModelV4({
+      doGenerate: modelCompletion("Unused", "Unused"),
+    }),
+    tools: { adapters: { fixture: adapter } },
+    generation: { execution: "worker" as const },
+  };
+  const creator = createVibyWithDependencies(config, {
+    repository,
+    skillResolver: new SkillResolver({}),
+  });
+  const scoped = creator.forUser(owner);
+  const chat = await scoped.chats.create({ title: "Snapshot tools" });
+  const registered = await scoped.toolSources.create({
+    type: "fixture",
+    name: "Versioned tools",
+    configuration: { revision: "queued" },
+  });
+  await chat.toolSources.set([registered.id]);
+  const generation = await chat.start({ prompt: "Use the queued tool revision." });
+  const queued = await generation.data();
+  assert.deepEqual(queued.configuration.toolSources?.map((source) => ({
+    id: source.id,
+    type: source.type,
+    configuration: source.configuration,
+  })), [{
+    id: registered.id,
+    type: "fixture",
+    configuration: { revision: "queued" },
+  }]);
+
+  await registered.update({ configuration: { revision: "changed" } });
+  await chat.toolSources.set([]);
+  await creator.close();
+
+  const worker = createVibyWithDependencies({
+    ...config,
+    model: new MockLanguageModelV4({
+      doGenerate: [
+        modelToolCall("lookup", `${registered.id}__lookup`, {}),
+        modelToolCall("write", "workspace_write_file", {
+          path: "src/index.ts",
+          content: "export const revision = 'queued';\n",
+          mediaType: "text/javascript",
+        }),
+        modelCompletion("Snapshot", "Used the queued tool revision."),
+      ],
+    }),
+  }, {
+    repository,
+    skillResolver: new SkillResolver({}),
+  });
+  try {
+    assert.equal(await worker.worker({ id: "tool-snapshot-worker" }).runOnce(), true);
+    assert.equal((await generation.wait({ pollIntervalMs: 10 })).status, "succeeded");
+    assert.deepEqual(observedRevisions, ["queued"]);
+  } finally {
+    await worker.close();
+  }
+});
+
 test("rejects credentials in durable configuration and invalid adapter registrations", async () => {
   const repository = new MemoryRepository();
   const registry = new ToolSourceRegistry(repository, { fixture: fixtureAdapter([]) });

@@ -167,6 +167,7 @@ test("persists generation-scoped model, instructions, skills, and metadata acros
       design: [{ source: "file", path: "test/fixtures/skills/request-design" }],
     },
     metadata: { experiment: "visual-a", priority: 2 },
+    toolSources: [],
   });
 
   const restarted = createVibyWithDependencies(config, {

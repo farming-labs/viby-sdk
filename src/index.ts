@@ -93,6 +93,7 @@ export type {
   ToolSourceAdapter,
   ToolSourceAdapterOpenInput,
   ToolSourceRegistrationData,
+  ToolSourceRegistrationSnapshot,
   ToolSourceRegistrationListOptions,
   ToolSourceRegistrationStatus,
   ToolSourceRegistryStore,
