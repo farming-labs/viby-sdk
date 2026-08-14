@@ -22,7 +22,7 @@ import { createViby } from "@viby/sdk";
 import { cloudflare } from "@viby/sdk/integrations/cloudflare";
 
 const viby = createViby({
-  framework: "farm",
+  framework: "farmjs",
   model,
   sandbox,
   artifactStore,

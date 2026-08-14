@@ -37,7 +37,7 @@ import { createViby, skillRead } from "@viby/sdk";
 import { openai } from "@ai-sdk/openai";
 
 export const viby = createViby({
-  framework: "farm",
+  framework: "farmjs",
   model: openai("your-model-id"),
   retention: { deletedChatsMs: 30 * 24 * 60 * 60 * 1_000 },
   agent: {
@@ -57,6 +57,22 @@ export const viby = createViby({
 });
 ```
 
+`framework` is one type-safe string. Viby provides autocomplete and an automatically resolved,
+immutable framework skill for `farmjs`, `nextjs`, `svelte`, `sveltekit`, `vue`, `nuxt`, `solid`,
+`solidstart`, `tanstack-start`, `react-router`, `astro`, and `vite`. The skill is prepended to the
+always-selected `core` group; the configured `skills` above extend it. Any other non-empty string
+remains valid for a host-owned framework and receives no package-owned assumptions.
+
+```ts
+import { builtInFrameworks, frameworkSkill } from "@viby/sdk";
+
+builtInFrameworks; // readonly built-in IDs for selectors and validation
+frameworkSkill("farmjs"); // optional explicit immutable snapshot
+```
+
+`farm` and `next` remain migration aliases for bundled skill selection, but new records should use
+the canonical `farmjs` and `nextjs` IDs.
+
 The model provider reads its own credential from your environment. Viby does not receive or store it. The default generator is a bounded AI SDK tool-loop agent: it reads and changes source through `AgentWorkspace`, emits durable tool and trace records, and returns either an immutable project result or a typed blocking task.
 
 Skills can also come from an application-owned catalog, database, object store, or Git service. The configured resolver handles opaque references while built-in skills.sh, local-directory, and inline adapters remain available:
@@ -74,7 +90,7 @@ const skillResolver = defineSkillResolver({
 });
 
 const viby = createViby({
-  framework: "farm",
+  framework: "farmjs",
   model,
   skillResolver,
   skills: {
@@ -92,7 +108,7 @@ Inbound tools use the same provider-neutral pattern. Configure named sources onc
 import { mcp } from "@viby/sdk/tools/mcp";
 
 const viby = createViby({
-  framework: "farm",
+  framework: "farmjs",
   model,
   tools: {
     sources: {
@@ -121,7 +137,7 @@ Products that let every tenant add its own tools can register adapter types once
 import { defineToolSourceAdapter } from "@viby/sdk";
 
 const viby = createViby({
-  framework: "farm",
+  framework: "farmjs",
   model,
   tools: {
     adapters: {
@@ -149,7 +165,7 @@ MCP has a built-in durable adapter, so the common path needs no custom materiali
 import { mcpAdapter } from "@viby/sdk/tools/mcp";
 
 const viby = createViby({
-  framework: "farm",
+  framework: "farmjs",
   model,
   tools: { adapters: { mcp: mcpAdapter() } },
 });
@@ -214,7 +230,7 @@ import { postgres } from "@viby/sdk/storage/postgres";
 import { fileSystemArtifactStore } from "@viby/sdk/artifact/filesystem";
 
 const viby = createViby({
-  framework: "farm",
+  framework: "farmjs",
   model,
   storage: {
     database: postgres({ url: env.DATABASE_URL }),
@@ -233,7 +249,7 @@ For production object storage, the S3-compatible adapter fits the same category 
 import { s3 } from "@viby/sdk/storage/s3";
 
 const viby = createViby({
-  framework: "farm",
+  framework: "farmjs",
   model,
   storage: {
     database: postgres({ url: env.DATABASE_URL }),
@@ -259,7 +275,7 @@ Enable durable project environments with the PostgreSQL default and the same pro
 
 ```ts
 const viby = createViby({
-  framework: "farm",
+  framework: "farmjs",
   model,
   environment: {},
 });
@@ -300,7 +316,7 @@ import { cloudflare } from "@viby/sdk/integrations/cloudflare";
 import { vercel } from "@viby/sdk/integrations/vercel";
 
 const viby = createViby({
-  framework: "farm",
+  framework: "farmjs",
   model,
   sandbox,
   storage: { artifacts: artifactStore },
@@ -407,7 +423,7 @@ Binary attachments use a separate provider-neutral artifact store so PostgreSQL 
 import { fileSystemArtifactStore } from "@viby/sdk/artifact/filesystem";
 
 const viby = createViby({
-  framework: "farm",
+  framework: "farmjs",
   model,
   storage: {
     artifacts: fileSystemArtifactStore({ directory: "/var/lib/viby/artifacts" }),
@@ -445,7 +461,7 @@ const engine = defineGenerationEngine({
   },
 });
 
-export const viby = createViby({ framework: "farm", engine });
+export const viby = createViby({ framework: "farmjs", engine });
 ```
 
 Use `engines` for request-selectable aliases just as the AI SDK shortcut uses `models`. Generation engine authors can run `verifyGenerationEngine` from `@viby/sdk/generation/conformance` against caller-owned deterministic scenarios. The suite validates identity, portable outputs, and cancellation without assuming a provider or orchestration design.
@@ -589,7 +605,7 @@ Pass any compatible sandbox adapter when constructing Viby. The core SDK does no
 
 ```ts
 const viby = createViby({
-  framework: "farm",
+  framework: "farmjs",
   model,
   sandbox: yourSandboxAdapter,
 });
@@ -645,7 +661,7 @@ For the normal product flow, configure the framework's development command once 
 
 ```ts
 const viby = createViby({
-  framework: "farm",
+  framework: "farmjs",
   model,
   sandbox,
   preview: {
@@ -673,7 +689,7 @@ Enforce one command policy across every adapter in the session core:
 import { sandboxCommandPolicy } from "@viby/sdk";
 
 const viby = createViby({
-  framework: "farm",
+  framework: "farmjs",
   model,
   sandbox,
   sandboxPolicy: sandboxCommandPolicy({
@@ -721,7 +737,7 @@ npm install e2b
 import { e2bSandbox } from "@viby/sdk/sandbox/e2b";
 
 const viby = createViby({
-  framework: "farm",
+  framework: "farmjs",
   model,
   sandbox: e2bSandbox({
     apiKey: process.env.E2B_API_KEY,
@@ -744,7 +760,7 @@ npm install @vercel/sandbox
 import { vercelSandbox } from "@viby/sdk/sandbox/vercel";
 
 const viby = createViby({
-  framework: "farm",
+  framework: "farmjs",
   model,
   sandbox: vercelSandbox({
     image: "vercel/sandbox/universal:latest",
@@ -766,7 +782,7 @@ npm install @daytona/sdk
 import { daytonaSandbox } from "@viby/sdk/sandbox/daytona";
 
 const viby = createViby({
-  framework: "farm",
+  framework: "farmjs",
   model,
   sandbox: daytonaSandbox({
     apiKey: process.env.DAYTONA_API_KEY,
@@ -790,7 +806,7 @@ npm install modal
 import { modalSandbox } from "@viby/sdk/sandbox/modal";
 
 const viby = createViby({
-  framework: "farm",
+  framework: "farmjs",
   model,
   sandbox: modalSandbox({
     appName: "viby",
@@ -819,7 +835,7 @@ export { Sandbox } from "@cloudflare/sandbox";
 import { cloudflareSandbox } from "@viby/sdk/sandbox/cloudflare";
 
 const viby = createViby({
-  framework: "farm",
+  framework: "farmjs",
   model,
   sandbox: cloudflareSandbox({
     binding: env.Sandbox,
@@ -840,7 +856,7 @@ Docker requires no JavaScript provider dependency:
 import { dockerSandbox } from "@viby/sdk/sandbox/docker";
 
 const viby = createViby({
-  framework: "farm",
+  framework: "farmjs",
   model,
   sandbox: dockerSandbox({
     image: "node:24-bookworm-slim",
@@ -910,7 +926,7 @@ import {
 import { playwrightBrowser } from "@viby/sdk/browser/playwright";
 
 const viby = createViby({
-  framework: "farm",
+  framework: "farmjs",
   model,
   browser: playwrightBrowser(),
   storage: { artifacts: artifactStore },
@@ -986,7 +1002,7 @@ Browser and other Web-runtime consumers can use the matching typed client withou
 ```ts
 import { createVibyWebClient } from "@viby/sdk/core";
 
-const viby = createVibyWebClient<"farm">({ baseUrl: "/api/viby" });
+const viby = createVibyWebClient<"farmjs">({ baseUrl: "/api/viby" });
 const { chat, generation } = await viby.chats.create({
   title: "Dashboard",
   prompt: "Build a polished analytics dashboard",
@@ -1044,7 +1060,7 @@ const productEvents = signedOutboundEventSink({
 });
 
 const viby = createViby({
-  framework: "farm",
+  framework: "farmjs",
   model,
   events: { sinks: [productEvents] },
 });
@@ -1083,7 +1099,7 @@ Pass provider-neutral telemetry hooks directly or adapt OpenTelemetry-compatible
 import { openTelemetry } from "@viby/sdk";
 
 const viby = createViby({
-  framework: "farm",
+  framework: "farmjs",
   model,
   telemetry: openTelemetry({ tracer, meter }),
   cost: {
@@ -1129,7 +1145,7 @@ For request-scoped or horizontally scaled hosts, queue generation in Postgres an
 
 ```ts
 const viby = createViby({
-  framework: "farm",
+  framework: "farmjs",
   model,
   skills,
   generation: { execution: "worker" },

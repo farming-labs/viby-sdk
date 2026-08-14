@@ -1,0 +1,4 @@
+interface:
+  display_name: "React Router Framework"
+  short_description: "Generate React Router Framework applications"
+  default_prompt: "Build this project using React Router Framework Mode conventions."

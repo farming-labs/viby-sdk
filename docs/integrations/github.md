@@ -24,7 +24,7 @@ import { createViby } from "@viby/sdk";
 import { github } from "@viby/sdk/integrations/github";
 
 const viby = createViby({
-  framework: "farm",
+  framework: "farmjs",
   model,
   integrations: {
     repository: {

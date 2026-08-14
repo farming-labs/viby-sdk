@@ -98,6 +98,7 @@ import type {
 import { AgentProjectGenerator, normalizeAgentRunnerConfig } from "./agent-runner.js";
 import { postgresPersistence } from "./persistence-postgres.js";
 import { SkillResolver } from "./skills.js";
+import { withFrameworkSkill } from "./framework-skills.js";
 import {
   ConfigurationError,
   GenerationCancelledError,
@@ -430,7 +431,7 @@ export function createViby<const Framework extends FrameworkId>(
       ? database.open(storage.artifacts ? { artifacts: storage.artifacts } : {})
       : database,
     skillResolver: new SkillResolver(
-      config.skills,
+      withFrameworkSkill(config.framework, config.skills),
       undefined,
       config.skillResolver ? [config.skillResolver] : [],
     ),
@@ -609,7 +610,9 @@ class VibyClient<Framework extends FrameworkId> implements Viby<Framework> {
       ...config.tools,
       registry: this.#toolSourceRegistry,
     } : undefined);
-    this.#skills = normalizeSkillGroups(config.skills);
+    this.#skills = normalizeSkillGroups(
+      withFrameworkSkill(config.framework, config.skills),
+    );
     this.#runner = new GenerationRunner({
       framework: this.framework,
       repository: this.#repository,

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Astro Framework"
+  short_description: "Generate correct Astro applications"
+  default_prompt: "Build this project using current Astro conventions."

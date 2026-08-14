@@ -28,7 +28,7 @@ import { createViby } from "@viby/sdk";
 import { openai } from "@ai-sdk/openai";
 
 export const viby = createViby({
-  framework: "farm",
+  framework: "farmjs",
   model: openai("your-model-id"),
   skills: {
     frontend: ["farming-labs/design-engineer"],

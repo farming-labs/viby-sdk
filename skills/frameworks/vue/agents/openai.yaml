@@ -1,0 +1,4 @@
+interface:
+  display_name: "Vue Framework"
+  short_description: "Generate correct Vue applications"
+  default_prompt: "Build this project as a typed Vue application."

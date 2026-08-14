@@ -1,0 +1,4 @@
+interface:
+  display_name: "SvelteKit Framework"
+  short_description: "Generate correct SvelteKit applications"
+  default_prompt: "Build this project using current SvelteKit conventions."

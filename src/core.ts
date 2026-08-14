@@ -14,6 +14,7 @@ export * from "./artifact-store.js";
 export * from "./generation-engine.js";
 export * from "./http.js";
 export * from "./skill-resolver.js";
+export * from "./frameworks.js";
 export * from "./source-import.js";
 export * from "./storage.js";
 export * from "./telemetry.js";

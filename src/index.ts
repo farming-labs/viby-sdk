@@ -31,6 +31,11 @@ export {
   skillInline,
 } from "./skill-resolver.js";
 export { skillRead } from "./skills.js";
+export {
+  builtInFrameworks,
+  isBuiltInFramework,
+} from "./frameworks.js";
+export { frameworkSkill } from "./framework-skills.js";
 export { defineDatabaseAdapter } from "./storage.js";
 export {
   EnvironmentManager,
@@ -446,6 +451,7 @@ export type {
   AttachmentData,
   AttachmentInput,
   BuiltInSkillCategory,
+  BuiltInFrameworkId,
   ApplySourceChangesInput,
   AgentRunnerConfig,
   ChatData,
