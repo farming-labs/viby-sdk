@@ -123,6 +123,23 @@ test("hosts chat, message, stream, task, preview, and download flows with Web AP
     const versionId = string(firstVersion.id);
     assert.equal(array(chat.messages).length, 2);
 
+    const edited = await requestJson(api, `/chats/${chatId}/versions/${versionId}/changes`, {
+      method: "POST",
+      body: JSON.stringify({
+        title: "Edited API project",
+        summary: "Changed through the Web API host.",
+        changes: [{ type: "write", path: "src/index.ts", content: "export const edited = true;\n" }],
+      }),
+    }, 201);
+    const editedVersionId = string(object(edited.version).id);
+    assert.equal(object(edited.version).parentVersionId, versionId);
+    assert.equal(object(array(edited.entries)[0]).content, "export const edited = true;\n");
+    const editedChanges = await requestJson(
+      api,
+      `/chats/${chatId}/versions/${editedVersionId}/changes`,
+    );
+    assert.equal(object(array(editedChanges.changes)[0]).type, "write");
+
     const messages = await requestJson(api, `/chats/${chatId}/messages?limit=10`);
     const firstMessageId = string(object(array(messages.messages)[0]).id);
     assert.equal(object((await requestJson(api, `/chats/${chatId}/messages/${firstMessageId}`)).message).id, firstMessageId);

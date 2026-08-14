@@ -22,10 +22,12 @@ import type {
   ImportProjectInput,
   JsonValue,
   SkillGroups,
+  SourceChange,
   SourceEntryInput,
   UserScope,
 } from "./types.js";
 import type { IntegrationCategory, IntegrationSourceFile } from "./integrations.js";
+import type { PreviewSessionData } from "./preview.js";
 import type { ToolSourceRegistrationStatus } from "./tool-source-registry.js";
 
 const DEFAULT_BASE_PATH = "/api/viby";
@@ -53,10 +55,10 @@ export interface VibyApiOptions<Framework extends FrameworkId = FrameworkId> {
   readonly basePath?: string;
   readonly maxBodyBytes?: number;
   readonly headers?: HeadersInit;
-  /** Host-owned preview lifecycle. Omit to return preview_not_configured. */
-  readonly preview?: (
+  /** Use `true` for Viby durable previews, a handler for a custom host, or omit to disable. */
+  readonly preview?: true | ((
     context: VibyApiPreviewContext<Framework>,
-  ) => VibyApiPreviewResult | Promise<VibyApiPreviewResult>;
+  ) => VibyApiPreviewResult | Promise<VibyApiPreviewResult>);
   readonly onError?: (error: unknown, request: Request) => void | Promise<void>;
 }
 
@@ -302,6 +304,25 @@ async function route<Framework extends FrameworkId>(
         }
         return methodNotAllowed("GET");
       }
+      if (segments[4] === "changes" && segments.length === 5) {
+        if (request.method === "GET") {
+          return json({ changes: await version.changes() });
+        }
+        if (request.method === "POST") {
+          const body = await requestObject(request, maxBodyBytes);
+          const applied = await version.apply({
+            changes: sourceChanges(body.changes),
+            ...(body.title === undefined
+              ? {}
+              : { title: requiredString(body.title, "title", 200) }),
+            ...(body.summary === undefined
+              ? {}
+              : { summary: requiredString(body.summary, "summary", 2_000) }),
+          });
+          return json({ version: versionValue(applied), entries: await applied.entries() }, 201);
+        }
+        return methodNotAllowed("GET, POST");
+      }
       if (segments[4] === "repository-pushes") {
         if (segments.length === 5 && request.method === "GET") {
           return json({ pushes: await version.repositoryPushes() });
@@ -348,13 +369,17 @@ async function route<Framework extends FrameworkId>(
         return (await version.download()).toResponse({ headers: { "Cache-Control": "no-store" } });
       }
       if (segments[4] === "preview" && segments.length === 5 && request.method === "POST") {
-        if (!options.preview) {
+        const preview = options.preview;
+        if (!preview) {
           return json({
             error: "Preview is not configured by this host.",
             code: "preview_not_configured",
           }, 501);
         }
-        const result = await options.preview({ request, scope, viby: user, chat, version });
+        if (preview === true) {
+          return json(await openManagedPreview(user, version, request.signal), 201);
+        }
+        const result = await preview({ request, scope, viby: user, chat, version });
         return result instanceof Response ? result : json(result, 201);
       }
       return methodNotAllowed("GET, POST");
@@ -444,19 +469,52 @@ async function route<Framework extends FrameworkId>(
       return (await version.download()).toResponse({ headers: { "Cache-Control": "no-store" } });
     }
     if (segments[2] === "preview" && request.method === "POST") {
-      if (!options.preview) {
+      const preview = options.preview;
+      if (!preview) {
         return json({
           error: "Preview is not configured by this host.",
           code: "preview_not_configured",
         }, 501);
       }
-      const result = await options.preview({ request, scope, viby: user, chat, version });
+      if (preview === true) {
+        return json(await openManagedPreview(user, version, request.signal), 201);
+      }
+      const result = await preview({ request, scope, viby: user, chat, version });
       return result instanceof Response ? result : json(result, 201);
     }
     return methodNotAllowed("GET, POST");
   }
 
   return notFound();
+}
+
+async function openManagedPreview<Framework extends FrameworkId>(
+  user: ScopedViby<Framework>,
+  version: Version<Framework>,
+  signal: AbortSignal,
+) {
+  const candidates = await user.previews.list({ versionId: version.id, status: "ready" });
+  for (const candidate of [...candidates].sort((left, right) => (
+    right.updatedAt.getTime() - left.updatedAt.getTime()
+  ))) {
+    const preview = await user.previews.get(candidate.id);
+    if (preview.status === "ready" && preview.url) {
+      return { ...previewValue(preview.data()), cached: true };
+    }
+  }
+  const preview = await version.preview({ signal });
+  return { ...previewValue(preview.data()), cached: false };
+}
+
+function previewValue<Framework extends FrameworkId>(preview: PreviewSessionData<Framework>) {
+  return {
+    ...preview,
+    expiresAt: preview.expiresAt.toISOString(),
+    readyAt: preview.readyAt?.toISOString() ?? null,
+    stoppedAt: preview.stoppedAt?.toISOString() ?? null,
+    createdAt: preview.createdAt.toISOString(),
+    updatedAt: preview.updatedAt.toISOString(),
+  };
 }
 
 async function toolSourceRoute<Framework extends FrameworkId>(
@@ -1134,6 +1192,39 @@ function booleanValue(value: unknown, name: string): boolean {
 function stringArray(value: unknown, name: string, itemMax: number): readonly string[] {
   if (!Array.isArray(value)) throw new ConfigurationError(`${name} must be an array of strings.`);
   return value.map((item, index) => requiredString(item, `${name}[${index}]`, itemMax));
+}
+
+function sourceChanges(value: unknown): readonly SourceChange[] {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new ConfigurationError("changes must be a non-empty array.");
+  }
+  return value.map((candidate, index): SourceChange => {
+    const change = jsonObject(candidate, `changes[${index}]`) as Record<string, unknown>;
+    if (change.type === "write") {
+      return {
+        type: "write",
+        path: requiredString(change.path, `changes[${index}].path`, 1_000),
+        content: stringValue(change.content, `changes[${index}].content`, 10_000_000),
+        ...(change.mediaType === undefined
+          ? {}
+          : { mediaType: requiredString(change.mediaType, `changes[${index}].mediaType`, 200) }),
+      };
+    }
+    if (change.type === "delete") {
+      return {
+        type: "delete",
+        path: requiredString(change.path, `changes[${index}].path`, 1_000),
+      };
+    }
+    if (change.type === "move") {
+      return {
+        type: "move",
+        from: requiredString(change.from, `changes[${index}].from`, 1_000),
+        to: requiredString(change.to, `changes[${index}].to`, 1_000),
+      };
+    }
+    throw new ConfigurationError(`changes[${index}].type must be write, delete, or move.`);
+  });
 }
 
 function integrationCategory(value: string | undefined): IntegrationCategory {

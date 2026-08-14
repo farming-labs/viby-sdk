@@ -93,6 +93,8 @@ export interface PreviewSessionStore {
 }
 
 export interface PreviewConfig {
+  /** Commands completed in order after source materialization and before the server starts. */
+  readonly prepare?: readonly SandboxCommand[];
   /** Framework- or product-provided long-running development server command. */
   readonly start: SandboxCommand;
   readonly port: number;
@@ -111,6 +113,7 @@ export interface PreviewOpenOptions {
 }
 
 export interface ResolvedPreviewOpenOptions {
+  readonly prepare: readonly SandboxCommand[];
   readonly start: SandboxCommand;
   readonly port: number;
   readonly path: string;
@@ -161,6 +164,7 @@ export class PreviewRegistry<Framework extends FrameworkId = FrameworkId> {
     }
     const path = normalizePreviewPath(options.path ?? this.#config.path);
     return {
+      prepare: this.#config.prepare ?? [],
       start: this.#config.start,
       port: this.#config.port,
       path,
@@ -217,6 +221,19 @@ export class PreviewRegistry<Framework extends FrameworkId = FrameworkId> {
     }
     this.#sessions.set(preview.id, { session: sandbox, scope: { ...scope } });
     try {
+      for (const command of options.prepare) {
+        const result = await sandbox.run({
+          ...command,
+          ...(options.signal ? { signal: options.signal } : {}),
+        });
+        if (result.exitCode !== 0) {
+          const detail = (result.stderr || result.stdout).trim().slice(0, 2_000);
+          throw new Error(
+            `Preview preparation command ${command.command} exited with ${result.exitCode}`
+              + (detail ? `: ${detail}` : "."),
+          );
+        }
+      }
       const process = await sandbox.start({
         ...options.start,
         ...(options.signal ? { signal: options.signal } : {}),
@@ -380,6 +397,10 @@ function normalizePreviewConfig(config: PreviewConfig): PreviewConfig {
   if (!config.start || typeof config.start !== "object") {
     throw new ConfigurationError("preview.start must be a sandbox command.");
   }
+  if (config.prepare !== undefined && (!Array.isArray(config.prepare)
+    || config.prepare.some((command) => !command || typeof command !== "object"))) {
+    throw new ConfigurationError("preview.prepare must be an array of sandbox commands.");
+  }
   if (!Number.isInteger(config.port) || config.port < 1 || config.port > 65_535) {
     throw new ConfigurationError("preview.port must be an integer between 1 and 65535.");
   }
@@ -395,6 +416,7 @@ function normalizePreviewConfig(config: PreviewConfig): PreviewConfig {
   }
   return Object.freeze({
     ...config,
+    prepare: Object.freeze((config.prepare ?? []).map((command) => ({ ...command }))),
     path: normalizePreviewPath(config.path),
     readiness: config.readiness ? { ...config.readiness } : {},
   });
