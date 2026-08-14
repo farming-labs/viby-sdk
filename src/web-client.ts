@@ -706,10 +706,11 @@ class WebClientTransport {
 
   constructor(options: VibyWebClientOptions) {
     this.#baseUrl = normalizeBaseUrl(options.baseUrl);
-    this.#fetch = options.fetch ?? globalThis.fetch;
-    if (typeof this.#fetch !== "function") {
+    const fetchImplementation = options.fetch ?? globalThis.fetch;
+    if (typeof fetchImplementation !== "function") {
       throw new ConfigurationError("createVibyWebClient requires a Web-compatible fetch implementation.");
     }
+    this.#fetch = options.fetch ?? fetchImplementation.bind(globalThis);
     this.#headers = options.headers;
     this.#credentials = options.credentials;
   }
