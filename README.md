@@ -4,10 +4,6 @@
 
 See the [shipped capability inventory](./docs/capabilities.md) for the complete core, adapter, integration, verification, and boundary matrix. The [Web API host guide](./docs/api-host.md) documents the ready-to-mount Request/Response surface.
 
-The documentation website is a standalone Farm application powered by the
-[`@farming-labs/farmjs`](./website/README.md) docs adapter and its shadcn theme. Run it locally with
-`npm run docs:dev`; it renders the same Markdown files shipped with the package.
-
 ## Install
 
 ```bash
