@@ -22,7 +22,7 @@ Status meanings:
 | Generation modes | Separate sync, async, and SSE endpoints | Keep `generate`, `start`/`wait`, and resumable `stream` methods over one durable generation |
 | Source state | Read, replace, download, and restore current chat files | Read, change, download, fork, and restore immutable versions |
 | Preview | Hosted VM preview with a short-lived access token | Optional sandbox-backed preview session; never guaranteed by core |
-| Deployment | Creates and deploys a Vercel project | Future deployment adapter; no vendor identifiers in core records |
+| Deployment | Creates and deploys a Vercel project | Shipped provider-neutral project and deployment contracts, durable history, preparation pipeline, and opt-in Vercel and Cloudflare adapters |
 | Tools | Hosted MCP server connections and agent actions | Shipped provider-neutral durable tool sources, per-chat selection, adapter-owned OAuth connections, permission policy, and source workspace tools |
 | Identity | v0 account/team, privacy, and write permissions | Host passes `tenantId` and `userId`; authorization stays app-owned |
 
@@ -38,7 +38,7 @@ The official v2 documentation organizes the API around these resources and endpo
 | Chat files | get, update, download, and restore from a message | immutable version files, changes, downloads, and restore are core |
 | Preview and deployment | get preview, create Vercel project, deploy chat | preview belongs behind sandbox capability checks; provider-neutral project and deployment workflows ship with Vercel and Cloudflare adapters |
 | Messages | list, get, send sync/async/streaming, resolve task sync/async/streaming, restore message | portable message history, parts, generation modes, tasks, and restore belong in core |
-| MCP servers | list, create, get, update, delete, and OAuth authorization | shipped inbound MCP client adapter with host-owned catalog and OAuth lifecycle; outbound Viby MCP server adapter |
+| MCP servers | list, create, get, update, delete, and OAuth authorization | shipped durable tool-source registry, per-chat selection, adapter-owned OAuth lifecycle, inbound MCP client, and outbound Viby MCP server adapter |
 | Webhooks | list, create, get, update, and delete | signed provider-neutral event sinks over the durable cursor; endpoint registry remains app-owned |
 
 ## Chats and generation
@@ -125,8 +125,9 @@ Viby separates a portable tool call from the credentialed connection used to ful
 
 - Core may define typed tools, calls, results, approval tasks, and durable events.
 - Typed calls and results, attempt/message ownership, redaction, and external-effect idempotency are shipped in core.
-- The host supplies tool sources, per-chat selection, and policy; Viby durably gates, records, and idempotently resumes external effects.
-- The MCP client adapter supports Streamable HTTP and custom transports while resolving credentials inside transport factories. Discovery registries, OAuth grants, refresh tokens, and connection storage remain host-owned.
+- Applications may provide static sources directly or use Viby’s durable, tenant-scoped tool-source registry. Viby persists public registration configuration and explicit per-chat selection while the host chooses adapter types and policy.
+- Tool-source adapters may implement authorization start, callback completion, credential refresh, and revocation. Viby stores callback sessions and connection metadata durably while opaque credentials remain isolated in `storage.secrets`.
+- The MCP client adapter supports Streamable HTTP and custom transports while resolving credentials only inside transport factories. Provider application registration and public callback routing remain host-owned.
 - Viby operations can also be registered as scoped MCP server tools.
 - Signed event sinks ship durable generation events through an app-owned transport with stable IDs, HMAC verification, leases, retries, dead letters, and redrive; endpoint CRUD and scheduling remain app-owned.
 - Deployment and Git provider credentials stay behind the explicit connection and secret-store boundary and never enter model context by default.
