@@ -11,10 +11,13 @@ import type {
   GenerationEventPage,
   GenerationTaskData,
   GenerationTaskResolution,
+  ImportFilePolicy,
   JsonValue,
   MessageData,
   PageOptions,
   SkillGroups,
+  SourceChange,
+  SourceEntryInput,
   ToolCallData,
   VersionData,
   VersionEntry,
@@ -105,6 +108,43 @@ export interface VibyWebUpdateChatInput {
   readonly metadata?: ChatMetadata;
 }
 
+export type VibyWebImportProjectSource =
+  | {
+      readonly type: "files";
+      readonly files: readonly SourceEntryInput[];
+    }
+  | {
+      readonly type: "zip";
+      readonly bytes: Uint8Array;
+    }
+  | {
+      readonly type: "repository";
+      readonly integrationId: string;
+      readonly connectionId?: string;
+      readonly repository: {
+        readonly owner: string;
+        readonly name: string;
+      };
+      readonly ref:
+        | { readonly branch: string }
+        | { readonly tag: string }
+        | { readonly commit: string };
+    };
+
+export interface VibyWebImportProjectInput {
+  readonly title?: string;
+  readonly summary?: string;
+  readonly metadata?: ChatMetadata;
+  readonly filePolicy?: ImportFilePolicy;
+  readonly source: VibyWebImportProjectSource;
+}
+
+export interface VibyWebApplySourceChangesInput {
+  readonly changes: readonly SourceChange[];
+  readonly title?: string;
+  readonly summary?: string;
+}
+
 export interface VibyWebDeleteChatInput {
   readonly retentionMs?: number | null;
 }
@@ -163,6 +203,11 @@ export interface VibyWebVersionDetail<Framework extends FrameworkId = FrameworkI
   readonly entries: readonly VibyApiJson<VersionEntry>[];
 }
 
+export interface VibyWebImportProjectResult<Framework extends FrameworkId = FrameworkId> {
+  readonly chat: VibyApiChat<Framework>;
+  readonly version: VibyApiVersion<Framework>;
+}
+
 export interface VibyWebGenerationDetail<Framework extends FrameworkId = FrameworkId> {
   readonly generation: VibyApiGeneration;
   readonly attempts: readonly VibyApiGenerationAttempt[];
@@ -191,6 +236,10 @@ export interface VibyWebChatsClient<Framework extends FrameworkId = FrameworkId>
     input?: VibyWebCreateChatInput,
     options?: VibyWebRequestOptions,
   ): Promise<VibyWebCreateChatResult<Framework>>;
+  import(
+    input: VibyWebImportProjectInput,
+    options?: VibyWebRequestOptions,
+  ): Promise<VibyWebImportProjectResult<Framework>>;
   get(chatId: string, options?: VibyWebPageOptions): Promise<VibyWebChatDetail<Framework>>;
   update(
     chatId: string,
@@ -220,6 +269,17 @@ export interface VibyWebChatsClient<Framework extends FrameworkId = FrameworkId>
     get(
       chatId: string,
       versionId: string,
+      options?: VibyWebRequestOptions,
+    ): Promise<VibyWebVersionDetail<Framework>>;
+    changes(
+      chatId: string,
+      versionId: string,
+      options?: VibyWebRequestOptions,
+    ): Promise<{ readonly changes: readonly SourceChange[] }>;
+    apply(
+      chatId: string,
+      versionId: string,
+      input: VibyWebApplySourceChangesInput,
       options?: VibyWebRequestOptions,
     ): Promise<VibyWebVersionDetail<Framework>>;
     iterate(
@@ -381,6 +441,13 @@ export function createVibyWebClient<Framework extends FrameworkId = FrameworkId>
       input,
     ),
     create: createChat as VibyWebChatsClient<Framework>["create"],
+    import: (input, request = {}) => transport.json(
+      "POST",
+      "/chats/imports",
+      importProjectBody(input),
+      undefined,
+      request,
+    ),
     get: (chatId, input = {}) => transport.json(
       "GET",
       `/chats/${segment(chatId)}`,
@@ -445,6 +512,27 @@ export function createVibyWebClient<Framework extends FrameworkId = FrameworkId>
           undefined,
           request,
         )
+      ),
+      changes: (chatId: string, versionId: string, request: VibyWebRequestOptions = {}) => (
+        transport.json<{ readonly changes: readonly SourceChange[] }>(
+          "GET",
+          `/chats/${segment(chatId)}/versions/${segment(versionId)}/changes`,
+          undefined,
+          undefined,
+          request,
+        )
+      ),
+      apply: (
+        chatId: string,
+        versionId: string,
+        input: VibyWebApplySourceChangesInput,
+        request: VibyWebRequestOptions = {},
+      ) => transport.json<VibyWebVersionDetail<Framework>>(
+        "POST",
+        `/chats/${segment(chatId)}/versions/${segment(versionId)}/changes`,
+        input,
+        undefined,
+        request,
       ),
       iterate: (
         chatId: string,
@@ -830,6 +918,24 @@ function generationBody(input: VibyWebCreateChatInput | VibyWebGenerationInput):
       })),
     }),
   };
+}
+
+function importProjectBody(input: VibyWebImportProjectInput): object {
+  const source = input.source.type === "files"
+    ? {
+        type: "files" as const,
+        files: input.source.files.map((entry) => entry.type === "artifact"
+          ? {
+              ...entry,
+              bytes: undefined,
+              base64: encodeBase64(entry.bytes),
+            }
+          : entry),
+      }
+    : input.source.type === "zip"
+      ? { type: "zip" as const, base64: encodeBase64(input.source.bytes) }
+      : input.source;
+  return { ...input, source };
 }
 
 function encodeBase64(bytes: Uint8Array): string {

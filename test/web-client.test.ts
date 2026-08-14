@@ -122,6 +122,44 @@ test("consumes the Web API host through typed chat, stream, preview, and downloa
     assert.equal(detail.messages.length, 2);
     assert.equal(detail.versions.length, 1);
 
+    const imported = await client.chats.import({
+      title: "Imported web project",
+      source: {
+        type: "files",
+        files: [
+          { path: "src/imported.ts", content: "export const imported = true;\n" },
+          {
+            type: "artifact",
+            path: "public/mark.bin",
+            mediaType: "application/octet-stream",
+            bytes: new Uint8Array([0, 1, 2, 255]),
+          },
+        ],
+      },
+    });
+    assert.equal(imported.chat.title, "Imported web project");
+    const importedVersion = await client.chats.versions.get(imported.chat.id, imported.version.id);
+    assert.equal(importedVersion.entries.length, 2);
+    assert.equal(
+      importedVersion.entries.find((entry) => entry.path === "public/mark.bin")?.type,
+      "artifact",
+    );
+
+    const edited = await client.chats.versions.apply(created.chat.id, generation.version!.id, {
+      title: "Edited web project",
+      changes: [{
+        type: "write",
+        path: "src/index.ts",
+        content: "export const edited = true;\n",
+      }],
+    });
+    assert.equal(edited.version.parentVersionId, generation.version!.id);
+    assert.equal(edited.entries[0]?.type, "text");
+    assert.equal(
+      (await client.chats.versions.changes(created.chat.id, edited.version.id)).changes[0]?.type,
+      "write",
+    );
+
     const preview = await client.chats.versions.preview<{ readonly url: string }>(
       created.chat.id,
       generation.version!.id,

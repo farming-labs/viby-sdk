@@ -34,6 +34,14 @@ const { chat, generation } = await viby.chats.create({
   prompt: "Build a polished analytics dashboard",
 });
 
+const imported = await viby.chats.import({
+  title: "Existing app",
+  source: { type: "zip", bytes: uploadedZip },
+});
+await viby.chats.versions.apply(imported.chat.id, imported.version.id, {
+  changes: [{ type: "write", path: "src/theme.css", content: theme }],
+});
+
 for await (const event of viby.generations.stream(generation.id)) {
   saveCursor(event.cursor);
   render(event);
@@ -50,7 +58,7 @@ const tools = await viby.toolSources.create({
 await viby.chats.toolSources.set(chat.id, [tools.toolSource.id]);
 ```
 
-Pass `after` to `generations.stream()` when restoring a cursor from application storage. The client sends it as `Last-Event-ID`, updates it after each event, and reconnects a prematurely closed retryable stream without replaying acknowledged events. Authentication remains host-owned: use `headers`, a header factory, or a custom `fetch` implementation to attach the product session.
+Pass `after` to `generations.stream()` when restoring a cursor from application storage. The client sends it as `Last-Event-ID`, updates it after each event, and reconnects a prematurely closed retryable stream without replaying acknowledged events. File, ZIP, and attachment bytes remain `Uint8Array` values in application code; the client owns their base64 HTTP encoding. Authentication remains host-owned: use `headers`, a header factory, or a custom `fetch` implementation to attach the product session.
 
 ## Routes
 
@@ -72,9 +80,10 @@ All paths are relative to `basePath` (default `/api/viby`).
 | `GET /chats/:chatId/{deployment-projects,deployments}` | reload durable deployment project and deployment history |
 | `GET /chats/:chatId/versions` | list immutable versions |
 | `GET /chats/:chatId/versions/:versionId` | load version metadata and entries |
+| `GET/POST /chats/:chatId/versions/:versionId/changes` | inspect or apply immutable source changes |
 | `POST /chats/:chatId/versions/:versionId/messages` | iterate from an exact version |
 | `GET /chats/:chatId/versions/:versionId/download` | download raw framework source as ZIP |
-| `POST /chats/:chatId/versions/:versionId/preview` | invoke the optional host preview handler |
+| `POST /chats/:chatId/versions/:versionId/preview` | open a configured durable preview or invoke a host override |
 | `GET /chats/:chatId/versions/:versionId/artifacts/:artifactId` | stream a binary project entry |
 | `GET /chats/:chatId/versions/:versionId/visual-artifacts[/:artifactId]` | list visual evidence or stream one screenshot |
 | `GET/POST /chats/:chatId/versions/:versionId/repository-pushes` | list version push history or push/open a PR through an integration |
@@ -112,17 +121,25 @@ Tool-source routes accept only public registration configuration. `connect` retu
 
 ## Preview boundary
 
-The API does not invent a preview URL. When `createViby()` has a durable `preview` configuration, the host callback can delegate directly to the version and return either JSON or a complete `Response`:
+The API does not invent a preview URL. When `createViby()` has a durable `preview` configuration, opt into the built-in lifecycle with `preview: true`. It reuses a ready preview for the immutable version and otherwise materializes the version, runs every configured `prepare` command, starts the server, waits for readiness, and persists the result:
 
 ```ts
+const viby = createViby({
+  framework: "farm",
+  model,
+  sandbox,
+  preview: {
+    prepare: [{ command: "pnpm", args: ["install", "--frozen-lockfile"] }],
+    start: { command: "pnpm", args: ["dev", "--host", "0.0.0.0"] },
+    port: 3000,
+  },
+});
+
 const api = createVibyApi({
   viby,
   authenticate,
-  preview: async ({ version, request }) => {
-    const preview = await version.preview({ signal: request.signal });
-    return preview.data();
-  },
+  preview: true,
 });
 ```
 
-The callback may instead reuse an existing durable preview, return a deployment result, or provide a complete product-specific `Response`. Without it, preview routes return `501 preview_not_configured`. CORS, CSRF policy, rate limits, and sessions remain application responsibilities; durable sandbox preview cleanup is available through `user.previews.cleanupExpired()`.
+Pass a callback instead when the product needs a custom cache, deployment result, or complete `Response`. Without `preview`, preview routes return `501 preview_not_configured`. CORS, CSRF policy, rate limits, and sessions remain application responsibilities; durable sandbox preview cleanup is available through `user.previews.cleanupExpired()`.

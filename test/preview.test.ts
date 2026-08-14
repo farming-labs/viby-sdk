@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { LanguageModel } from "ai";
+import { createVibyApi } from "../src/api-host.js";
 import { createVibyWithDependencies } from "../src/client.js";
 import type { GeneratorInput, GeneratorOutput, ProjectGenerator } from "../src/generator.js";
 import type {
@@ -29,6 +30,8 @@ class PreviewSandboxInstance implements SandboxInstance {
   readonly id: string;
   readonly files = new Map<string, Uint8Array>();
   readonly starts: SandboxCommand[] = [];
+  readonly runs: SandboxCommand[] = [];
+  runResult = { exitCode: 0, stdout: "", stderr: "", durationMs: 0 };
   stopCalls = 0;
 
   constructor(id: string) {
@@ -44,8 +47,9 @@ class PreviewSandboxInstance implements SandboxInstance {
     }
   }
 
-  async run() {
-    return { exitCode: 0, stdout: "", stderr: "", durationMs: 0 };
+  async run(command: SandboxCommand) {
+    this.runs.push(command);
+    return this.runResult;
   }
 
   async start(command: SandboxCommand): Promise<SandboxProcessInstance> {
@@ -84,11 +88,13 @@ class PreviewSandboxAdapter implements SandboxAdapter {
   readonly creates: SandboxCreateInput[] = [];
   readonly reconnects: SandboxReconnectInput[] = [];
   readonly instances = new Map<string, PreviewSandboxInstance>();
+  runResult = { exitCode: 0, stdout: "", stderr: "", durationMs: 0 };
   #next = 0;
 
   async create(input: SandboxCreateInput): Promise<SandboxInstance> {
     this.creates.push(input);
     const instance = new PreviewSandboxInstance(`preview-${++this.#next}`);
+    instance.runResult = this.runResult;
     this.instances.set(instance.id, instance);
     return instance;
   }
@@ -103,6 +109,7 @@ class PreviewSandboxAdapter implements SandboxAdapter {
 
 const scope = { tenantId: "preview-tenant", userId: "preview-user" };
 const defaultPreviewConfig: PreviewConfig = {
+  prepare: [{ command: "pnpm", args: ["install", "--frozen-lockfile"] }],
   start: { command: "pnpm", args: ["dev", "--host", "0.0.0.0"] },
   port: 3000,
   path: "/health",
@@ -165,6 +172,13 @@ test("starts, persists, reconnects, and stops a durable version preview", async 
     env: {},
     timeoutMs: 300_000,
   });
+  assert.deepEqual(adapter.instances.get("preview-1")?.runs[0], {
+    command: "pnpm",
+    args: ["install", "--frozen-lockfile"],
+    cwd: ".",
+    env: {},
+    timeoutMs: 300_000,
+  });
   assert.equal(
     Buffer.from(adapter.instances.get("preview-1")!.files.get("src/index.ts")!).toString(),
     "export const ready = true;\n",
@@ -186,6 +200,33 @@ test("starts, persists, reconnects, and stops a durable version preview", async 
   await first.close();
 });
 
+test("hosts configured durable previews without a product lifecycle callback", async () => {
+  const repository = new MemoryRepository();
+  const adapter = new PreviewSandboxAdapter();
+  const { viby, version } = await importVersion(repository, adapter);
+  const api = createVibyApi({
+    viby,
+    authenticate: () => scope,
+    preview: true,
+  });
+  const url = `https://app.example/api/viby/chats/${version.chatId}/versions/${version.id}/preview`;
+
+  const firstResponse = await api.fetch(new Request(url, { method: "POST" }));
+  assert.equal(firstResponse.status, 201);
+  const first = await firstResponse.json() as Record<string, unknown>;
+  assert.equal(first.url, "https://preview-1.preview.example.test:3000/health");
+  assert.equal(first.cached, false);
+
+  const secondResponse = await api.fetch(new Request(url, { method: "POST" }));
+  assert.equal(secondResponse.status, 201);
+  const second = await secondResponse.json() as Record<string, unknown>;
+  assert.equal(second.url, first.url);
+  assert.equal(second.cached, true);
+  assert.equal(adapter.creates.length, 1);
+
+  await viby.close();
+});
+
 test("requires a durable reconnect-capable sandbox for previews", async () => {
   const repository = new MemoryRepository();
   const adapter = new PreviewSandboxAdapter();
@@ -202,6 +243,27 @@ test("requires a durable reconnect-capable sandbox for previews", async () => {
   await assert.rejects(() => version.preview(), /sandbox capability reconnect/);
   assert.equal(adapter.instances.get("preview-1")?.stopCalls, 1);
   assert.equal(repository.previewSessions.size, 0);
+  await viby.close();
+});
+
+test("records preparation failures without starting the preview server", async () => {
+  const repository = new MemoryRepository();
+  const adapter = new PreviewSandboxAdapter();
+  const { viby, version } = await importVersion(repository, adapter);
+  adapter.runResult = {
+    exitCode: 1,
+    stdout: "",
+    stderr: "lockfile is stale",
+    durationMs: 1,
+  };
+
+  await assert.rejects(() => version.preview(), /could not become ready/);
+  const instance = adapter.instances.get("preview-1");
+  assert.ok(instance);
+  assert.equal(instance.starts.length, 0);
+  assert.equal(instance.stopCalls, 1);
+  const [failed] = await viby.forUser(scope).previews.list({ status: "failed" });
+  assert.match(failed?.error ?? "", /lockfile is stale/);
   await viby.close();
 });
 
