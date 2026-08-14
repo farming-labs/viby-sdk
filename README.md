@@ -4,6 +4,10 @@
 
 See the [shipped capability inventory](./docs/capabilities.md) for the complete core, adapter, integration, verification, and boundary matrix. The [Web API host guide](./docs/api-host.md) documents the ready-to-mount Request/Response surface.
 
+The documentation website is a standalone Farm application powered by the
+[`@farming-labs/farmjs`](./website/README.md) docs adapter and its shadcn theme. Run it locally with
+`npm run docs:dev`; it renders the same Markdown files shipped with the package.
+
 ## Install
 
 ```bash
@@ -146,6 +150,8 @@ await chat.toolSources.set([source.id]);
 Durable registrations are scoped to one tenant and user, selected explicitly per chat, and resolved into the same `ToolSource` interface used by static sources. They can be disabled, updated, or archived without changing generation code. The JSON `configuration` field rejects credential-like keys; authentication belongs in the separate secret-backed authorization lifecycle.
 
 When a generation is queued, Viby stores the selected registrations' public configuration as immutable `generation.configuration.toolSources` snapshots. Workers and retries use those exact revisions even if the chat selection or registration changes later. Credentials are deliberately excluded and continue to resolve through the live isolated connection, so rotation and revocation remain effective.
+
+Adapter authors can run `verifyToolSourceAdapter` from `@viby/sdk/tools/conformance` against a disposable registration. The caller supplies a harmless listed call and any fixture credential resolver; Viby checks identity, materialization, tool schemas, calls, credential isolation, JSON-safe results, and source cleanup without assuming MCP or a provider.
 
 Adapters may declare that lifecycle without exposing provider credentials to chats, messages, events, or the model:
 

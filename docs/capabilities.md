@@ -31,8 +31,8 @@ This inventory describes the current `@viby/sdk` source on `main`. “Shipped”
 | Blocking work | typed plan, question, and permission tasks with durable resolution |
 | Agent trace | started, delta, completed, and failed events on the normal generation cursor |
 | Tool records | typed arguments/results, redaction, ownership, status, and external-effect idempotency |
-| Durable tool-source registry | tenant/user-scoped provider-neutral registrations, public configuration, adapter materialization, enable/disable/archive lifecycle, explicit per-chat selection, and immutable generation-time registration snapshots |
-| Tool-source connections | adapter-owned OAuth/authorization, hashed single-use state, callback substitution protection, refresh/revoke, durable connection metadata, and isolated secret-store credentials |
+| Durable tool-source registry | tenant/user-scoped provider-neutral registrations, public configuration, adapter materialization, enable/disable/archive lifecycle, explicit per-chat selection, durable authorization connections, and immutable generation-time registration snapshots |
+| Tool-source connections | adapter-owned OAuth/authorization, hashed single-use state, callback substitution protection, refresh/revoke, durable connection metadata, isolated secret-store credentials, and a reusable provider-neutral adapter conformance suite |
 | Source import | validated UTF-8 file lists, ZIP archives, and provider-neutral source adapters |
 | Source policy | immutable locked files enforced across import, direct edits, model changes, and workspace tools |
 | Source history | immutable parent-linked versions, ordered changes, fork, restore, and message lookup |
@@ -74,7 +74,7 @@ Preview URLs exist only when the configured adapter exposes port URLs and backgr
 | Capability | Shipped surface |
 | --- | --- |
 | Inbound tools | provider-neutral sources, per-chat selection, read/write/external effects, stable idempotency, durable permission tasks, and redacted call records |
-| MCP client | Streamable HTTP and custom-transport adapter with per-chat connection isolation and credentials resolved only inside the transport factory |
+| MCP client | Streamable HTTP and custom-transport adapter with per-chat connection isolation; static headers or adapter-resolved credentials remain inside the transport factory |
 | MCP server | `registerVibyMcpTools` exposes scoped chats, generations, events, task resolution, versions, iteration, and downloads through the official MCP server SDK |
 | Outbound events | signed CloudEvents-style envelopes with stable IDs and constant-time verification |
 | Durable delivery | database claims, retry backoff, lease fencing, inspection, dead letters, and explicit redrive |
@@ -101,7 +101,7 @@ Preview URLs exist only when the configured adapter exposes port URLs and backgr
 | Deployment conformance | reusable disposable-project suite covering creation, idempotent deployment, lookup, and cancellation |
 | Included deployment adapters | Vercel external-integration authorization with source deployment and cancellation; Cloudflare OAuth with multi-account Pages discovery, Wrangler-compatible prebuilt asset uploads, durable retry recovery, status, and URLs |
 
-Product authentication, provider-app registration, redirect routes, event scheduling, and transport infrastructure remain host-owned. Viby stores tenant-scoped provider connections and delivery state but does not run a hidden queue or scheduler.
+Product authentication, provider-app registration, public callback routes, event scheduling, and transport infrastructure remain host-owned. Viby stores tenant-scoped repository, deployment, and tool-source connections plus delivery state, but does not run a hidden queue or scheduler.
 
 ## Verification and examples
 
