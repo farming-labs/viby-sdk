@@ -1,0 +1,4 @@
+interface:
+  display_name: "Svelte Framework"
+  short_description: "Generate correct Svelte applications"
+  default_prompt: "Build this project as a typed Svelte application."

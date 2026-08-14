@@ -19,7 +19,7 @@ import { createViby } from "@viby/sdk";
 import { vercel } from "@viby/sdk/integrations/vercel";
 
 const viby = createViby({
-  framework: "farm",
+  framework: "farmjs",
   model,
   integrations: {
     deployment: {

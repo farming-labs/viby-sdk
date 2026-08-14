@@ -6,7 +6,7 @@ This inventory describes the current `@viby/sdk` source on `main`. “Shipped”
 
 | Capability | Surface | Ownership |
 | --- | --- | --- |
-| Framework-neutral project target | one `framework` string, including custom values | host selects; skills and prompts teach framework behavior |
+| Framework-neutral project target | one `framework` string; typed built-ins, custom values, and automatic immutable framework skills | host selects; package skills cover common frameworks and host skills extend or define custom targets |
 | Runtime-neutral core | `@viby/sdk/core` with Web-standard contracts and helpers; Node and provider adapters use explicit subpaths | portable consumers do not load filesystem, process, crypto, migrations, Docker, or database clients |
 | Model selection | any AI SDK `LanguageModel` | host configures and owns provider credentials |
 | Generation engine | public provider-neutral engine plus conformance suite | host may replace the AI SDK shortcut with any agent, model runtime, or orchestrator |

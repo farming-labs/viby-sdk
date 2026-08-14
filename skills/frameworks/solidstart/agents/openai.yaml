@@ -1,0 +1,4 @@
+interface:
+  display_name: "SolidStart Framework"
+  short_description: "Generate correct SolidStart applications"
+  default_prompt: "Build this project using current SolidStart conventions."

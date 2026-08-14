@@ -15,7 +15,7 @@ for (const name of ["DATABASE_URL", "OPENAI_API_KEY", "E2B_API_KEY"] as const) {
   }
 }
 
-const framework = process.env.VIBY_FRAMEWORK?.trim() || "farm";
+const framework = process.env.VIBY_FRAMEWORK?.trim() || "farmjs";
 const port = Number(process.env.PORT ?? "3000");
 const previewPort = 4173;
 const skillDirectory = fileURLToPath(new URL("../skills/design", import.meta.url));

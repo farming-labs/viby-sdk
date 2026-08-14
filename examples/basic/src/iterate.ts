@@ -17,7 +17,7 @@ for (const [name, value] of Object.entries({
 
 const skillDirectory = fileURLToPath(new URL("../skills/product", import.meta.url));
 const viby = createViby({
-  framework: "farm",
+  framework: "farmjs",
   model: openai(process.env.OPENAI_MODEL ?? "gpt-5.6-sol"),
   skills: { product: [skillRead(skillDirectory)] },
 });

@@ -22,12 +22,9 @@ import type { EnvironmentConfig } from "./environment.js";
 import type { ToolSourcesConfig, ToolSourceProposedAction } from "./tool-source.js";
 import type { ToolSourceRegistrationSnapshot } from "./tool-source-registry.js";
 import type { PreviewConfig } from "./preview.js";
+import type { FrameworkId } from "./frameworks.js";
 
-export type FrameworkId =
-  | "farm"
-  | "tanstack-start"
-  | "next"
-  | (string & {});
+export type { BuiltInFrameworkId, FrameworkId } from "./frameworks.js";
 
 export type BuiltInSkillCategory =
   | "core"

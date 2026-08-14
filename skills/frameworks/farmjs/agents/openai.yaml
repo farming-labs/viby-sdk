@@ -1,0 +1,4 @@
+interface:
+  display_name: "Farm.js Framework"
+  short_description: "Generate correct Farm.js applications"
+  default_prompt: "Build this project using Farm.js conventions and preserve its framework contract."

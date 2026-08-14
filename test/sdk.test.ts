@@ -3,6 +3,7 @@ import { test } from "node:test";
 import type { LanguageModel, LanguageModelUsage } from "ai";
 import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
 import { createVibyWithDependencies } from "../src/client.js";
+import { frameworkSkill } from "../src/framework-skills.js";
 import { AgentWorkspace } from "../src/agent-workspace.js";
 import type {
   GeneratorInput,
@@ -163,7 +164,7 @@ test("persists generation-scoped model, instructions, skills, and metadata acros
     model: "visual",
     instructions: "Use the supplied design direction without changing frameworks.",
     skills: {
-      core: [],
+      core: [frameworkSkill("farmjs")],
       design: [{ source: "file", path: "test/fixtures/skills/request-design" }],
     },
     metadata: { experiment: "visual-a", priority: 2 },
@@ -182,7 +183,10 @@ test("persists generation-scoped model, instructions, skills, and metadata acros
   assert.equal(visual.calls.length, 1);
   assert.equal(visual.calls[0]?.instructions, queued.configuration.instructions);
   assert.deepEqual(visual.calls[0]?.metadata, queued.configuration.metadata);
-  assert.deepEqual(visual.calls[0]?.skills.map((skill) => skill.name), ["request-design"]);
+  assert.deepEqual(visual.calls[0]?.skills.map((skill) => skill.name), [
+    "viby-framework-farmjs",
+    "request-design",
+  ]);
 });
 
 test("snapshots multimodal attachments and loads bytes only through explicit scoped access", async () => {

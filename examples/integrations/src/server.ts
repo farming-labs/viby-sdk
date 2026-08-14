@@ -28,7 +28,7 @@ const repository = githubClientSecret
   : undefined;
 
 const viby = createViby({
-  framework: "farm",
+  framework: "farmjs",
   model: openai(process.env.OPENAI_MODEL?.trim() || "gpt-4.1-mini"),
   integrations: {
     ...(repository ? { repository } : {}),
@@ -188,7 +188,7 @@ async function connect(
   redirect(response, withNotice("/", `${integrationId} is already connected.`));
 }
 
-async function fixtureVersion(): Promise<Version<"farm">> {
+async function fixtureVersion(): Promise<Version<"farmjs">> {
   const existing = await user.chats.list({
     limit: 1,
     metadata: { example: "real-integration-fixture-v2" },

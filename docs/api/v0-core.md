@@ -157,7 +157,7 @@ Every portable parity feature follows these rules:
 5. Exact resolved skills are content-addressed and linked to the generation that used them.
 6. Model, sandbox, and tool credentials never enter ordinary Viby records. Integration credentials and project secret values exist only through the explicit secret-store boundary; the PostgreSQL reference encrypts them with a caller-owned key and ordinary records retain only opaque references.
 7. Provider-specific capabilities are discovered explicitly and never inferred from a provider name.
-8. Framework behavior comes from source and skills, not a hard-coded framework registry.
+8. Framework behavior comes from source and immutable skills. The built-in ID list provides autocomplete and package-owned defaults without preventing custom framework strings.
 
 ## Audited official sources
 

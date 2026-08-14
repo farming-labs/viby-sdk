@@ -15,7 +15,7 @@ const skillDirectory = fileURLToPath(new URL("../skills/product", import.meta.ur
 const outputDirectory = resolve(process.env.VIBY_OUTPUT_DIR ?? "./output");
 
 const viby = createViby({
-  framework: "farm",
+  framework: "farmjs",
   model: openai(process.env.OPENAI_MODEL ?? "gpt-5.6-sol"),
   skills: {
     product: [skillRead(skillDirectory)],

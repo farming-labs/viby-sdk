@@ -262,7 +262,7 @@ import { cloudflare } from "@viby/sdk/integrations/cloudflare";
 import { vercel } from "@viby/sdk/integrations/vercel";
 
 export const viby = createViby({
-  framework: "farm",
+  framework: "farmjs",
   model: openai(env.OPENAI_MODEL),
   integrations: {
     repository: {

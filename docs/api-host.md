@@ -24,7 +24,7 @@ The host owns authentication. Returning `null` produces a JSON `401`; returning 
 ```ts
 import { createVibyWebClient } from "@viby/sdk/core";
 
-const viby = createVibyWebClient<"farm">({
+const viby = createVibyWebClient<"farmjs">({
   baseUrl: "/api/viby",
   fetch: authenticatedFetch,
 });
@@ -125,7 +125,7 @@ The API does not invent a preview URL. When `createViby()` has a durable `previe
 
 ```ts
 const viby = createViby({
-  framework: "farm",
+  framework: "farmjs",
   model,
   sandbox,
   preview: {

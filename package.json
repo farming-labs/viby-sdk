@@ -25,6 +25,7 @@
   "files": [
     "dist",
     "docs",
+    "skills",
     "migrations",
     "README.md",
     "RELEASING.md",
@@ -177,7 +178,9 @@
     "viby": "dist/cli.js"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "frameworks:generate": "node scripts/generate-framework-skills.mjs",
+    "frameworks:check": "node scripts/generate-framework-skills.mjs --check",
+    "build": "npm run frameworks:check && tsc -p tsconfig.build.json",
     "docs:build": "npm --prefix website run build",
     "docs:dev": "npm --prefix website run dev --",
     "docs:install": "npm ci --prefix website",

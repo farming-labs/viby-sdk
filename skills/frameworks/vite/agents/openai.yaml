@@ -1,0 +1,4 @@
+interface:
+  display_name: "Vite Framework"
+  short_description: "Generate correct Vite applications"
+  default_prompt: "Build this project using a minimal typed Vite structure."
