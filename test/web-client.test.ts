@@ -242,6 +242,23 @@ test("reconnects an interrupted SSE stream from its last durable cursor", async 
   assert.deepEqual(requests, [null, "1"]);
 });
 
+test("binds the default fetch implementation to the Web global", async () => {
+  const originalFetch = globalThis.fetch;
+  let receiver: unknown;
+  globalThis.fetch = function (this: unknown) {
+    receiver = this;
+    return Promise.resolve(Response.json({ chats: [], nextCursor: null }));
+  } as typeof globalThis.fetch;
+
+  try {
+    const client = createVibyWebClient({ baseUrl: "https://app.example/api/viby" });
+    await client.chats.list();
+    assert.equal(receiver, globalThis);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("returns typed API errors without retrying authorization failures", async () => {
   const client = createVibyWebClient({
     baseUrl: "https://app.example/api/viby",
