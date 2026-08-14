@@ -12,6 +12,15 @@ import type {
   ToolSourceContext,
 } from "./tool-source.js";
 import type { FrameworkId, JsonValue, ToolCallEffect } from "./types.js";
+import {
+  defineToolSourceAdapter,
+  type ToolSourceAdapter,
+  type ToolSourceRegistrationData,
+} from "./tool-source-registry.js";
+import type {
+  ToolSourceAuthorizationAdapter,
+  ToolSourceCredentialContext,
+} from "./tool-source-authorization.js";
 
 export interface McpClientConnection {
   listTools(): Promise<{ readonly tools: readonly McpTool[] }>;
@@ -33,6 +42,40 @@ export interface McpToolSourceOptions<Framework extends FrameworkId = FrameworkI
   /** Custom connection factory for non-HTTP transports and tests. */
   readonly connect?: (
     context: ToolSourceContext<Framework>,
+  ) => McpClientConnection | Promise<McpClientConnection>;
+  readonly effect?: ToolCallEffect | ((tool: McpTool) => ToolCallEffect);
+  readonly permissions?: (tool: McpTool) => readonly string[];
+}
+
+export interface McpAdapterConnectionInput<Framework extends FrameworkId = FrameworkId> {
+  readonly source: ToolSourceRegistrationData;
+  readonly context: ToolSourceContext<Framework>;
+  readonly credential?: (signal?: AbortSignal) => Promise<ToolSourceCredentialContext>;
+}
+
+export interface McpAdapterHeaderInput<Framework extends FrameworkId = FrameworkId>
+extends McpAdapterConnectionInput<Framework> {
+  readonly signal?: AbortSignal;
+}
+
+export interface McpToolSourceAdapterOptions<Framework extends FrameworkId = FrameworkId> {
+  /** Durable registration type. Defaults to `mcp`. */
+  readonly type?: string;
+  /** Optional provider-neutral OAuth/authorization lifecycle. */
+  readonly authorization?: ToolSourceAuthorizationAdapter;
+  /** Resolve public registration configuration to an MCP URL. Defaults to `configuration.url`. */
+  readonly url?: (source: ToolSourceRegistrationData) => string | URL;
+  /**
+   * Request headers resolved inside the transport boundary. Authorized adapters
+   * default to a live bearer credential when this callback is omitted.
+   */
+  readonly headers?: (
+    input: McpAdapterHeaderInput<Framework>,
+  ) => HeadersInit | Promise<HeadersInit>;
+  readonly fetch?: typeof globalThis.fetch;
+  /** Custom connection factory for non-HTTP transports and deterministic tests. */
+  readonly connect?: (
+    input: McpAdapterConnectionInput<Framework>,
   ) => McpClientConnection | Promise<McpClientConnection>;
   readonly effect?: ToolCallEffect | ((tool: McpTool) => ToolCallEffect);
   readonly permissions?: (tool: McpTool) => readonly string[];
@@ -86,21 +129,121 @@ export function mcp<Framework extends FrameworkId = FrameworkId>(
 
 export const mcpToolSource = mcp;
 
+/** Materializes durable registrations as per-chat MCP tool sources. */
+export function mcpAdapter<Framework extends FrameworkId = FrameworkId>(
+  options: McpToolSourceAdapterOptions<Framework> = {},
+): ToolSourceAdapter<Framework> {
+  if (!options || typeof options !== "object") {
+    throw new ConfigurationError("MCP adapter options must be an object.");
+  }
+  if (options.url && options.connect) {
+    throw new ConfigurationError("A durable MCP adapter cannot configure both url and connect.");
+  }
+  const type = options.type ?? "mcp";
+  return defineToolSourceAdapter({
+    type,
+    ...(options.authorization ? { authorization: options.authorization } : {}),
+    open({ source, credential }) {
+      if (options.connect) {
+        return mcp({
+          id: source.id,
+          connect: (context) => options.connect!({ source, context, ...(credential ? { credential } : {}) }),
+          ...(options.effect ? { effect: options.effect } : {}),
+          ...(options.permissions ? { permissions: options.permissions } : {}),
+        });
+      }
+      const url = options.url?.(source) ?? registeredMcpUrl(source);
+      return mcp({
+        id: source.id,
+        url,
+        headers: (context) => registeredMcpHeaders(options, source, context, credential),
+        ...(options.fetch ? { fetch: options.fetch } : {}),
+        ...(options.effect ? { effect: options.effect } : {}),
+        ...(options.permissions ? { permissions: options.permissions } : {}),
+      });
+    },
+  });
+}
+
+export const durableMcp = mcpAdapter;
+
 async function openConnection<Framework extends FrameworkId>(
   options: McpToolSourceOptions<Framework>,
   context: ToolSourceContext<Framework>,
 ): Promise<McpClientConnection> {
   if (options.connect) return options.connect(context);
-  const headers = typeof options.headers === "function"
-    ? await options.headers(context)
-    : options.headers;
+  let dynamicHeaders: ((context: ToolSourceContext<Framework>) => (
+    HeadersInit | Promise<HeadersInit>
+  )) | undefined;
+  let headers: HeadersInit | undefined;
+  if (typeof options.headers === "function") dynamicHeaders = options.headers;
+  else headers = options.headers;
+  const fetch_ = dynamicHeaders
+    ? async (input: RequestInfo | URL, init?: RequestInit) => {
+      const resolved = await dynamicHeaders(context);
+      const requestHeaders = new Headers(init?.headers);
+      new Headers(resolved).forEach((value, name) => requestHeaders.set(name, value));
+      return (options.fetch ?? globalThis.fetch)(input, { ...init, headers: requestHeaders });
+    }
+    : options.fetch;
   const client = new Client({ name: "@viby/sdk", version: "1" });
   const transport = new StreamableHTTPClientTransport(new URL(options.url!), {
     ...(headers ? { requestInit: { headers } } : {}),
-    ...(options.fetch ? { fetch: options.fetch } : {}),
+    ...(fetch_ ? { fetch: fetch_ } : {}),
   });
   await client.connect(transport);
   return client;
+}
+
+function registeredMcpUrl(source: ToolSourceRegistrationData): string {
+  const value = source.configuration.url;
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new ConfigurationError(
+      `Durable MCP source ${source.id} requires a public configuration.url.`,
+    );
+  }
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch (error) {
+    throw new ConfigurationError(`Durable MCP source ${source.id} has an invalid URL.`, {
+      cause: error,
+    });
+  }
+  if (url.protocol !== "https:" && !isLoopbackHttp(url)) {
+    throw new ConfigurationError(
+      `Durable MCP source ${source.id} must use HTTPS (HTTP is allowed only for loopback).`,
+    );
+  }
+  url.hash = "";
+  return url.toString();
+}
+
+async function registeredMcpHeaders<Framework extends FrameworkId>(
+  options: McpToolSourceAdapterOptions<Framework>,
+  source: ToolSourceRegistrationData,
+  context: ToolSourceContext<Framework>,
+  credential: ((signal?: AbortSignal) => Promise<ToolSourceCredentialContext>) | undefined,
+): Promise<HeadersInit> {
+  if (options.headers) {
+    return options.headers({
+      source,
+      context,
+      ...(credential ? { credential } : {}),
+      ...(context.signal ? { signal: context.signal } : {}),
+    });
+  }
+  if (!options.authorization) return {};
+  if (!credential) {
+    throw new ConfigurationError(`Authorized MCP adapter ${options.type ?? "mcp"} has no credential resolver.`);
+  }
+  const resolved = await credential(context.signal);
+  return { Authorization: `Bearer ${new TextDecoder().decode(resolved.credential)}` };
+}
+
+function isLoopbackHttp(url: URL): boolean {
+  return url.protocol === "http:"
+    && (url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "[::1]");
 }
 
 function normalizeTool<Framework extends FrameworkId>(
