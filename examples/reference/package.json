@@ -12,8 +12,11 @@
   },
   "dependencies": {
     "@ai-sdk/openai": "^4.0.30",
+    "@modelcontextprotocol/client": "^2.0.0",
+    "@modelcontextprotocol/server": "^2.0.0",
     "@viby/sdk": "file:../..",
-    "e2b": "^2.38.2"
+    "e2b": "^2.38.2",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/node": "^26.1.2",

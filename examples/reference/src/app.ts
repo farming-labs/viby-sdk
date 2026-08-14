@@ -30,6 +30,8 @@ export interface ReferenceAppOptions<Framework extends FrameworkId> {
   readonly scope: UserScope;
   readonly assets?: Readonly<Record<string, ReferenceAsset>>;
   readonly preview?: ReferencePreviewRecipe;
+  /** Durable registrations selected automatically for each new chat. */
+  readonly defaultToolSourceIds?: readonly string[];
 }
 
 export interface ReferenceApp {
@@ -86,9 +88,75 @@ export function createReferenceApp<Framework extends FrameworkId>(
           });
         }
       }
+      if (request.method === "POST" && url.pathname === "/api/chats"
+        && options.defaultToolSourceIds?.length) {
+        return createChatWithTools(api, request, options.defaultToolSourceIds);
+      }
       return api.fetch(request);
     },
   };
+}
+
+async function createChatWithTools(
+  api: ReturnType<typeof createVibyApi>,
+  request: Request,
+  sourceIds: readonly string[],
+): Promise<Response> {
+  let body: Record<string, unknown>;
+  try {
+    const value = await request.clone().json();
+    if (!value || typeof value !== "object" || Array.isArray(value)) return api.fetch(request);
+    body = value as Record<string, unknown>;
+  } catch {
+    return api.fetch(request);
+  }
+  const created = await api.fetch(new Request(request.url, {
+    method: "POST",
+    headers: forwardedJsonHeaders(request.headers),
+    body: JSON.stringify({
+      ...(body.title === undefined ? {} : { title: body.title }),
+      ...(body.metadata === undefined ? {} : { metadata: body.metadata }),
+    }),
+    signal: request.signal,
+  }));
+  if (!created.ok) return created;
+  const payload = await created.json() as { readonly chat: { readonly id: string } };
+  const selection = await api.fetch(new Request(
+    `${new URL(request.url).origin}/api/chats/${encodeURIComponent(payload.chat.id)}/tool-sources`,
+    {
+      method: "PUT",
+      headers: forwardedJsonHeaders(request.headers),
+      body: JSON.stringify({ sourceIds }),
+      signal: request.signal,
+    },
+  ));
+  if (!selection.ok) return selection;
+  const selected = await selection.json() as { readonly toolSources: readonly unknown[] };
+  if (body.prompt === undefined) {
+    return Response.json({ ...payload, toolSources: selected.toolSources }, { status: 201 });
+  }
+  const generation = await api.fetch(new Request(
+    `${new URL(request.url).origin}/api/chats/${encodeURIComponent(payload.chat.id)}/messages`,
+    {
+      method: "POST",
+      headers: forwardedJsonHeaders(request.headers),
+      body: JSON.stringify(body),
+      signal: request.signal,
+    },
+  ));
+  if (!generation.ok) return generation;
+  return Response.json({
+    chat: payload.chat,
+    toolSources: selected.toolSources,
+    generation: (await generation.json() as { readonly generation: unknown }).generation,
+  }, { status: 201 });
+}
+
+function forwardedJsonHeaders(input: Headers): Headers {
+  const headers = new Headers(input);
+  headers.delete("content-length");
+  headers.set("content-type", "application/json");
+  return headers;
 }
 
 async function startPreview<Framework extends FrameworkId>(
