@@ -158,11 +158,37 @@ svg {
   text-wrap: balance;
 }
 
+.hero-install {
+  display: flex;
+  width: fit-content;
+  min-height: 40px;
+  align-items: center;
+  gap: 0.625rem;
+  margin-top: 1.5rem;
+  border: 1px solid var(--landing-border);
+  border-radius: 7px;
+  background: rgb(255 255 255 / 0.035);
+  padding: 0 0.875rem;
+  color: var(--landing-fg);
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+  line-height: 1;
+}
+
+.hero-install > span {
+  color: var(--landing-fg-3);
+  user-select: none;
+}
+
+.hero-install code {
+  font: inherit;
+}
+
 .hero-actions {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  margin-top: 2rem;
+  margin-top: 0.75rem;
 }
 
 .hero-button {
@@ -205,7 +231,7 @@ svg {
 
 .stage-wrap {
   width: min(100%, 1320px);
-  margin: 5rem auto 0;
+  margin: 3.5rem auto 0;
   overflow: hidden;
 }
 
@@ -773,11 +799,11 @@ html.dark #nd-docs-layout[data-fd-framework] figure.shiki {
   }
 
   .hero-actions {
-    margin-top: 1.5rem;
+    margin-top: 0.75rem;
   }
 
   .stage-wrap {
-    margin-top: 3rem;
+    margin-top: 2.5rem;
     padding-inline: 16px;
   }
 

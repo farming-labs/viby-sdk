@@ -121,9 +121,13 @@ export default function HomePage() {
         <div className="hero-copy">
           <h1 id="hero-title">viby.</h1>
           <p>
-            Infrastructure for persistent, skill-guided vibe coding products. Powered by your
+            The infrastructure SDK for persistent, skill-guided vibe coding products. Bring your
             framework, model, storage, and runtime.
           </p>
+          <div className="hero-install" aria-label="Install @viby/sdk with pnpm">
+            <span aria-hidden="true">$</span>
+            <code>pnpm add @viby/sdk</code>
+          </div>
           <div className="hero-actions">
             <a className="hero-button hero-button-primary" href="/docs">
               Read the docs
