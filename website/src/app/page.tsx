@@ -1,29 +1,3 @@
-const signalClusters = [
-  { x: 156, y: 185 },
-  { x: 270, y: 164 },
-  { x: 458, y: 144 },
-  { x: 505, y: 170 },
-  { x: 617, y: 222 },
-  { x: 784, y: 282 },
-  { x: 866, y: 186 },
-  { x: 873, y: 363 },
-];
-
-const clusterPixels = [
-  [0, 0],
-  [10, 0],
-  [20, 0],
-  [-10, 10],
-  [0, 10],
-  [10, 10],
-  [20, 10],
-  [30, 10],
-  [0, 20],
-  [10, 20],
-  [20, 20],
-  [10, 30],
-];
-
 function ArrowIcon() {
   return (
     <svg aria-hidden="true" fill="none" viewBox="0 0 16 16">
@@ -45,64 +19,218 @@ function GitHubIcon() {
   );
 }
 
-function PixelNetwork() {
+function SparkIcon() {
   return (
-    <div className="network-visual" aria-hidden="true">
-      <div className="network-label">
-        <span>Generation network</span>
-        <span className="network-live"><i /> live</span>
+    <svg aria-hidden="true" fill="none" viewBox="0 0 16 16">
+      <path
+        d="M8 1.5c.3 3.8 2.2 5.7 6 6-3.8.3-5.7 2.2-6 6-.3-3.8-2.2-5.7-6-6 3.8-.3 5.7-2.2 6-6Z"
+        fill="currentColor"
+      />
+    </svg>
+  );
+}
+
+function BrandMark() {
+  return (
+    <span className="brand-mark" aria-hidden="true">
+      <span />
+    </span>
+  );
+}
+
+function ProductStage() {
+  return (
+    <div className="product-stage" aria-label="Viby generation workspace preview">
+      <div className="product-window">
+        <div className="product-bar">
+          <div className="product-brand">
+            <BrandMark />
+            <span>viby</span>
+          </div>
+          <div className="project-path">
+            <span>farming-labs</span>
+            <span aria-hidden="true">/</span>
+            <strong>analytics-studio</strong>
+          </div>
+          <div className="run-status">
+            <i aria-hidden="true" />
+            Running
+          </div>
+        </div>
+
+        <div className="product-body">
+          <aside className="version-rail" aria-label="Project versions">
+            <div className="version-heading">
+              <span>Versions</span>
+              <span className="mock-icon" aria-hidden="true">+</span>
+            </div>
+
+            <div className="version-list">
+              <div className="version-item version-item-active">
+                <span className="version-number">v3</span>
+                <span>
+                  <strong>Refine revenue chart</strong>
+                  <small>Generating now</small>
+                </span>
+              </div>
+              <div className="version-item">
+                <span className="version-number">v2</span>
+                <span>
+                  <strong>Add date filters</strong>
+                  <small>2 min ago</small>
+                </span>
+              </div>
+              <div className="version-item">
+                <span className="version-number">v1</span>
+                <span>
+                  <strong>Initial dashboard</strong>
+                  <small>8 min ago</small>
+                </span>
+              </div>
+            </div>
+
+            <div className="version-footer">
+              <span className="avatar">FL</span>
+              <span>
+                <strong>Farming Labs</strong>
+                <small>Postgres connected</small>
+              </span>
+            </div>
+          </aside>
+
+          <section className="generation-pane" aria-label="Generation conversation">
+            <div className="pane-heading">
+              <div>
+                <span className="eyebrow">Generation</span>
+                <strong>Refine revenue chart</strong>
+              </div>
+              <span className="attempt-pill">Attempt 2</span>
+            </div>
+
+            <div className="conversation">
+              <div className="user-message">
+                Make the revenue trend easier to compare, add a range filter, and keep the current
+                visual language.
+              </div>
+
+              <div className="assistant-message">
+                <span className="assistant-mark"><SparkIcon /></span>
+                <div>
+                  <div className="assistant-status">
+                    <strong>Implementing your changes</strong>
+                    <span><i aria-hidden="true" /> Live</span>
+                  </div>
+                  <p>
+                    I’m updating the chart interaction and preserving the existing tokens and
+                    component structure.
+                  </p>
+                  <div className="work-log">
+                    <span><i className="work-done" aria-hidden="true">✓</i> Read design system</span>
+                    <span><i className="work-done" aria-hidden="true">✓</i> Updated chart data</span>
+                    <span><i className="work-active" aria-hidden="true" /> Editing dashboard.tsx</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="changed-files">
+              <span>Changed files</span>
+              <div>
+                <code>src/dashboard.tsx</code>
+                <code>src/chart.tsx</code>
+                <code>src/styles.css</code>
+              </div>
+            </div>
+
+            <div className="prompt-box">
+              <span>Ask Viby to change anything…</span>
+              <span className="mock-submit" aria-hidden="true"><ArrowIcon /></span>
+            </div>
+          </section>
+
+          <section className="preview-pane" aria-label="Generated application preview">
+            <div className="preview-bar">
+              <span>Preview</span>
+              <div>
+                <i aria-hidden="true" />
+                <i aria-hidden="true" />
+                <i aria-hidden="true" />
+              </div>
+            </div>
+
+            <div className="dashboard-preview">
+              <div className="dashboard-nav">
+                <span className="dashboard-logo">Northstar</span>
+                <span>Overview</span>
+                <span>Reports</span>
+                <span>Customers</span>
+                <i aria-hidden="true" />
+              </div>
+
+              <div className="dashboard-content">
+                <div className="dashboard-header">
+                  <div>
+                    <span>Overview</span>
+                    <strong>Revenue performance</strong>
+                  </div>
+                  <span className="mock-filter">Last 30 days <span>⌄</span></span>
+                </div>
+
+                <div className="metric-row">
+                  <div className="metric-card metric-card-primary">
+                    <span>Revenue</span>
+                    <strong>$184,240</strong>
+                    <small>↗ 12.8%</small>
+                  </div>
+                  <div className="metric-card">
+                    <span>Customers</span>
+                    <strong>2,408</strong>
+                    <small>↗ 8.4%</small>
+                  </div>
+                  <div className="metric-card">
+                    <span>Conversion</span>
+                    <strong>4.82%</strong>
+                    <small>↗ 0.6%</small>
+                  </div>
+                </div>
+
+                <div className="chart-card">
+                  <div className="chart-heading">
+                    <div>
+                      <span>Total revenue</span>
+                      <strong>$184.2k</strong>
+                    </div>
+                    <div className="chart-legend"><i /> This period</div>
+                  </div>
+                  <svg className="revenue-chart" viewBox="0 0 520 190" role="img" aria-label="Revenue increasing over the last 30 days">
+                    <defs>
+                      <linearGradient id="chart-fill" x1="0" x2="0" y1="0" y2="1">
+                        <stop offset="0" stopColor="#191919" stopOpacity="0.15" />
+                        <stop offset="1" stopColor="#191919" stopOpacity="0" />
+                      </linearGradient>
+                    </defs>
+                    <g className="chart-grid">
+                      <path d="M0 22H520M0 70H520M0 118H520M0 166H520" />
+                    </g>
+                    <path className="chart-area" d="M0 148C43 139 55 114 91 123s55 15 82-7 48-48 83-35 55 38 88 15 45-69 81-55 59 19 95-16v165H0Z" />
+                    <path className="chart-line" d="M0 148C43 139 55 114 91 123s55 15 82-7 48-48 83-35 55 38 88 15 45-69 81-55 59 19 95-16" />
+                    <circle cx="425" cy="41" r="5" />
+                  </svg>
+                  <div className="chart-labels">
+                    <span>Aug 01</span><span>Aug 08</span><span>Aug 15</span><span>Aug 22</span><span>Aug 30</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+        </div>
       </div>
 
-      <svg className="network-map" viewBox="0 0 1000 470" role="presentation">
-        <defs>
-          <pattern id="world-pixels" width="10" height="10" patternUnits="userSpaceOnUse">
-            <rect x="3.2" y="3.2" width="3.4" height="3.4" fill="currentColor" />
-          </pattern>
-          <linearGradient id="route-fade" x1="0" x2="1">
-            <stop offset="0" stopColor="white" stopOpacity="0" />
-            <stop offset="0.48" stopColor="white" stopOpacity="0.24" />
-            <stop offset="1" stopColor="white" stopOpacity="0" />
-          </linearGradient>
-        </defs>
-
-        <g className="world-shape">
-          <path d="M47 111 77 82l48-15 53 10 21 25 39 8 20 28-17 21-32-5-12 19 20 20-19 25-36-8-18 15-29-21-25 4-10-29-25-10-19-34Z" />
-          <path d="m230 233 43-12 41 20 17 40-13 36 4 31-18 34-15 46-18-14-4-39-21-28-9-36-24-31Z" />
-          <path d="m420 106 31-22 43 1 20 16 37-7 25 18 52-10 43 15 58-15 62 21 53-1 43 24-15 24 30 18-15 29-48-5-17 24-32-9-32 15-31-13-28 11-29-28-33-10-28 18-27-8-12-25-29-2-24-26-41 2-32-19-29-6-9-21 28-18Z" />
-          <path d="m478 205 47-12 39 20 22 39-8 34-26 26-9 44-26 28-24-29 1-37-24-24-8-38Z" />
-          <path d="m825 319 34-20 46 7 31 29-4 34-31 20-43-8-22-27Z" />
-          <path d="m907 205 17-11 22 7 7 17-19 10-20-8Z" />
-        </g>
-
-        <g className="network-routes">
-          <path d="M166 195C282 88 384 104 468 154" />
-          <path d="M280 174C388 248 493 249 627 232" />
-          <path d="M515 180C646 106 760 122 876 196" />
-          <path d="M627 232C720 221 750 249 794 292" />
-          <path d="M794 292C830 315 851 338 883 373" />
-        </g>
-
-        <g className="network-signal">
-          {signalClusters.flatMap((cluster, clusterIndex) =>
-            clusterPixels.map(([offsetX, offsetY], pixelIndex) => (
-              <rect
-                className={`signal-pixel signal-delay-${(clusterIndex + pixelIndex) % 5}`}
-                height="5"
-                key={`${clusterIndex}-${pixelIndex}`}
-                width="5"
-                x={cluster.x + offsetX}
-                y={cluster.y + offsetY}
-              />
-            )),
-          )}
-        </g>
-      </svg>
-
-      <div className="network-caption">
-        <span>Frameworks</span>
-        <span>Models</span>
-        <span>Runtimes</span>
-        <span>Providers</span>
+      <div className="capability-rail" aria-label="Core Viby capabilities">
+        <span>Durable runs</span>
+        <span>Immutable versions</span>
+        <span>Any framework</span>
+        <span>Your infrastructure</span>
       </div>
     </div>
   );
@@ -111,54 +239,51 @@ function PixelNetwork() {
 export default function HomePage() {
   return (
     <main className="landing-shell">
-      <section className="landing-hero" aria-labelledby="hero-title">
-        <PixelNetwork />
+      <div className="landing-frame">
+        <nav className="site-nav" aria-label="Main navigation">
+          <a className="site-brand" href="/" aria-label="Viby home">
+            <BrandMark />
+            <span>viby</span>
+          </a>
 
-        <div className="hero-status">
-          <span aria-hidden="true" />
-          Open source / provider neutral
-        </div>
+          <div className="site-links">
+            <a href="/docs">Docs</a>
+            <a href="/docs/api/v1">API</a>
+            <a href="https://github.com/farming-labs/viby-sdk">GitHub</a>
+          </div>
 
-        <div className="hero-copy">
-          <p className="hero-kicker">Open source TypeScript SDK</p>
-          <h1 id="hero-title">Build vibe coding products.</h1>
-          <p className="hero-description">
-            Turn conversations into working software while keeping control of your framework,
-            model, storage, and runtime.
-          </p>
+          <a className="nav-cta" href="/docs">
+            Get started <ArrowIcon />
+          </a>
+        </nav>
 
-          <div className="hero-actions">
-            <a className="hero-button hero-button-primary" href="/docs">
-              Start building <ArrowIcon />
-            </a>
-            <a
-              className="hero-button hero-button-secondary"
-              href="https://github.com/farming-labs/viby-sdk"
-            >
-              <GitHubIcon /> View source
-            </a>
-          </div>
-        </div>
+        <section className="landing-hero" aria-labelledby="hero-title">
+          <div className="hero-copy">
+            <p className="hero-kicker"><span aria-hidden="true" /> Open-source infrastructure for coding products</p>
+            <h1 id="hero-title">Build the coding product.<br /><span>Keep the stack.</span></h1>
+            <p className="hero-description">
+              Durable generation, source history, sandboxes, and previews—without giving up your
+              framework, model, storage, or runtime.
+            </p>
 
-        <div className="hero-rail">
-          <div className="install-command" aria-label="Install Viby with npm">
-            <span>Install</span>
-            <code>npm i @viby/sdk ai</code>
+            <div className="hero-actions">
+              <a className="hero-button hero-button-primary" href="/docs">
+                Read the docs <ArrowIcon />
+              </a>
+              <a className="hero-button hero-button-secondary" href="https://github.com/farming-labs/viby-sdk">
+                <GitHubIcon /> View on GitHub
+              </a>
+            </div>
+
+            <div className="install-command" aria-label="Install Viby with npm">
+              <span aria-hidden="true">$</span>
+              <code>npm i @viby/sdk ai</code>
+            </div>
           </div>
-          <div className="rail-item">
-            <strong>01</strong>
-            <span>Durable runs</span>
-          </div>
-          <div className="rail-item">
-            <strong>02</strong>
-            <span>Immutable source</span>
-          </div>
-          <div className="rail-item">
-            <strong>03</strong>
-            <span>Portable adapters</span>
-          </div>
-        </div>
-      </section>
+
+          <ProductStage />
+        </section>
+      </div>
     </main>
   );
 }
