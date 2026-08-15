@@ -196,11 +196,6 @@ svg {
   color: #fff;
 }
 
-.button-mark {
-  font-size: 0.88rem;
-  line-height: 1;
-}
-
 .stage-wrap {
   width: min(100%, 1320px);
   margin: 5rem auto 0;

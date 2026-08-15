@@ -126,7 +126,6 @@ export default function HomePage() {
           </p>
           <div className="hero-actions">
             <a className="hero-button hero-button-primary" href="/docs">
-              <span aria-hidden="true" className="button-mark">▲</span>
               Read the docs
             </a>
             <a
