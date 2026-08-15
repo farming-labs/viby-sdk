@@ -114,7 +114,10 @@ export default function HomePage() {
       <div className="landing-rails" aria-hidden="true"><span /></div>
 
       <header className="landing-header">
-        <div><VibyLogo /></div>
+        <div>
+          <VibyLogo />
+          <a className="header-docs" href="/docs">Docs</a>
+        </div>
       </header>
 
       <section className="landing-hero" aria-labelledby="hero-title">
