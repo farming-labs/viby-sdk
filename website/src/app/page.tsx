@@ -8,9 +8,9 @@ function GitHubIcon() {
 
 function VibyLogo() {
   return (
-    <span className="viby-logo" aria-label="Viby">
+    <span className="viby-logo" aria-label="viby">
       <span className="terminal-glyph" aria-hidden="true">›_</span>
-      <span>Viby</span>
+      <span className="viby-wordmark">viby</span>
     </span>
   );
 }
@@ -34,7 +34,7 @@ function FileBadges() {
 
 function AppMockup() {
   return (
-    <div className="app-mockup" aria-label="Viby generation workspace preview">
+    <div className="app-mockup" aria-label="viby generation workspace preview">
       <div className="mock-titlebar">
         <div className="mock-project">
           <span className="window-dots" aria-hidden="true"><i /><i /><i /></span>
@@ -119,7 +119,7 @@ export default function HomePage() {
 
       <section className="landing-hero" aria-labelledby="hero-title">
         <div className="hero-copy">
-          <h1 id="hero-title">Viby.</h1>
+          <h1 id="hero-title">viby.</h1>
           <p>
             Infrastructure for persistent, skill-guided vibe coding products. Powered by your
             framework, model, storage, and runtime.

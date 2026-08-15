@@ -1,10 +1,12 @@
 @import "@fontsource-variable/geist/wght.css";
 @import "@fontsource-variable/geist-mono/wght.css";
+@import "@fontsource/geist-pixel/latin-400.css";
 @import "@farming-labs/theme/shadcn/css";
 
 :root {
   --font-sans: "Geist Variable", "Geist", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "Geist Mono Variable", "Geist Mono", ui-monospace, SFMono-Regular, monospace;
+  --font-pixel: "Geist Pixel", var(--font-sans);
   color-scheme: light;
   font-family: var(--font-sans);
   font-synthesis: none;
@@ -108,8 +110,12 @@ svg {
   gap: 0.42rem;
   color: #fff;
   font-size: 0.9rem;
-  font-weight: 590;
-  letter-spacing: -0.025em;
+}
+
+.viby-wordmark {
+  font-family: var(--font-pixel);
+  font-weight: 400;
+  letter-spacing: -0.01em;
 }
 
 .terminal-glyph {
@@ -137,9 +143,10 @@ svg {
 
 .hero-copy h1 {
   margin: 0;
+  font-family: var(--font-pixel);
   font-size: 4.5rem;
-  font-weight: 610;
-  letter-spacing: -0.055em;
+  font-weight: 400;
+  letter-spacing: -0.035em;
   line-height: 1.03;
 }
 
@@ -726,7 +733,7 @@ html.dark #nd-docs-layout[data-fd-framework] figure.shiki {
 
 #nd-sidebar[data-collapsed="false"] a[href="/docs/api/v1"]::before,
 #nd-sidebar-mobile a[href="/docs/api/v1"]::before {
-  content: "Build with Viby";
+  content: "Build with viby";
 }
 
 #nd-sidebar[data-collapsed="false"] a[href="/docs/integrations/github"]::before,

@@ -2,7 +2,7 @@ import type { LayoutProps, Metadata } from "@farm.js/core";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Viby · Infrastructure for AI software builders",
+  title: "viby · Infrastructure for AI software builders",
   description:
     "Durable, provider-neutral infrastructure for building generation, iteration, preview, and shipping into your own coding product.",
   icons: {
