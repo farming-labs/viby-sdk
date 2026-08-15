@@ -32,6 +32,7 @@ import type {
   DisconnectToolSourceResult,
   ToolSourceConnectionData,
 } from "./tool-source-authorization.js";
+import type { PreviewEvent } from "./preview.js";
 
 const DEFAULT_BASE_URL = "/api/viby";
 const DEFAULT_MAX_RECONNECTS = 5;
@@ -59,6 +60,11 @@ export type VibyApiGeneratedArtifact = VibyApiJson<GeneratedArtifactData>;
 export type VibyApiToolCall = VibyApiJson<ToolCallData>;
 export type VibyApiToolSource = VibyApiJson<ToolSourceRegistrationData>;
 export type VibyApiToolSourceConnection = VibyApiJson<ToolSourceConnectionData>;
+export type VibyApiPreviewEvent = VibyApiJson<PreviewEvent>;
+export type VibyWebPreviewStreamEvent<Result extends JsonValue = JsonValue> =
+  | VibyApiPreviewEvent
+  | { readonly type: "preview.result"; readonly result: Result }
+  | { readonly type: "preview.error"; readonly error: string };
 
 export interface VibyWebClientOptions {
   /** Absolute or browser-relative API URL. Defaults to /api/viby. */
@@ -298,6 +304,11 @@ export interface VibyWebChatsClient<Framework extends FrameworkId = FrameworkId>
       versionId: string,
       options?: VibyWebRequestOptions,
     ): Promise<Result>;
+    previewStream<Result extends JsonValue = JsonValue>(
+      chatId: string,
+      versionId: string,
+      options?: VibyWebRequestOptions,
+    ): AsyncGenerator<VibyWebPreviewStreamEvent<Result>>;
   };
   readonly toolSources: {
     list(
@@ -566,6 +577,11 @@ export function createVibyWebClient<Framework extends FrameworkId = FrameworkId>
         undefined,
         request,
       ),
+      previewStream: <Result extends JsonValue = JsonValue>(
+        chatId: string,
+        versionId: string,
+        request: VibyWebRequestOptions = {},
+      ) => previewStream<Result>(transport, chatId, versionId, request),
     }),
     toolSources: Object.freeze({
       list: (chatId: string, request: VibyWebRequestOptions = {}) => transport.json<{
@@ -823,6 +839,32 @@ async function* generationStream(
   }
 }
 
+async function* previewStream<Result extends JsonValue>(
+  transport: WebClientTransport,
+  chatId: string,
+  versionId: string,
+  options: VibyWebRequestOptions,
+): AsyncGenerator<VibyWebPreviewStreamEvent<Result>> {
+  const response = await transport.response(
+    "POST",
+    `/chats/${segment(chatId)}/versions/${segment(versionId)}/preview`,
+    undefined,
+    undefined,
+    options,
+    { Accept: "text/event-stream" },
+  );
+  if (!response.body) throw new VibyStreamProtocolError("Preview event response has no body.");
+  for await (const frame of sseFrames(response.body, options.signal)) {
+    if (frame.data === undefined) continue;
+    const event = parsePreviewEvent<Result>(frame.data);
+    if (frame.event !== undefined && frame.event !== event.type) {
+      throw new VibyStreamProtocolError("Preview event type does not match its SSE event name.");
+    }
+    yield event;
+    if (event.type === "preview.result" || event.type === "preview.error") return;
+  }
+}
+
 interface SseFrame {
   readonly id?: string;
   readonly event?: string;
@@ -906,6 +948,27 @@ function parseGenerationEvent(data: string): VibyApiGenerationEvent {
     throw new VibyStreamProtocolError("Generation stream returned an invalid event.");
   }
   return value as VibyApiGenerationEvent;
+}
+
+function parsePreviewEvent<Result extends JsonValue>(
+  data: string,
+): VibyWebPreviewStreamEvent<Result> {
+  let value: Partial<VibyWebPreviewStreamEvent<Result>> | null;
+  try {
+    value = JSON.parse(data) as Partial<VibyWebPreviewStreamEvent<Result>> | null;
+  } catch (error) {
+    throw new VibyStreamProtocolError("Preview stream returned invalid JSON.", { cause: error });
+  }
+  if (!value || typeof value !== "object" || typeof value.type !== "string") {
+    throw new VibyStreamProtocolError("Preview stream returned an invalid event.");
+  }
+  if (value.type === "preview.error" && typeof value.error !== "string") {
+    throw new VibyStreamProtocolError("Preview stream returned an invalid error event.");
+  }
+  if (value.type === "preview.result" && !("result" in value)) {
+    throw new VibyStreamProtocolError("Preview stream returned an invalid result event.");
+  }
+  return value as VibyWebPreviewStreamEvent<Result>;
 }
 
 function generationBody(input: VibyWebCreateChatInput | VibyWebGenerationInput): object {

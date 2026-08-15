@@ -665,6 +665,9 @@ const viby = createViby({
   model,
   sandbox,
   preview: {
+    // Optional preview-only overrides are written after immutable source materialization.
+    // Raw source, history, and downloads are not changed.
+    files: [{ path: "preview.config.ts", content: "export const preview = true;\n" }],
     start: { command: "pnpm", args: ["dev", "--host", "0.0.0.0"] },
     port: 3000,
     path: "/",
@@ -672,7 +675,13 @@ const viby = createViby({
   },
 });
 
-const preview = await version.preview();
+const preview = await version.preview({
+  onEvent(event) {
+    if (event.type === "command.output") {
+      process.stdout.write(`[${event.stage}:${event.stream}] ${event.data}`);
+    }
+  },
+});
 preview.url;
 
 // After an application or worker restart:
@@ -681,7 +690,19 @@ await restored.reconnect();
 await restored.stop();
 ```
 
-Each preview is bound to one immutable version and one persisted sandbox lease. Viby records readiness, URL, failure, expiry, and stop state; `user.previews.list(...)` reloads history and `cleanupExpired()` closes stale records. The sandbox adapter still owns execution and URL creation, so this remains provider-neutral and does not imply Viby-managed hosting.
+Each preview is bound to one immutable version and one persisted sandbox lease. Viby records readiness, URL, failure, expiry, and stop state; `user.previews.list(...)` reloads history and `cleanupExpired()` closes stale records. Concurrent starts for the same version and preview inputs share one sandbox. `files` is a provider-neutral escape hatch for preview-only configuration and does not mutate the durable version. `onEvent` reports workspace preparation, commands, stdout/stderr, server startup, readiness, success, and failure without exposing provider-specific types.
+
+The Web API and typed client can carry the same progress directly to a product UI:
+
+```ts
+for await (const event of web.chats.versions.previewStream(chatId, versionId)) {
+  if (event.type === "command.output") terminal.append(event.data);
+  if (event.type === "preview.result") iframe.src = event.result.url;
+  if (event.type === "preview.error") showError(event.error);
+}
+```
+
+The sandbox adapter still owns execution and URL creation, so this remains provider-neutral and does not imply Viby-managed hosting.
 
 Enforce one command policy across every adapter in the session core:
 

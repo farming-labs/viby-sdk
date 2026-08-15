@@ -129,6 +129,7 @@ const viby = createViby({
   model,
   sandbox,
   preview: {
+    files: [{ path: "preview.config.ts", content: "export const preview = true;\n" }],
     prepare: [{ command: "pnpm", args: ["install", "--frozen-lockfile"] }],
     start: { command: "pnpm", args: ["dev", "--host", "0.0.0.0"] },
     port: 3000,
@@ -141,5 +142,7 @@ const api = createVibyApi({
   preview: true,
 });
 ```
+
+`preview.files` contains preview-only overrides written after the immutable version is materialized. It is useful for host allowlists and development-server settings that should never alter version history or raw downloads. Send `Accept: text/event-stream` to the preview route, or use `web.chats.versions.previewStream(...)`, to receive workspace, command, stdout/stderr, readiness, and final result events while startup is running.
 
 Pass a callback instead when the product needs a custom cache, deployment result, or complete `Response`. Without `preview`, preview routes return `501 preview_not_configured`. CORS, CSRF policy, rate limits, and sessions remain application responsibilities; durable sandbox preview cleanup is available through `user.previews.cleanupExpired()`.

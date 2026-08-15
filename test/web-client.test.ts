@@ -242,6 +242,51 @@ test("reconnects an interrupted SSE stream from its last durable cursor", async 
   assert.deepEqual(requests, [null, "1"]);
 });
 
+test("consumes streamed preview terminal output and the final result", async () => {
+  let accept: string | null = null;
+  const client = createVibyWebClient({
+    baseUrl: "https://app.example/api/viby",
+    fetch: async (_input, init) => {
+      accept = new Headers(init?.headers).get("accept");
+      return new Response([
+        "event: command.output",
+        `data: ${JSON.stringify({
+          type: "command.output",
+          previewId: "preview-1",
+          stage: "prepare",
+          index: 0,
+          stream: "stdout",
+          data: "installed dependencies\n",
+          createdAt: "2026-08-15T10:00:00.000Z",
+        })}`,
+        "",
+        "event: preview.result",
+        `data: ${JSON.stringify({
+          type: "preview.result",
+          result: { url: "https://preview.example" },
+        })}`,
+        "",
+        "",
+      ].join("\n"), {
+        headers: { "Content-Type": "text/event-stream" },
+      });
+    },
+  });
+
+  const events = [];
+  for await (const event of client.chats.versions.previewStream<{ readonly url: string }>(
+    "chat-1",
+    "version-1",
+  )) {
+    events.push(event);
+  }
+
+  assert.equal(accept, "text/event-stream");
+  assert.deepEqual(events.map((event) => event.type), ["command.output", "preview.result"]);
+  assert.equal(events[1]?.type === "preview.result" ? events[1].result.url : null,
+    "https://preview.example");
+});
+
 test("binds the default fetch implementation to the Web global", async () => {
   const originalFetch = globalThis.fetch;
   let receiver: unknown;

@@ -1,6 +1,7 @@
 import {
   isStepCount,
   jsonSchema,
+  NoOutputGeneratedError,
   Output,
   tool,
   ToolLoopAgent,
@@ -151,12 +152,16 @@ implements ProjectGenerator<Framework> {
         schema: agentResponseSchema,
       }),
       maxOutputTokens: Math.min(this.#config.maxTokens, 16_384),
+      prepareStep: ({ steps }) => {
+        if (totalStepTokens(steps) < this.#config.maxTokens) return undefined;
+        return {
+          activeTools: [],
+          toolChoice: "none" as const,
+          instructions: `${createAgentInstructions(input)}\n\nThe execution budget is exhausted. Do not call tools. Return the required complete or task outcome now based on the workspace work already performed.`,
+        };
+      },
       stopWhen: [
         isStepCount(this.#config.maxSteps),
-        ({ steps }) => steps.reduce(
-          (total, step) => total + (step.usage.totalTokens ?? 0),
-          0,
-        ) >= this.#config.maxTokens,
         () => approval.proposedAction !== null,
       ],
     });
@@ -178,7 +183,23 @@ implements ProjectGenerator<Framework> {
         artifacts,
       };
     }
-    const output = result.output;
+    let output: z.infer<typeof agentResponseSchema>;
+    try {
+      output = result.output;
+    } catch (error) {
+      const changes = workspace.changes();
+      if (!NoOutputGeneratedError.isInstance(error) || changes.length === 0) throw error;
+      return completedWorkspaceOutput({
+        input,
+        workspace,
+        changes,
+        title: previousEntries.length > 0 ? "Updated project" : "Generated project",
+        summary: `Applied ${changes.length} validated workspace ${changes.length === 1 ? "change" : "changes"} before the model's final response ended.`,
+        usage: result.totalUsage,
+        finishReason: result.finishReason,
+        artifacts,
+      });
+    }
     if (output.outcome === "task") {
       if (!output.task || output.title || output.summary) {
         throw new ConfigurationError("The agent returned an inconsistent task outcome.");
@@ -201,27 +222,54 @@ implements ProjectGenerator<Framework> {
     if (changes.length === 0) {
       throw new ConfigurationError("The agent completed without changing the workspace.");
     }
-    if (previousEntries.length === 0) {
-      return {
-        kind: "project",
-        title: output.title,
-        summary: output.summary,
-        files: workspace.files(),
-        usage: result.totalUsage,
-        finishReason: result.finishReason,
-        artifacts,
-      };
-    }
-    return {
-      kind: "changes",
+    return completedWorkspaceOutput({
+      input,
+      workspace,
+      changes,
       title: output.title,
       summary: output.summary,
-      changes,
       usage: result.totalUsage,
       finishReason: result.finishReason,
       artifacts,
+    });
+  }
+}
+
+function completedWorkspaceOutput<Framework extends FrameworkId>(options: {
+  readonly input: GeneratorInput<Framework>;
+  readonly workspace: AgentWorkspace;
+  readonly changes: readonly SourceChange[];
+  readonly title: string;
+  readonly summary: string;
+  readonly usage: LanguageModelUsage;
+  readonly finishReason: string;
+  readonly artifacts: readonly import("./generator.js").GeneratorArtifactOutput[];
+}): GeneratorOutput {
+  const previousEntries = options.input.previousEntries ?? options.input.previousFiles;
+  if (previousEntries.length === 0) {
+    return {
+      kind: "project",
+      title: options.title,
+      summary: options.summary,
+      files: options.workspace.files(),
+      usage: options.usage,
+      finishReason: options.finishReason,
+      artifacts: options.artifacts,
     };
   }
+  return {
+    kind: "changes",
+    title: options.title,
+    summary: options.summary,
+    changes: options.changes,
+    usage: options.usage,
+    finishReason: options.finishReason,
+    artifacts: options.artifacts,
+  };
+}
+
+function totalStepTokens(steps: readonly { readonly usage: LanguageModelUsage }[]): number {
+  return steps.reduce((total, step) => total + (step.usage.totalTokens ?? 0), 0);
 }
 
 async function createAgentTools<Framework extends FrameworkId>(

@@ -34,7 +34,7 @@ class FakeVercelClient implements VercelSandboxClient {
     cmd: string;
     args: string[];
     cwd: string;
-    env: Record<string, string>;
+    env?: Record<string, string>;
     timeoutMs: number;
     detached?: boolean;
     signal?: AbortSignal;
@@ -183,7 +183,7 @@ test("maps the common sandbox contract to Vercel Sandbox", async () => {
     cmd: "pnpm",
     args: ["build"],
     cwd: "/vercel/sandbox",
-    env: { CI: "true" },
+    env: { NODE_ENV: "test", CI: "true" },
     timeoutMs: 30_000,
   });
   assert.deepEqual(output, [
@@ -191,12 +191,21 @@ test("maps the common sandbox contract to Vercel Sandbox", async () => {
     { stream: "stderr", data: "err\n" },
   ]);
 
-  const background = await instance.start!({ command: "pnpm", args: ["dev"] });
+  const background = await instance.start!({
+    command: "pnpm",
+    args: ["dev"],
+    onOutput: (event) => {
+      output.push(event);
+    },
+  });
   assert.equal(background.id, "cmd_background");
+  const backgroundStdout = client.commands[1]?.stdout as Writable;
+  assert.doesNotThrow(() => backgroundStdout.emit("error", new Error("sandbox stream closed")));
   assert.equal((await background.wait()).stdout, "server-ready\n");
   await background.kill();
   assert.equal(client.backgroundKilled, 1);
   assert.equal(client.commands[1]?.detached, true);
+  assert.deepEqual(client.commands[1]?.env, { NODE_ENV: "test" });
   assert.deepEqual(result, {
     exitCode: 2,
     stdout: "out\n",

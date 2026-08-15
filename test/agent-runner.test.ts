@@ -9,7 +9,12 @@ const usage = {
   outputTokens: { total: 20, text: 20, reasoning: undefined },
 };
 
-function toolCall(toolCallId: string, toolName: string, input: unknown) {
+function toolCall(
+  toolCallId: string,
+  toolName: string,
+  input: unknown,
+  callUsage = usage,
+) {
   return {
     content: [{
       type: "tool-call" as const,
@@ -18,10 +23,87 @@ function toolCall(toolCallId: string, toolName: string, input: unknown) {
       input: JSON.stringify(input),
     }],
     finishReason: { unified: "tool-calls" as const, raw: undefined },
-    usage,
+    usage: callUsage,
     warnings: [],
   };
 }
+
+test("preserves validated iteration edits when a provider ends on a tool call", async () => {
+  const model = new MockLanguageModelV4({
+    doGenerate: toolCall("write-only", "workspace_write_file", {
+      path: "src/index.ts",
+      content: "export const recovered = true;\n",
+      mediaType: "text/javascript",
+    }),
+  });
+  const generator = new AgentProjectGenerator<"farm">(model, {
+    maxSteps: 1,
+    maxDurationMs: 10_000,
+    maxTokens: 10_000,
+  });
+
+  const output = await generator.generate({
+    framework: "farm",
+    prompt: "Update the project",
+    messages: [],
+    previousFiles: [{
+      path: "src/index.ts",
+      content: "export const recovered = false;\n",
+      mediaType: "text/javascript",
+      size: 32,
+      checksum: "before",
+      locked: false,
+    }],
+    skills: [],
+    tasks: [],
+  });
+
+  assert.equal(output.kind, "changes");
+  if (output.kind !== "changes") throw new Error("Expected recovered change output");
+  assert.deepEqual(output.changes, [{
+    type: "write",
+    path: "src/index.ts",
+    content: "export const recovered = true;\n",
+    mediaType: "text/javascript",
+  }]);
+  assert.match(output.summary, /1 validated workspace change/);
+});
+
+test("reserves a completion turn after the token budget is reached", async () => {
+  const budgetUsage = {
+    inputTokens: { total: 900, noCache: 900, cacheRead: undefined, cacheWrite: undefined },
+    outputTokens: { total: 200, text: 200, reasoning: undefined },
+  };
+  const model = new MockLanguageModelV4({
+    doGenerate: [
+      toolCall("write-budget", "workspace_write_file", {
+        path: "src/index.ts",
+        content: "export const finalized = true;\n",
+        mediaType: "text/javascript",
+      }, budgetUsage),
+      completion("Finalized project", "Completed after reaching the tool budget."),
+    ],
+  });
+  const generator = new AgentProjectGenerator<"farm">(model, {
+    maxSteps: 4,
+    maxDurationMs: 10_000,
+    maxTokens: 1_000,
+  });
+
+  const output = await generator.generate({
+    framework: "farm",
+    prompt: "Build a project",
+    messages: [],
+    previousFiles: [],
+    skills: [],
+    tasks: [],
+  });
+
+  assert.equal(output.kind, "project");
+  assert.equal(model.doGenerateCalls.length, 2);
+  assert.equal(model.doGenerateCalls[1]?.tools, undefined);
+  assert.equal(model.doGenerateCalls[1]?.toolChoice?.type, "none");
+});
 
 function completion(title: string, summary: string) {
   return {

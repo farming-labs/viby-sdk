@@ -3,18 +3,94 @@ import type { EnvironmentName } from "./environment.js";
 import {
   type SandboxAdapter,
   type SandboxCommand,
+  type SandboxCommandResult,
+  type SandboxFile,
+  type SandboxOutputEvent,
   type SandboxReadinessOptions,
   type SandboxSession,
   type SandboxOpenOptions,
   SandboxRegistry,
 } from "./sandbox.js";
 import type { FrameworkId, UserScope, VersionData } from "./types.js";
-import { createId, errorMessage } from "./utils.js";
+import { createId, errorMessage, sha256 } from "./utils.js";
 
 const DEFAULT_SANDBOX_TIMEOUT_MS = 30 * 60 * 1_000;
 const DEFAULT_CLEANUP_LIMIT = 100;
 
 export type PreviewStatus = "starting" | "ready" | "failed" | "stopped" | "expired";
+
+export type PreviewCommandStage = "prepare" | "start";
+
+export interface PreviewCommandSnapshot {
+  readonly command: string;
+  readonly args: readonly string[];
+  readonly cwd: string;
+}
+
+/**
+ * Provider-neutral, live preview progress emitted while an immutable version is
+ * materialized, prepared, started, and checked for readiness.
+ */
+export type PreviewEvent =
+  | {
+      readonly type: "preview.created";
+      readonly previewId: string;
+      readonly sandboxProvider: string;
+      readonly createdAt: Date;
+    }
+  | {
+      readonly type: "workspace.prepared";
+      readonly previewId: string;
+      readonly filesWritten: number;
+      readonly createdAt: Date;
+    }
+  | {
+      readonly type: "command.started";
+      readonly previewId: string;
+      readonly stage: PreviewCommandStage;
+      readonly index: number;
+      readonly command: PreviewCommandSnapshot;
+      readonly createdAt: Date;
+    }
+  | {
+      readonly type: "command.output";
+      readonly previewId: string;
+      readonly stage: PreviewCommandStage;
+      readonly index: number;
+      readonly stream: SandboxOutputEvent["stream"];
+      readonly data: string;
+      readonly createdAt: Date;
+    }
+  | {
+      readonly type: "command.completed";
+      readonly previewId: string;
+      readonly stage: PreviewCommandStage;
+      readonly index: number;
+      readonly command: PreviewCommandSnapshot;
+      readonly result: SandboxCommandResult;
+      readonly createdAt: Date;
+    }
+  | {
+      readonly type: "readiness.started";
+      readonly previewId: string;
+      readonly port: number;
+      readonly path: string;
+      readonly createdAt: Date;
+    }
+  | {
+      readonly type: "preview.ready";
+      readonly previewId: string;
+      readonly url: string;
+      readonly createdAt: Date;
+    }
+  | {
+      readonly type: "preview.failed";
+      readonly previewId: string;
+      readonly error: string;
+      readonly createdAt: Date;
+    };
+
+export type PreviewEventListener = (event: PreviewEvent) => void | Promise<void>;
 
 export interface PreviewSessionData<Framework extends FrameworkId = FrameworkId> {
   readonly id: string;
@@ -93,6 +169,8 @@ export interface PreviewSessionStore {
 }
 
 export interface PreviewConfig {
+  /** Preview-only files written after immutable source materialization. */
+  readonly files?: readonly SandboxFile[];
   /** Commands completed in order after source materialization and before the server starts. */
   readonly prepare?: readonly SandboxCommand[];
   /** Framework- or product-provided long-running development server command. */
@@ -109,16 +187,20 @@ export interface PreviewOpenOptions {
   readonly path?: string;
   readonly environment?: EnvironmentName;
   readonly env?: Readonly<Record<string, string>>;
+  /** Observe real sandbox command output and lifecycle progress as preview startup runs. */
+  readonly onEvent?: PreviewEventListener;
   readonly signal?: AbortSignal;
 }
 
 export interface ResolvedPreviewOpenOptions {
+  readonly files: readonly SandboxFile[];
   readonly prepare: readonly SandboxCommand[];
   readonly start: SandboxCommand;
   readonly port: number;
   readonly path: string;
   readonly sandbox: SandboxOpenOptions;
   readonly readiness: Omit<SandboxReadinessOptions, "path" | "signal">;
+  readonly onEvent?: PreviewEventListener;
   readonly signal?: AbortSignal;
 }
 
@@ -140,6 +222,11 @@ export class PreviewRegistry<Framework extends FrameworkId = FrameworkId> {
   readonly #config: PreviewConfig | undefined;
   readonly #sessions = new Map<string, { readonly session: SandboxSession; readonly scope: UserScope }>();
   readonly #stops = new Map<string, Promise<PreviewSessionData<Framework>>>();
+  readonly #opening = new Map<string, {
+    readonly events: PreviewEvent[];
+    readonly listeners: Set<PreviewEventListener>;
+    readonly promise: Promise<PreviewSessionData<Framework>>;
+  }>();
 
   constructor(
     store: PreviewSessionStore,
@@ -164,6 +251,7 @@ export class PreviewRegistry<Framework extends FrameworkId = FrameworkId> {
     }
     const path = normalizePreviewPath(options.path ?? this.#config.path);
     return {
+      files: this.#config.files ?? [],
       prepare: this.#config.prepare ?? [],
       start: this.#config.start,
       port: this.#config.port,
@@ -178,8 +266,42 @@ export class PreviewRegistry<Framework extends FrameworkId = FrameworkId> {
         ...(options.signal ? { signal: options.signal } : {}),
       },
       readiness: this.#config.readiness ?? {},
+      ...(options.onEvent ? { onEvent: options.onEvent } : {}),
       ...(options.signal ? { signal: options.signal } : {}),
     };
+  }
+
+  /** Coalesces concurrent opens for the same immutable version and preview inputs. */
+  async start(
+    scope: UserScope,
+    version: VersionData<Framework>,
+    options: ResolvedPreviewOpenOptions,
+    createSandbox: () => Promise<SandboxSession>,
+  ): Promise<PreviewSessionData<Framework>> {
+    const key = previewOpenKey(scope, version, options);
+    const active = this.#opening.get(key);
+    if (active) {
+      if (options.onEvent) {
+        active.listeners.add(options.onEvent);
+        for (const event of active.events) await emitPreviewEvent(options.onEvent, event);
+      }
+      return active.promise;
+    }
+
+    const listeners = new Set<PreviewEventListener>();
+    if (options.onEvent) listeners.add(options.onEvent);
+    const events: PreviewEvent[] = [];
+    const broadcast: PreviewEventListener = async (event) => {
+      events.push(event);
+      if (events.length > 400) events.splice(0, events.length - 400);
+      await Promise.all([...listeners].map((listener) => emitPreviewEvent(listener, event)));
+    };
+    const sharedOptions: ResolvedPreviewOpenOptions = { ...options, onEvent: broadcast };
+    const promise = createSandbox()
+      .then((sandbox) => this.open(scope, version, sandbox, sharedOptions))
+      .finally(() => this.#opening.delete(key));
+    this.#opening.set(key, { events, listeners, promise });
+    return promise;
   }
 
   async open(
@@ -220,11 +342,44 @@ export class PreviewRegistry<Framework extends FrameworkId = FrameworkId> {
       throw error;
     }
     this.#sessions.set(preview.id, { session: sandbox, scope: { ...scope } });
+    await emitPreviewEvent(options.onEvent, {
+      type: "preview.created",
+      previewId: preview.id,
+      sandboxProvider: sandbox.provider,
+      createdAt: new Date(),
+    });
     try {
-      for (const command of options.prepare) {
+      if (options.files.length > 0) {
+        await sandbox.writeFiles(options.files, options.signal ? { signal: options.signal } : {});
+      }
+      await emitPreviewEvent(options.onEvent, {
+        type: "workspace.prepared",
+        previewId: preview.id,
+        filesWritten: options.files.length,
+        createdAt: new Date(),
+      });
+      for (const [index, command] of options.prepare.entries()) {
+        const snapshot = commandSnapshot(command);
+        await emitPreviewEvent(options.onEvent, {
+          type: "command.started",
+          previewId: preview.id,
+          stage: "prepare",
+          index,
+          command: snapshot,
+          createdAt: new Date(),
+        });
         const result = await sandbox.run({
-          ...command,
+          ...withPreviewOutput(command, options.onEvent, preview.id, "prepare", index),
           ...(options.signal ? { signal: options.signal } : {}),
+        });
+        await emitPreviewEvent(options.onEvent, {
+          type: "command.completed",
+          previewId: preview.id,
+          stage: "prepare",
+          index,
+          command: snapshot,
+          result,
+          createdAt: new Date(),
         });
         if (result.exitCode !== 0) {
           const detail = (result.stderr || result.stdout).trim().slice(0, 2_000);
@@ -234,9 +389,25 @@ export class PreviewRegistry<Framework extends FrameworkId = FrameworkId> {
           );
         }
       }
+      const startSnapshot = commandSnapshot(options.start);
+      await emitPreviewEvent(options.onEvent, {
+        type: "command.started",
+        previewId: preview.id,
+        stage: "start",
+        index: 0,
+        command: startSnapshot,
+        createdAt: new Date(),
+      });
       const process = await sandbox.start({
-        ...options.start,
+        ...withPreviewOutput(options.start, options.onEvent, preview.id, "start", 0),
         ...(options.signal ? { signal: options.signal } : {}),
+      });
+      await emitPreviewEvent(options.onEvent, {
+        type: "readiness.started",
+        previewId: preview.id,
+        port: options.port,
+        path: options.path,
+        createdAt: new Date(),
       });
       const url = await Promise.race([
         sandbox.waitForPort(options.port, {
@@ -252,8 +423,20 @@ export class PreviewRegistry<Framework extends FrameworkId = FrameworkId> {
         }),
       ]);
       preview = await this.#store.markPreviewReady(scope, preview.id, url, new Date());
+      await emitPreviewEvent(options.onEvent, {
+        type: "preview.ready",
+        previewId: preview.id,
+        url,
+        createdAt: new Date(),
+      });
       return preview;
     } catch (error) {
+      await emitPreviewEvent(options.onEvent, {
+        type: "preview.failed",
+        previewId: preview.id,
+        error: errorMessage(error),
+        createdAt: new Date(),
+      });
       const failures: unknown[] = [error];
       try {
         preview = await this.#store.failPreviewSession(
@@ -390,6 +573,72 @@ export class PreviewRegistry<Framework extends FrameworkId = FrameworkId> {
   }
 }
 
+function commandSnapshot(command: SandboxCommand): PreviewCommandSnapshot {
+  return Object.freeze({
+    command: command.command,
+    args: Object.freeze([...(command.args ?? [])]),
+    cwd: command.cwd ?? ".",
+  });
+}
+
+function previewOpenKey<Framework extends FrameworkId>(
+  scope: UserScope,
+  version: VersionData<Framework>,
+  options: ResolvedPreviewOpenOptions,
+): string {
+  const environment = Object.entries(options.sandbox.env ?? {}).sort(([left], [right]) => (
+    left.localeCompare(right)
+  ));
+  const files = options.files.map((file) => ({
+    path: file.path,
+    content: typeof file.content === "string"
+      ? file.content
+      : Array.from(file.content),
+  }));
+  return sha256(JSON.stringify({
+    tenantId: scope.tenantId,
+    userId: scope.userId,
+    versionId: version.id,
+    path: options.path,
+    environment: options.sandbox.environment ?? null,
+    env: environment,
+    files,
+  }));
+}
+
+function withPreviewOutput(
+  command: SandboxCommand,
+  listener: PreviewEventListener | undefined,
+  previewId: string,
+  stage: PreviewCommandStage,
+  index: number,
+): SandboxCommand {
+  if (!listener) return command;
+  return {
+    ...command,
+    onOutput: async (output) => {
+      await command.onOutput?.(output);
+      await emitPreviewEvent(listener, {
+        type: "command.output",
+        previewId,
+        stage,
+        index,
+        stream: output.stream,
+        data: output.data,
+        createdAt: new Date(),
+      });
+    },
+  };
+}
+
+async function emitPreviewEvent(
+  listener: PreviewEventListener | undefined,
+  event: PreviewEvent,
+): Promise<void> {
+  if (!listener) return;
+  await Promise.resolve(listener(event)).catch(() => undefined);
+}
+
 function normalizePreviewConfig(config: PreviewConfig): PreviewConfig {
   if (!config || typeof config !== "object") {
     throw new ConfigurationError("preview must be an object.");
@@ -400,6 +649,10 @@ function normalizePreviewConfig(config: PreviewConfig): PreviewConfig {
   if (config.prepare !== undefined && (!Array.isArray(config.prepare)
     || config.prepare.some((command) => !command || typeof command !== "object"))) {
     throw new ConfigurationError("preview.prepare must be an array of sandbox commands.");
+  }
+  if (config.files !== undefined && (!Array.isArray(config.files)
+    || config.files.some((file) => !file || typeof file !== "object"))) {
+    throw new ConfigurationError("preview.files must be an array of sandbox files.");
   }
   if (!Number.isInteger(config.port) || config.port < 1 || config.port > 65_535) {
     throw new ConfigurationError("preview.port must be an integer between 1 and 65535.");
@@ -416,6 +669,10 @@ function normalizePreviewConfig(config: PreviewConfig): PreviewConfig {
   }
   return Object.freeze({
     ...config,
+    files: Object.freeze((config.files ?? []).map((file) => ({
+      path: file.path,
+      content: typeof file.content === "string" ? file.content : new Uint8Array(file.content),
+    }))),
     prepare: Object.freeze((config.prepare ?? []).map((command) => ({ ...command }))),
     path: normalizePreviewPath(config.path),
     readiness: config.readiness ? { ...config.readiness } : {},
