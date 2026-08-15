@@ -90,7 +90,7 @@ export interface VercelCommandInput {
     cmd: string;
     args: string[];
     cwd: string;
-    env: Record<string, string>;
+    env?: Record<string, string>;
     timeoutMs: number;
     detached?: boolean;
     signal?: AbortSignal;
@@ -164,7 +164,7 @@ export function vercelSandbox(
         } : {}),
         ...(input.signal ? { signal: input.signal } : {}),
       });
-      return new VercelSandboxInstance(client);
+      return new VercelSandboxInstance(client, input.env);
     },
     async reconnect(input) {
       const client = await connector({
@@ -185,9 +185,11 @@ export function vercelSandbox(
 class VercelSandboxInstance implements SandboxInstance {
   readonly id: string;
   readonly #client: VercelSandboxClient;
+  readonly #env: Readonly<Record<string, string>>;
 
-  constructor(client: VercelSandboxClient) {
+  constructor(client: VercelSandboxClient, env: Readonly<Record<string, string>> = {}) {
     this.#client = client;
+    this.#env = { ...env };
     this.id = client.name;
   }
 
@@ -208,11 +210,12 @@ class VercelSandboxInstance implements SandboxInstance {
     const startedAt = performance.now();
     const cwd = command.cwd ?? ".";
     const streams = command.onOutput ? outputStreams(command.onOutput) : {};
+    const env = { ...this.#env, ...(command.env ?? {}) };
     const result = await this.#client.runCommand({
       cmd: command.command,
       args: [...(command.args ?? [])],
       cwd: cwd === "." ? this.#client.cwd : projectPath(this.#client.cwd, cwd),
-      env: { ...(command.env ?? {}) },
+      ...(Object.keys(env).length > 0 ? { env } : {}),
       timeoutMs: command.timeoutMs ?? 300_000,
       ...(command.signal ? { signal: command.signal } : {}),
       ...streams,
@@ -237,11 +240,12 @@ class VercelSandboxInstance implements SandboxInstance {
     const startedAt = performance.now();
     const cwd = command.cwd ?? ".";
     const streams = command.onOutput ? outputStreams(command.onOutput) : {};
+    const env = { ...this.#env, ...(command.env ?? {}) };
     const handle = await this.#client.runCommand({
       cmd: command.command,
       args: [...(command.args ?? [])],
       cwd: cwd === "." ? this.#client.cwd : projectPath(this.#client.cwd, cwd),
-      env: { ...(command.env ?? {}) },
+      ...(Object.keys(env).length > 0 ? { env } : {}),
       timeoutMs: command.timeoutMs ?? 300_000,
       detached: true,
       ...(command.signal ? { signal: command.signal } : {}),
@@ -334,12 +338,17 @@ function outputStream(
   stream: SandboxOutputEvent["stream"],
   onOutput: (event: SandboxOutputEvent) => void | Promise<void>,
 ): Writable {
-  return new Writable({
+  const output = new Writable({
     write(chunk, _encoding, callback) {
       Promise.resolve(onOutput({ stream, data: Buffer.from(chunk).toString("utf8") }))
         .then(() => callback(), callback);
     },
   });
+  // Vercel closes attached streams with an error when a sandbox stops. The
+  // command/process promise remains the authoritative lifecycle result; an
+  // unhandled Writable error must not crash the embedding application.
+  output.on("error", () => undefined);
+  return output;
 }
 
 function projectPath(root: string, path: string): string {

@@ -49,11 +49,13 @@ class PreviewSandboxInstance implements SandboxInstance {
 
   async run(command: SandboxCommand) {
     this.runs.push(command);
+    await command.onOutput?.({ stream: "stdout", data: "dependencies installed\n" });
     return this.runResult;
   }
 
   async start(command: SandboxCommand): Promise<SandboxProcessInstance> {
     this.starts.push(command);
+    await command.onOutput?.({ stream: "stdout", data: "development server started\n" });
     return {
       id: `${this.id}-process`,
       wait: () => new Promise(() => {}),
@@ -89,10 +91,14 @@ class PreviewSandboxAdapter implements SandboxAdapter {
   readonly reconnects: SandboxReconnectInput[] = [];
   readonly instances = new Map<string, PreviewSandboxInstance>();
   runResult = { exitCode: 0, stdout: "", stderr: "", durationMs: 0 };
+  createDelayMs = 0;
   #next = 0;
 
   async create(input: SandboxCreateInput): Promise<SandboxInstance> {
     this.creates.push(input);
+    if (this.createDelayMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, this.createDelayMs));
+    }
     const instance = new PreviewSandboxInstance(`preview-${++this.#next}`);
     instance.runResult = this.runResult;
     this.instances.set(instance.id, instance);
@@ -109,6 +115,7 @@ class PreviewSandboxAdapter implements SandboxAdapter {
 
 const scope = { tenantId: "preview-tenant", userId: "preview-user" };
 const defaultPreviewConfig: PreviewConfig = {
+  files: [{ path: "preview.config.ts", content: "export const preview = true;\n" }],
   prepare: [{ command: "pnpm", args: ["install", "--frozen-lockfile"] }],
   start: { command: "pnpm", args: ["dev", "--host", "0.0.0.0"] },
   port: 3000,
@@ -165,14 +172,16 @@ test("starts, persists, reconnects, and stops a durable version preview", async 
   assert.equal(preview.url, "https://preview-1.preview.example.test:3000/health");
   assert.deepEqual(adapter.creates[0]?.ports, [3000]);
   assert.deepEqual(adapter.creates[0]?.env, { PREVIEW_FIXTURE: "true" });
-  assert.deepEqual(adapter.instances.get("preview-1")?.starts[0], {
+  const { onOutput: _startOutput, ...started } = adapter.instances.get("preview-1")!.starts[0]!;
+  assert.deepEqual(started, {
     command: "pnpm",
     args: ["dev", "--host", "0.0.0.0"],
     cwd: ".",
     env: {},
     timeoutMs: 300_000,
   });
-  assert.deepEqual(adapter.instances.get("preview-1")?.runs[0], {
+  const { onOutput: _runOutput, ...prepared } = adapter.instances.get("preview-1")!.runs[0]!;
+  assert.deepEqual(prepared, {
     command: "pnpm",
     args: ["install", "--frozen-lockfile"],
     cwd: ".",
@@ -182,6 +191,10 @@ test("starts, persists, reconnects, and stops a durable version preview", async 
   assert.equal(
     Buffer.from(adapter.instances.get("preview-1")!.files.get("src/index.ts")!).toString(),
     "export const ready = true;\n",
+  );
+  assert.equal(
+    Buffer.from(adapter.instances.get("preview-1")!.files.get("preview.config.ts")!).toString(),
+    "export const preview = true;\n",
   );
 
   const second = createPreviewViby(repository, adapter);
@@ -198,6 +211,60 @@ test("starts, persists, reconnects, and stops a durable version preview", async 
 
   await second.close();
   await first.close();
+});
+
+test("streams provider-neutral preview phases and terminal output", async () => {
+  const repository = new MemoryRepository();
+  const adapter = new PreviewSandboxAdapter();
+  const { viby, version } = await importVersion(repository, adapter);
+  const events: Array<{ readonly type: string; readonly data?: string }> = [];
+
+  const preview = await version.preview({
+    onEvent(event) {
+      events.push({
+        type: event.type,
+        ...(event.type === "command.output" ? { data: event.data } : {}),
+      });
+    },
+  });
+
+  assert.equal(preview.status, "ready");
+  assert.deepEqual(events.map((event) => event.type), [
+    "preview.created",
+    "workspace.prepared",
+    "command.started",
+    "command.output",
+    "command.completed",
+    "command.started",
+    "command.output",
+    "readiness.started",
+    "preview.ready",
+  ]);
+  assert.deepEqual(events.filter((event) => event.type === "command.output"), [
+    { type: "command.output", data: "dependencies installed\n" },
+    { type: "command.output", data: "development server started\n" },
+  ]);
+  await viby.close();
+});
+
+test("coalesces concurrent preview starts for the same immutable version", async () => {
+  const repository = new MemoryRepository();
+  const adapter = new PreviewSandboxAdapter();
+  adapter.createDelayMs = 20;
+  const { viby, version } = await importVersion(repository, adapter);
+  const firstEvents: string[] = [];
+  const secondEvents: string[] = [];
+
+  const [first, second] = await Promise.all([
+    version.preview({ onEvent: (event) => { firstEvents.push(event.type); } }),
+    version.preview({ onEvent: (event) => { secondEvents.push(event.type); } }),
+  ]);
+
+  assert.equal(first.id, second.id);
+  assert.equal(adapter.creates.length, 1);
+  assert.ok(firstEvents.includes("command.output"));
+  assert.ok(secondEvents.includes("command.output"));
+  await viby.close();
 });
 
 test("hosts configured durable previews without a product lifecycle callback", async () => {
@@ -224,6 +291,29 @@ test("hosts configured durable previews without a product lifecycle callback", a
   assert.equal(second.cached, true);
   assert.equal(adapter.creates.length, 1);
 
+  await viby.close();
+});
+
+test("streams configured preview progress through the standard Web API", async () => {
+  const repository = new MemoryRepository();
+  const adapter = new PreviewSandboxAdapter();
+  const { viby, version } = await importVersion(repository, adapter);
+  const api = createVibyApi({
+    viby,
+    authenticate: () => scope,
+    preview: true,
+  });
+  const response = await api.fetch(new Request(
+    `https://app.example/api/viby/chats/${version.chatId}/versions/${version.id}/preview`,
+    { method: "POST", headers: { Accept: "text/event-stream" } },
+  ));
+
+  assert.equal(response.headers.get("content-type"), "text/event-stream; charset=utf-8");
+  const body = await response.text();
+  assert.match(body, /event: command\.output/);
+  assert.match(body, /dependencies installed/);
+  assert.match(body, /development server started/);
+  assert.match(body, /event: preview\.result/);
   await viby.close();
 });
 

@@ -1,4 +1,5 @@
 import type { GenerationEvent, GenerationStreamOptions } from "./types.js";
+import type { PreviewEvent, PreviewEventListener } from "./preview.js";
 import { ConfigurationError } from "./errors.js";
 
 const DEFAULT_RETRY_MS = 1_000;
@@ -13,6 +14,26 @@ export interface GenerationEventStreamResponseOptions extends GenerationStreamOp
   readonly headers?: HeadersInit;
   readonly retryMs?: number;
 }
+
+export interface PreviewEventStreamOpenOptions {
+  readonly onEvent: PreviewEventListener;
+  readonly signal?: AbortSignal;
+}
+
+export type PreviewEventStreamOpen<Result> = (
+  options: PreviewEventStreamOpenOptions,
+) => Promise<Result>;
+
+export interface PreviewEventStreamResponseOptions {
+  readonly request?: Request;
+  readonly signal?: AbortSignal;
+  readonly headers?: HeadersInit;
+}
+
+export type PreviewEventStreamMessage<Result> =
+  | PreviewEvent
+  | { readonly type: "preview.result"; readonly result: Result }
+  | { readonly type: "preview.error"; readonly error: string };
 
 /** Read a resumable generation cursor from the standard SSE Last-Event-ID header. */
 export function generationEventCursor(
@@ -84,6 +105,50 @@ export function generationEventStreamResponse(
   return new Response(generationEventStream(generation, options), { headers });
 }
 
+/**
+ * Stream real provider-neutral preview lifecycle and terminal output events.
+ * The final frame is `preview.result`; failures are delivered as
+ * `preview.error` so a response can start immediately while setup continues.
+ */
+export function previewEventStreamResponse<Result>(
+  open: PreviewEventStreamOpen<Result>,
+  options: PreviewEventStreamResponseOptions = {},
+): Response {
+  if (typeof open !== "function") {
+    throw new ConfigurationError("Preview event streams require an open function.");
+  }
+  const signal = combineSignals(options.signal, options.request?.signal);
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      let closed = false;
+      const enqueue = (message: PreviewEventStreamMessage<Result>) => {
+        if (closed) return;
+        controller.enqueue(encoder.encode(serializePreviewEvent(message)));
+      };
+      void open({
+        onEvent: (event) => enqueue(event),
+        ...(signal ? { signal } : {}),
+      }).then(
+        (result) => {
+          enqueue({ type: "preview.result", result });
+          closed = true;
+          controller.close();
+        },
+        (error) => {
+          enqueue({ type: "preview.error", error: previewErrorMessage(error) });
+          closed = true;
+          controller.close();
+        },
+      );
+    },
+  });
+  const headers = new Headers(options.headers);
+  headers.set("Content-Type", "text/event-stream; charset=utf-8");
+  headers.set("Cache-Control", "no-cache, no-transform");
+  headers.set("X-Accel-Buffering", "no");
+  return new Response(stream, { headers });
+}
+
 function serializeGenerationEvent(event: GenerationEvent): string {
   return [
     `id: ${event.cursor}`,
@@ -97,12 +162,28 @@ function serializeGenerationEvent(event: GenerationEvent): string {
   ].join("\n");
 }
 
+function serializePreviewEvent<Result>(event: PreviewEventStreamMessage<Result>): string {
+  return [
+    `event: ${event.type}`,
+    `data: ${JSON.stringify(event, (_key, value) => (
+      value instanceof Date ? value.toISOString() : value
+    ))}`,
+    "",
+    "",
+  ].join("\n");
+}
+
 function normalizeRetryMs(value: number | undefined): number {
   const retryMs = value ?? DEFAULT_RETRY_MS;
   if (!Number.isInteger(retryMs) || retryMs < 100 || retryMs > 60_000) {
     throw new ConfigurationError("SSE retryMs must be an integer between 100 and 60000.");
   }
   return retryMs;
+}
+
+function previewErrorMessage(error: unknown): string {
+  if (error instanceof Error && error.message.trim()) return error.message;
+  return typeof error === "string" && error.trim() ? error : "Preview failed.";
 }
 
 function combineSignals(

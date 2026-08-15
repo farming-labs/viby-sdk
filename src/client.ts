@@ -1900,12 +1900,11 @@ export class Version<Framework extends FrameworkId = FrameworkId> {
   /** Starts a durable sandbox-backed preview for this immutable source version. */
   async preview(options: PreviewOpenOptions = {}): Promise<Preview<Framework>> {
     const resolved = this.#dependencies.previews.resolve(options);
-    const sandbox = await this.sandbox(resolved.sandbox);
-    const data = await this.#dependencies.previews.open(
+    const data = await this.#dependencies.previews.start(
       this.#dependencies.scope,
       this.#data,
-      sandbox,
       resolved,
+      () => this.sandbox(resolved.sandbox),
     );
     return new Preview(data, this.#dependencies);
   }

@@ -3,6 +3,7 @@ import { test } from "node:test";
 import {
   generationEventCursor,
   generationEventStreamResponse,
+  previewEventStreamResponse,
   type GenerationEventStreamSource,
 } from "../src/http.js";
 import { ConfigurationError } from "../src/errors.js";
@@ -88,4 +89,36 @@ test("validates the SSE retry interval", () => {
     () => generationEventStreamResponse(source, { retryMs: 99 }),
     ConfigurationError,
   );
+});
+
+test("streams preview output before the final result", async () => {
+  const response = previewEventStreamResponse(async ({ onEvent }) => {
+    await onEvent({
+      type: "command.output",
+      previewId: "preview-1",
+      stage: "prepare",
+      index: 0,
+      stream: "stdout",
+      data: "installed 42 packages\n",
+      createdAt: new Date("2026-08-15T10:00:00.000Z"),
+    });
+    return { url: "https://preview.example" };
+  });
+
+  assert.equal(response.headers.get("content-type"), "text/event-stream; charset=utf-8");
+  const body = await response.text();
+  assert.match(body, /event: command\.output/);
+  assert.match(body, /installed 42 packages/);
+  assert.match(body, /"createdAt":"2026-08-15T10:00:00\.000Z"/);
+  assert.match(body, /event: preview\.result/);
+  assert.match(body, /https:\/\/preview\.example/);
+});
+
+test("finishes preview streams with a typed error event", async () => {
+  const response = previewEventStreamResponse(async () => {
+    throw new Error("dependency install failed");
+  });
+  const body = await response.text();
+  assert.match(body, /event: preview\.error/);
+  assert.match(body, /dependency install failed/);
 });

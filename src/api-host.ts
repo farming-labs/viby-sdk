@@ -11,7 +11,7 @@ import {
   NotFoundError,
   VibyError,
 } from "./errors.js";
-import { generationEventStreamResponse } from "./http.js";
+import { generationEventStreamResponse, previewEventStreamResponse } from "./http.js";
 import type {
   AttachmentInput,
   ChatMetadata,
@@ -27,7 +27,7 @@ import type {
   UserScope,
 } from "./types.js";
 import type { IntegrationCategory, IntegrationSourceFile } from "./integrations.js";
-import type { PreviewSessionData } from "./preview.js";
+import type { PreviewEventListener, PreviewSessionData } from "./preview.js";
 import type { ToolSourceRegistrationStatus } from "./tool-source-registry.js";
 
 const DEFAULT_BASE_PATH = "/api/viby";
@@ -377,7 +377,7 @@ async function route<Framework extends FrameworkId>(
           }, 501);
         }
         if (preview === true) {
-          return json(await openManagedPreview(user, version, request.signal), 201);
+          return managedPreviewResponse(user, version, request);
         }
         const result = await preview({ request, scope, viby: user, chat, version });
         return result instanceof Response ? result : json(result, 201);
@@ -477,7 +477,7 @@ async function route<Framework extends FrameworkId>(
         }, 501);
       }
       if (preview === true) {
-        return json(await openManagedPreview(user, version, request.signal), 201);
+        return managedPreviewResponse(user, version, request);
       }
       const result = await preview({ request, scope, viby: user, chat, version });
       return result instanceof Response ? result : json(result, 201);
@@ -491,7 +491,8 @@ async function route<Framework extends FrameworkId>(
 async function openManagedPreview<Framework extends FrameworkId>(
   user: ScopedViby<Framework>,
   version: Version<Framework>,
-  signal: AbortSignal,
+  signal: AbortSignal | undefined,
+  onEvent?: PreviewEventListener,
 ) {
   const candidates = await user.previews.list({ versionId: version.id, status: "ready" });
   for (const candidate of [...candidates].sort((left, right) => (
@@ -502,8 +503,25 @@ async function openManagedPreview<Framework extends FrameworkId>(
       return { ...previewValue(preview.data()), cached: true };
     }
   }
-  const preview = await version.preview({ signal });
+  const preview = await version.preview({
+    ...(signal ? { signal } : {}),
+    ...(onEvent ? { onEvent } : {}),
+  });
   return { ...previewValue(preview.data()), cached: false };
+}
+
+function managedPreviewResponse<Framework extends FrameworkId>(
+  user: ScopedViby<Framework>,
+  version: Version<Framework>,
+  request: Request,
+): Promise<Response> | Response {
+  if (request.headers.get("accept")?.toLowerCase().includes("text/event-stream")) {
+    return previewEventStreamResponse(
+      ({ onEvent, signal }) => openManagedPreview(user, version, signal, onEvent),
+      { request },
+    );
+  }
+  return openManagedPreview(user, version, request.signal).then((preview) => json(preview, 201));
 }
 
 function previewValue<Framework extends FrameworkId>(preview: PreviewSessionData<Framework>) {

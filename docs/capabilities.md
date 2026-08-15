@@ -50,7 +50,7 @@ The core contract branches on declared capabilities, never provider names.
 | Lifecycle | materialize an immutable version, idempotent cleanup, durable leases, and reconnect by lease ID |
 | Command safety | provider-neutral allow/deny/approval-required policy with bounded command metadata |
 | Agent execution | capability-gated sandbox tools with step, time, token, command, and output budgets |
-| Durable version previews | immutable-version materialization, tracked server startup, HTTP readiness, persisted URL/status/failure/expiry, reconnect, stop, and expired-session cleanup |
+| Durable version previews | immutable-version materialization, preview-only file overlays, coalesced concurrent starts, live provider-neutral phases and stdout/stderr, tracked server startup, HTTP readiness, persisted URL/status/failure/expiry, reconnect, stop, and expired-session cleanup |
 | Conformance | reusable adapter test suite with caller-supplied harmless commands |
 | Included adapters | E2B, Vercel Sandbox, local Docker, Daytona, Modal, and Cloudflare Sandbox |
 

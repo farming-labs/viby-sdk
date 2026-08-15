@@ -17,7 +17,11 @@ export {
 export { PreviewError, PreviewRegistry } from "./preview.js";
 export type {
   CreatePreviewSessionRecord,
+  PreviewCommandSnapshot,
+  PreviewCommandStage,
   PreviewConfig,
+  PreviewEvent,
+  PreviewEventListener,
   PreviewOpenOptions,
   PreviewSessionData,
   PreviewSessionListOptions,
@@ -320,10 +324,15 @@ export {
   generationEventCursor,
   generationEventStream,
   generationEventStreamResponse,
+  previewEventStreamResponse,
 } from "./http.js";
 export type {
   GenerationEventStreamResponseOptions,
   GenerationEventStreamSource,
+  PreviewEventStreamMessage,
+  PreviewEventStreamOpen,
+  PreviewEventStreamOpenOptions,
+  PreviewEventStreamResponseOptions,
 } from "./http.js";
 export type {
   AgentWorkspaceCommitInput,
