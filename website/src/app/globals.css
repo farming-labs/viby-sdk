@@ -176,7 +176,49 @@ svg {
 }
 
 .hero-install code {
+  display: block;
+  width: 18ch;
   font: inherit;
+}
+
+.hero-install-command {
+  display: block;
+  width: 0;
+  overflow: hidden;
+  border-right: 1px solid var(--landing-fg-2);
+  white-space: nowrap;
+  animation:
+    install-command-typing 6.8s steps(18, end) infinite,
+    install-command-caret 720ms step-end infinite;
+}
+
+@keyframes install-command-typing {
+  0%,
+  8% {
+    width: 0;
+  }
+
+  42%,
+  68% {
+    width: 18ch;
+  }
+
+  96%,
+  100% {
+    width: 0;
+  }
+}
+
+@keyframes install-command-caret {
+  0%,
+  45% {
+    border-color: var(--landing-fg-2);
+  }
+
+  46%,
+  100% {
+    border-color: transparent;
+  }
 }
 
 .hero-actions {
@@ -870,5 +912,11 @@ html.dark #nd-docs-layout[data-fd-framework] figure.shiki {
     animation-iteration-count: 1 !important;
     scroll-behavior: auto !important;
     transition-duration: 0.01ms !important;
+  }
+
+  .hero-install-command {
+    width: 18ch;
+    border-right: 0;
+    animation: none;
   }
 }

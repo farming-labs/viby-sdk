@@ -126,7 +126,9 @@ export default function HomePage() {
           </p>
           <div className="hero-install" aria-label="Install @viby/sdk with pnpm">
             <span aria-hidden="true">$</span>
-            <code>pnpm add @viby/sdk</code>
+            <code aria-label="pnpm add @viby/sdk">
+              <span className="hero-install-command" aria-hidden="true">pnpm add @viby/sdk</span>
+            </code>
           </div>
           <div className="hero-actions">
             <a className="hero-button hero-button-primary" href="/docs">
