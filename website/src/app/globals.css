@@ -161,18 +161,13 @@ svg {
 .hero-install {
   display: flex;
   width: fit-content;
-  min-height: 40px;
   align-items: center;
-  gap: 0.625rem;
+  gap: 0.55rem;
   margin-top: 1.5rem;
-  border: 1px solid var(--landing-border);
-  border-radius: 7px;
-  background: rgb(255 255 255 / 0.035);
-  padding: 0 0.875rem;
   color: var(--landing-fg);
   font-family: var(--font-mono);
   font-size: 0.8125rem;
-  line-height: 1;
+  line-height: 1.5;
 }
 
 .hero-install > span {
