@@ -68,7 +68,8 @@ svg {
   --landing-fg-5: rgb(255 255 255 / 0.2);
   --landing-border: rgb(255 255 255 / 0.06);
   --landing-border-subtle: rgb(255 255 255 / 0.04);
-  --landing-rail-inset: 7px;
+  --landing-rail-inset: 12px;
+  --landing-content-inset: clamp(1.25rem, 2.25vw, 2rem);
   position: relative;
   isolation: isolate;
   height: 100svh;
@@ -129,7 +130,7 @@ svg {
   align-items: center;
   justify-content: space-between;
   margin-inline: auto;
-  padding: 0 24px;
+  padding: 0 var(--landing-content-inset);
 }
 
 .viby-logo {
@@ -197,7 +198,7 @@ svg {
 .hero-copy {
   width: min(100%, 1320px);
   margin-inline: auto;
-  padding: 0 24px;
+  padding: 0 var(--landing-content-inset);
 }
 
 .hero-copy > * {
