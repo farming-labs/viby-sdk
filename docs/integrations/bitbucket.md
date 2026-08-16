@@ -1,3 +1,8 @@
+---
+title: "Bitbucket repository integration"
+description: "Connect Bitbucket Cloud, import repositories, push immutable versions, and open pull requests."
+---
+
 # Bitbucket repository integration
 
 `@viby/sdk/integrations/bitbucket` connects each product user to Bitbucket Cloud through an OAuth consumer and implements Viby's provider-neutral repository contract. The host owns the OAuth consumer, callback route, database, and secret-encryption key. Access and refresh tokens stay behind the Viby secret-store boundary.

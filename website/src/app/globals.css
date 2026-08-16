@@ -619,7 +619,7 @@ svg {
   width: 100%;
   max-width: 704px;
   justify-self: center;
-  padding: 32px 32px 64px;
+  padding: 4.5rem 32px 64px;
 }
 
 /* The Farm adapter renders Fumadocs' browser shell. Its grid must stay in
@@ -644,17 +644,241 @@ svg {
 
 /* Keep the title, document actions, and metadata as one deliberate header
  * region. The standalone adapter previously collapsed these rows together. */
+#nd-docs-layout[data-fd-framework] .fd-title-decorations-host,
+#nd-docs-layout[data-fd-framework] .fd-generated-page-header {
+  margin-bottom: 2.5rem;
+}
+
+/* The header owns the gap before the document body. Reset the first content
+ * block's top margin so heading margins do not make that gap unpredictable. */
+#nd-docs-layout[data-fd-framework]
+  .fd-title-decorations-host
+  + :is(h2, h3, p, ul, ol, figure, blockquote, details, .fd-table-wrapper),
+#nd-docs-layout[data-fd-framework]
+  .fd-generated-page-header
+  + :is(h2, h3, p, ul, ol, figure, blockquote, details, .fd-table-wrapper) {
+  margin-top: 0 !important;
+}
+
 #nd-docs-layout[data-fd-framework] .fd-below-title-block {
-  margin: 0.75rem 0 2.5rem;
+  margin: 0 0 1.5rem;
 }
 
 #nd-docs-layout[data-fd-framework] .fd-title-separator {
-  margin: 0 0 0.75rem;
+  display: none;
+}
+
+#nd-docs-layout[data-fd-framework] .fd-page-description {
+  margin-bottom: 0.75rem;
 }
 
 #nd-docs-layout[data-fd-framework] .fd-page-actions,
 #nd-docs-layout[data-fd-framework] [data-page-actions] {
-  margin: 0 0 0.625rem;
+  isolation: isolate;
+  width: fit-content;
+  gap: 0;
+  margin: 0;
+  border-radius: calc(var(--radius) * 0.8);
+  background: var(--color-fd-secondary);
+}
+
+/* Match shadcn docs' compact page-action group: Copy Page remains the primary
+ * label while the adjacent provider menu becomes a small chevron segment. */
+#nd-docs-layout[data-fd-framework]
+  .fd-page-actions
+  > .fd-page-action-btn,
+#nd-docs-layout[data-fd-framework]
+  .fd-page-actions
+  > .fd-page-action-dropdown
+  > .fd-page-action-btn {
+  position: relative;
+  z-index: 0;
+  height: 1.75rem;
+  min-height: 1.75rem;
+  align-items: center;
+  justify-content: center;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  padding: 0 0.625rem;
+  color: var(--color-fd-secondary-foreground) !important;
+  font-size: 0.8rem !important;
+  line-height: 1;
+  box-shadow: none !important;
+}
+
+/* Treat Copy Page and the provider chevron as one segmented control. Only the
+ * outside corners are rounded; the shared edge remains perfectly square. */
+#nd-docs-layout[data-fd-framework]
+  .fd-page-actions
+  > .fd-page-action-btn:first-child {
+  border-radius: calc(var(--radius) * 0.8) 0 0 calc(var(--radius) * 0.8) !important;
+}
+
+#nd-docs-layout[data-fd-framework]
+  .fd-page-actions
+  > .fd-page-action-dropdown:last-child
+  > .fd-page-action-btn {
+  border-radius: 0 calc(var(--radius) * 0.8) calc(var(--radius) * 0.8) 0 !important;
+}
+
+#nd-docs-layout[data-fd-framework]
+  .fd-page-actions
+  > .fd-page-action-btn:hover,
+#nd-docs-layout[data-fd-framework]
+  .fd-page-actions
+  > .fd-page-action-dropdown
+  > .fd-page-action-btn:hover,
+#nd-docs-layout[data-fd-framework]
+  .fd-page-actions
+  > .fd-page-action-dropdown
+  > .fd-page-action-btn[aria-expanded="true"] {
+  background: color-mix(in oklab, var(--color-fd-secondary) 76%, var(--color-fd-foreground)) !important;
+}
+
+#nd-docs-layout[data-fd-framework]
+  .fd-page-actions
+  > .fd-page-action-btn:focus-visible,
+#nd-docs-layout[data-fd-framework]
+  .fd-page-actions
+  > .fd-page-action-dropdown
+  > .fd-page-action-btn:focus-visible {
+  z-index: 2;
+  outline: none;
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--color-fd-ring) 50%, transparent) !important;
+}
+
+#nd-docs-layout[data-fd-framework]
+  .fd-page-actions
+  > .fd-page-action-btn
+  svg {
+  flex: 0 0 auto;
+  align-self: center;
+  width: 1rem;
+  height: 1rem;
+  color: currentColor;
+}
+
+#nd-docs-layout[data-fd-framework]
+  .fd-page-actions
+  > .fd-page-action-dropdown {
+  position: relative;
+  display: flex;
+  height: 1.75rem;
+  align-items: center;
+  margin-left: 0;
+}
+
+#nd-docs-layout[data-fd-framework]
+  .fd-page-actions
+  > .fd-page-action-dropdown::before {
+  position: absolute;
+  z-index: 1;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 1px;
+  background: color-mix(in oklab, var(--color-fd-foreground) 8%, transparent);
+  content: "";
+  pointer-events: none;
+}
+
+#nd-docs-layout[data-fd-framework]
+  .fd-page-actions
+  > .fd-page-action-dropdown
+  > .fd-page-action-btn {
+  width: 1.75rem;
+  padding: 0;
+  gap: 0;
+}
+
+#nd-docs-layout[data-fd-framework]
+  .fd-page-actions
+  > .fd-page-action-dropdown
+  > .fd-page-action-btn
+  > span {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+#nd-docs-layout[data-fd-framework]
+  .fd-page-actions
+  > .fd-page-action-dropdown
+  > .fd-page-action-btn
+  svg {
+  flex: 0 0 auto;
+  align-self: center;
+  width: 1rem;
+  height: 1rem;
+  color: currentColor;
+}
+
+#nd-docs-layout[data-fd-framework] .fd-page-action-menu {
+  z-index: 80;
+  top: calc(100% + 0.5rem);
+  min-width: 12rem;
+  padding: 0.25rem;
+  border: 1px solid var(--color-fd-border) !important;
+  border-radius: calc(var(--radius) * 0.8);
+  background: var(--color-fd-popover) !important;
+  opacity: 1 !important;
+  box-shadow:
+    0 12px 32px rgb(0 0 0 / 22%),
+    0 2px 6px rgb(0 0 0 / 16%);
+  animation: none !important;
+  transform: none !important;
+}
+
+#nd-docs-layout[data-fd-framework] .fd-page-action-menu-item {
+  min-height: 2rem;
+  border-radius: calc(var(--radius) * 0.55);
+  padding: 0.375rem 0.5rem;
+  font-size: 0.8rem;
+}
+
+#nd-docs-layout[data-fd-framework]
+  .fd-page-action-menu-item:is(:hover, :focus-visible) {
+  background: var(--color-fd-accent) !important;
+  outline: none;
+}
+
+/* The shadcn docs place page actions beside the title. The Farm adapter
+ * portals its title decorations after the heading, so position that existing
+ * action block into the same title row without changing adapter behavior. */
+@media (min-width: 640px) {
+  #nd-docs-layout[data-fd-framework] .fd-docs-content {
+    position: relative;
+  }
+
+  #nd-docs-layout[data-fd-framework]
+    .fd-docs-content
+    > h1:first-child {
+    max-width: calc(100% - 10rem);
+  }
+
+  #nd-docs-layout[data-fd-framework]
+    .fd-title-decorations-host
+    .fd-below-title-block {
+    z-index: 70;
+    position: absolute;
+    top: 0;
+    right: 0;
+    margin: 0;
+  }
+
+  #nd-docs-layout[data-fd-framework] .fd-page-action-menu {
+    right: 0;
+    left: auto;
+  }
+
+  #nd-docs-layout[data-fd-framework] .fd-page-description {
+    margin-bottom: 1.5rem;
+  }
 }
 
 #nd-docs-layout[data-fd-framework] .fd-page-meta {
@@ -667,7 +891,7 @@ svg {
 #nd-docs-layout[data-fd-framework]
   #nd-page
   .prose
-  p:not(:where(.not-prose, .not-prose *)) {
+  p:not(:where(.not-prose, .not-prose *, .fd-page-description)) {
   margin: 0 0 1.25rem !important;
 }
 
@@ -712,11 +936,65 @@ svg {
   display: none !important;
 }
 
+/* Keep the public navigation grouped without making labels feel detached from
+ * their own links. Flat Farm groups are direct siblings in the scroll tree. */
+#nd-sidebar
+  [data-radix-scroll-area-viewport]
+  > div
+  > div:has(> div[id^="radix-"]),
+#nd-sidebar-mobile
+  [data-radix-scroll-area-viewport]
+  > div
+  > div:has(> div[id^="radix-"]) {
+  margin-top: 0 !important;
+}
+
+#nd-sidebar
+  [data-radix-scroll-area-viewport]
+  > div
+  > div:has(> div[id^="radix-"])
+  + div:has(> div[id^="radix-"]),
+#nd-sidebar-mobile
+  [data-radix-scroll-area-viewport]
+  > div
+  > div:has(> div[id^="radix-"])
+  + div:has(> div[id^="radix-"]) {
+  margin-top: 1.375rem !important;
+}
+
+#nd-sidebar
+  [data-radix-scroll-area-viewport]
+  > div
+  > div:has(> div[id^="radix-"])
+  > div:first-child,
+#nd-sidebar-mobile
+  [data-radix-scroll-area-viewport]
+  > div
+  > div:has(> div[id^="radix-"])
+  > div:first-child {
+  margin-bottom: 0.25rem !important;
+}
+
+/* Shadcn secondary surfaces use fill and state contrast rather than an
+ * outline. Keep copy/page actions calm and let focus-visible own the ring. */
+#nd-docs-layout[data-fd-framework]
+  :is(
+    .fd-page-action-btn,
+    .fd-copy-btn,
+    .fd-ai-code-copy,
+    .fd-ai-model-dropdown-btn,
+    .fd-page-footer > a,
+    .fd-page-nav-card,
+    .fd-page-nav a
+  ) {
+  border: 0 !important;
+}
+
 #nd-docs-layout[data-fd-framework] figure.shiki {
   width: 100%;
   min-width: 0;
-  border: 1px solid var(--fd-shadcn-soft-border) !important;
-  border-radius: calc(var(--radius) * 0.9) !important;
+  border: 0 !important;
+  border-radius: calc(var(--radius) * 1.1) !important;
   background: var(--fd-shadcn-code) !important;
 }
 
@@ -746,12 +1024,40 @@ html.dark #nd-docs-layout[data-fd-framework] figure.shiki {
   padding-inline: 1rem 3rem !important;
 }
 
+/* Give search the same bounded shadcn surface language as the document pager:
+ * an opaque card, a readable one-pixel edge, and restrained state elevation. */
+#nd-docs-layout[data-fd-framework]
+  :is(button[data-search-full], .fd-sidebar-search-btn, .fd-search-trigger-mobile) {
+  min-height: 2.5rem;
+  border: 1px solid var(--fd-shadcn-soft-border) !important;
+  border-radius: calc(var(--radius) * 0.8) !important;
+  background: var(--color-fd-card) !important;
+  color: var(--color-fd-muted-foreground) !important;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 5%) !important;
+  transition:
+    border-color 150ms,
+    background-color 150ms,
+    color 150ms,
+    box-shadow 150ms !important;
+}
+
+#nd-docs-layout[data-fd-framework]
+  :is(button[data-search-full], .fd-sidebar-search-btn, .fd-search-trigger-mobile):hover {
+  border-color: var(--color-fd-border) !important;
+  background: color-mix(in oklab, var(--color-fd-accent) 72%, var(--color-fd-card)) !important;
+  color: var(--color-fd-foreground) !important;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 8%) !important;
+}
+
+#nd-docs-layout[data-fd-framework]
+  :is(button[data-search-full], .fd-sidebar-search-btn, .fd-search-trigger-mobile):focus-visible {
+  border-color: var(--color-fd-ring) !important;
+  outline: 2px solid var(--color-fd-ring);
+  outline-offset: 2px;
+}
+
 /* The published theme still renders each shortcut key as a separate padded
  * badge. Treat the shortcut as one compact keyboard hint instead. */
-#nd-docs-layout[data-fd-framework] button[data-search-full] {
-  border: 1px solid var(--fd-shadcn-soft-border) !important;
-  background: color-mix(in oklab, var(--fd-shadcn-control) 82%, transparent) !important;
-}
 
 #nd-docs-layout[data-fd-framework]
   button[data-search-full]
@@ -763,7 +1069,10 @@ html.dark #nd-docs-layout[data-fd-framework] figure.shiki {
   gap: 0.1875rem !important;
   border: 1px solid var(--fd-shadcn-soft-border) !important;
   border-radius: calc(var(--radius) * 0.55) !important;
-  background: color-mix(in oklab, var(--color-fd-background) 72%, transparent) !important;
+  background: var(--color-fd-muted) !important;
+  box-shadow:
+    0 1px 1px rgb(0 0 0 / 5%),
+    inset 0 -1px 0 color-mix(in oklab, var(--color-fd-border) 72%, transparent) !important;
   padding: 0 0.35rem !important;
   line-height: 1 !important;
 }
@@ -782,50 +1091,6 @@ html.dark #nd-docs-layout[data-fd-framework] figure.shiki {
  * data attribute here: a cached browser shell may not carry the latest one. */
 #nd-page > div[class~="@container"] {
   display: none !important;
-}
-
-/* The current Farm adapter release models grouped navigation as disclosure
- * folders. Keep the page links flat and restore shadcn's static section labels
- * visually until the non-collapsible tree contract lands in the package. */
-#nd-sidebar[data-collapsed="false"] a[href="/docs/api/v1"],
-#nd-sidebar[data-collapsed="false"] a[href="/docs/integrations/github"],
-#nd-sidebar[data-collapsed="false"] a[href="/docs/live-provider-testing"],
-#nd-sidebar-mobile a[href="/docs/api/v1"],
-#nd-sidebar-mobile a[href="/docs/integrations/github"],
-#nd-sidebar-mobile a[href="/docs/live-provider-testing"] {
-  margin-top: 1.9rem;
-  overflow: visible !important;
-}
-
-#nd-sidebar[data-collapsed="false"] a[href="/docs/api/v1"]::before,
-#nd-sidebar[data-collapsed="false"] a[href="/docs/integrations/github"]::before,
-#nd-sidebar[data-collapsed="false"] a[href="/docs/live-provider-testing"]::before,
-#nd-sidebar-mobile a[href="/docs/api/v1"]::before,
-#nd-sidebar-mobile a[href="/docs/integrations/github"]::before,
-#nd-sidebar-mobile a[href="/docs/live-provider-testing"]::before {
-  position: absolute;
-  inset-inline-start: 0.5rem;
-  top: -1.45rem;
-  color: var(--color-fd-muted-foreground, #737373);
-  font-size: 0.8rem;
-  font-weight: 500;
-  line-height: 1rem;
-  pointer-events: none;
-}
-
-#nd-sidebar[data-collapsed="false"] a[href="/docs/api/v1"]::before,
-#nd-sidebar-mobile a[href="/docs/api/v1"]::before {
-  content: "Build with viby";
-}
-
-#nd-sidebar[data-collapsed="false"] a[href="/docs/integrations/github"]::before,
-#nd-sidebar-mobile a[href="/docs/integrations/github"]::before {
-  content: "Integrations";
-}
-
-#nd-sidebar[data-collapsed="false"] a[href="/docs/live-provider-testing"]::before,
-#nd-sidebar-mobile a[href="/docs/live-provider-testing"]::before {
-  content: "Operations";
 }
 
 @media (min-width: 768px) {

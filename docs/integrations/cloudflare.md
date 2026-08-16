@@ -1,3 +1,8 @@
+---
+title: "Cloudflare deployment integration"
+description: "Connect Cloudflare accounts and deploy immutable prebuilt assets to Pages."
+---
+
 # Cloudflare deployment integration
 
 `@viby/sdk/integrations/cloudflare` connects each product user to their own Cloudflare account and implements the provider-neutral deployment contract with Pages Direct Upload. The host owns the Cloudflare OAuth client, callback route, database, secret-encryption key, sandbox, artifact store, and declarative framework build command. Viby never exposes the resulting access or refresh token to the browser, a model, or a normal application record.
@@ -25,7 +30,9 @@ const viby = createViby({
   framework: "farmjs",
   model,
   sandbox,
-  artifactStore,
+  storage: {
+    artifacts,
+  },
   deployment: {
     preparation: {
       install: { command: "pnpm", args: ["install", "--frozen-lockfile"] },
@@ -88,7 +95,7 @@ await hosting.projects.create({
 
 ## Deploy prebuilt immutable assets
 
-Cloudflare Pages Direct Upload accepts prebuilt assets, so the adapter declares `{ mode: "prebuilt", outputDirectory: "dist" }`. Viby automatically materializes the raw immutable version in the configured sandbox, runs the framework build contract, stores a checked immutable ZIP through `artifactStore`, and then sends the built files to Cloudflare:
+Cloudflare Pages Direct Upload accepts prebuilt assets, so the adapter declares `{ mode: "prebuilt", outputDirectory: "dist" }`. Viby automatically materializes the raw immutable version in the configured sandbox, runs the framework build contract, stores a checked immutable ZIP through `storage.artifacts`, and then sends the built files to Cloudflare:
 
 ```ts
 const version = await chat.latestVersion();
