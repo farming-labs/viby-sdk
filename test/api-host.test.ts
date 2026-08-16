@@ -7,11 +7,12 @@ import { createVibyWithDependencies } from "../src/client.js";
 import { EnvironmentManager } from "../src/environment.js";
 import type { GeneratorInput, GeneratorOutput, ProjectGenerator } from "../src/generator.js";
 import { SkillResolver } from "../src/skills.js";
-import type { VersionFile } from "../src/types.js";
+import type { FrameworkId, VersionFile } from "../src/types.js";
 import { sha256 } from "../src/utils.js";
 import { MemoryRepository } from "./helpers/memory-repository.js";
 import { MemoryEnvironmentVariableStore } from "./helpers/memory-environment-store.js";
 import { MemorySecretStore } from "./helpers/memory-integration-store.js";
+import type { ChatReadSnapshotOptions } from "../src/repository.js";
 
 const scope = { tenantId: "api-tenant", userId: "api-user" };
 const usage: LanguageModelUsage = {
@@ -21,6 +22,33 @@ const usage: LanguageModelUsage = {
   outputTokenDetails: { textTokens: 5, reasoningTokens: 0 },
   totalTokens: 8,
 };
+
+class SnapshotMemoryRepository extends MemoryRepository {
+  snapshotReads = 0;
+
+  async readChatSnapshot<Framework extends FrameworkId>(
+    readScope: typeof scope,
+    options: ChatReadSnapshotOptions,
+  ) {
+    this.snapshotReads += 1;
+    const [chat, messages, versions] = await Promise.all([
+      this.getChat<Framework>(readScope, options.chatId),
+      this.listMessagePage(
+        readScope,
+        options.chatId,
+        options.messages.limit,
+        options.messages.after,
+      ),
+      this.listVersionPage<Framework>(
+        readScope,
+        options.chatId,
+        options.versions.limit,
+        options.versions.after,
+      ),
+    ]);
+    return chat ? { chat, messages, versions } : null;
+  }
+}
 
 test("hosts chat, message, stream, task, preview, and download flows with Web APIs", async () => {
   const inputs: GeneratorInput<"farm">[] = [];
@@ -65,10 +93,11 @@ test("hosts chat, message, stream, task, preview, and download flows with Web AP
       };
     },
   };
+  const repository = new SnapshotMemoryRepository();
   const viby = createVibyWithDependencies(
     { framework: "farm", model: "test/api" as never },
     {
-      repository: new MemoryRepository(),
+      repository,
       generator,
       skillResolver: new SkillResolver({}),
       environment: new EnvironmentManager(
@@ -119,9 +148,16 @@ test("hosts chat, message, stream, task, preview, and download flows with Web AP
     const generation = await requestJson(api, `/generations/${generationId}`);
     assert.equal(object(generation.generation).status, "succeeded");
     const chat = await requestJson(api, `/chats/${chatId}`);
+    assert.equal(repository.snapshotReads, 1);
     const firstVersion = object(array(chat.versions)[0]);
     const versionId = string(firstVersion.id);
     assert.equal(array(chat.messages).length, 2);
+    const firstWindow = await requestJson(
+      api,
+      `/chats/${chatId}?messagesLimit=1&versionsLimit=1`,
+    );
+    assert.equal(array(firstWindow.messages).length, 1);
+    assert.ok(firstWindow.messagesNextCursor);
 
     const edited = await requestJson(api, `/chats/${chatId}/versions/${versionId}/changes`, {
       method: "POST",

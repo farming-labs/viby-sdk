@@ -41,6 +41,78 @@ const usage: LanguageModelUsage = {
   totalTokens: 24,
 };
 
+test("reads an aggregate chat snapshot with durable cursors in Postgres", {
+  skip: databaseUrl ? false : "TEST_DATABASE_URL is not configured",
+}, async () => {
+  assert.ok(databaseUrl);
+  await migrateDatabase(databaseUrl);
+  const repository = new PostgresRepository(databaseUrl);
+  const generator: ProjectGenerator<"farm"> = {
+    async generate(): Promise<GeneratorOutput> {
+      return {
+        kind: "changes",
+        title: "Snapshot project",
+        summary: "Updated through the aggregate read integration test.",
+        changes: [{
+          type: "write",
+          path: "src/index.ts",
+          content: "export const snapshot = 2;\n",
+        }],
+        usage,
+        finishReason: "stop",
+      };
+    },
+  };
+  const viby = createVibyWithDependencies(
+    { framework: "farm", model: "test/postgres-snapshot" as LanguageModel },
+    { repository, generator, skillResolver: new SkillResolver({}) },
+  );
+  const scope = {
+    tenantId: `snapshot-${randomUUID()}`,
+    userId: `snapshot-${randomUUID()}`,
+  };
+  try {
+    const user = viby.forUser(scope);
+    const chat = await user.chats.import({
+      title: "Aggregate snapshot",
+      source: {
+        type: "files",
+        files: [{ path: "src/index.ts", content: "export const snapshot = 1;\n" }],
+      },
+    });
+    const imported = await chat.latestVersion();
+    assert.ok(imported);
+    await imported.iterate({ prompt: "Update the snapshot project" });
+
+    const first = await user.chats.snapshot(chat.id, {
+      messages: { limit: 1 },
+      versions: { limit: 1 },
+    });
+    assert.equal(first.chat.id, chat.id);
+    assert.equal(first.messages.items.length, 1);
+    assert.ok(first.messages.nextCursor);
+    assert.equal(first.versions.items.length, 1);
+    assert.ok(first.versions.nextCursor);
+    assert.ok(first.chat.createdAt instanceof Date);
+    assert.ok(first.messages.items[0]?.createdAt instanceof Date);
+    assert.ok(first.versions.items[0]?.createdAt instanceof Date);
+
+    const second = await user.chats.snapshot(chat.id, {
+      messages: { limit: 1, after: first.messages.nextCursor! },
+      versions: { limit: 1, after: first.versions.nextCursor! },
+    });
+    assert.equal(second.messages.items[0]?.role, "assistant");
+    assert.equal(second.messages.nextCursor, null);
+    assert.equal(second.versions.items[0]?.origin, "imported");
+    assert.equal(second.versions.nextCursor, null);
+
+    await chat.delete({ retentionMs: 0 });
+    await user.chats.purgeDeleted({ limit: 10 });
+  } finally {
+    await viby.close();
+  }
+});
+
 test("persists redacted project environments and encrypted secret values", {
   skip: databaseUrl ? false : "TEST_DATABASE_URL is not configured",
 }, async () => {
@@ -372,6 +444,18 @@ test("persists a durable generation, iteration, events, and download in Postgres
     });
     assert.equal((await persistedChat.listVersions()).items.length, 2);
     assert.equal(calls[1]?.previousFiles[0]?.content, "export const version = 1;\n");
+
+    const snapshot = await user.chats.snapshot(persistedChat.id, {
+      messages: { limit: 3 },
+      versions: { limit: 1 },
+    });
+    assert.equal(snapshot.chat.id, persistedChat.id);
+    assert.equal(snapshot.messages.items.length, 3);
+    assert.ok(snapshot.messages.nextCursor);
+    assert.equal(snapshot.versions.items.length, 1);
+    assert.ok(snapshot.versions.nextCursor);
+    assert.ok(snapshot.messages.items.every((message) => message.createdAt instanceof Date));
+    assert.ok(snapshot.versions.items.every((version) => version.createdAt instanceof Date));
 
     const pushId = randomUUID();
     const pushKey = `postgres-push-${randomUUID()}`;

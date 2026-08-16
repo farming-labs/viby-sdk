@@ -194,6 +194,13 @@ export interface VibyWebChatDetail<Framework extends FrameworkId = FrameworkId> 
   readonly versionsNextCursor: string | null;
 }
 
+export interface VibyWebChatDetailOptions extends VibyWebRequestOptions {
+  readonly messagesLimit?: number;
+  readonly messagesAfter?: string;
+  readonly versionsLimit?: number;
+  readonly versionsAfter?: string;
+}
+
 export interface VibyWebMessagePage {
   readonly messages: readonly VibyApiMessage[];
   readonly nextCursor: string | null;
@@ -246,7 +253,7 @@ export interface VibyWebChatsClient<Framework extends FrameworkId = FrameworkId>
     input: VibyWebImportProjectInput,
     options?: VibyWebRequestOptions,
   ): Promise<VibyWebImportProjectResult<Framework>>;
-  get(chatId: string, options?: VibyWebPageOptions): Promise<VibyWebChatDetail<Framework>>;
+  get(chatId: string, options?: VibyWebChatDetailOptions): Promise<VibyWebChatDetail<Framework>>;
   update(
     chatId: string,
     input: VibyWebUpdateChatInput,

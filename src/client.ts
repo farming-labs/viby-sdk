@@ -90,6 +90,7 @@ import {
   type GenerationEngine,
 } from "./generation-engine.js";
 import type {
+  ChatReadSnapshot,
   CreateAttachmentRecord,
   CreateGeneratedArtifactRecord,
   GenerationWorkerLease,
@@ -1087,6 +1088,75 @@ export class ChatCollection<Framework extends FrameworkId = FrameworkId> {
     );
     if (!data) throw new NotFoundError("Chat");
     return new Chat(data, this.#dependencies);
+  }
+
+  async snapshot(
+    id: string,
+    options: { readonly messages?: PageOptions; readonly versions?: PageOptions } = {},
+  ): Promise<{
+    readonly chat: Chat<Framework>;
+    readonly messages: CursorPage<MessageData>;
+    readonly versions: CursorPage<Version<Framework>>;
+  }> {
+    const chatId = assertIdentifier(id, "Chat id");
+    const messageLimit = normalizePageLimit(options.messages?.limit);
+    const versionLimit = normalizePageLimit(options.versions?.limit);
+    const request = {
+      chatId,
+      messages: {
+        limit: messageLimit,
+        after: decodeMessageCursor(options.messages?.after),
+      },
+      versions: {
+        limit: versionLimit,
+        after: decodeVersionCursor(options.versions?.after),
+      },
+    };
+    const snapshot: ChatReadSnapshot<Framework> | null = this.#dependencies.repository.readChatSnapshot
+      ? await this.#dependencies.repository.readChatSnapshot<Framework>(
+          this.#dependencies.scope,
+          request,
+        )
+      : await this.#fallbackSnapshot(request);
+    if (!snapshot) throw new NotFoundError("Chat");
+    const lastMessage = snapshot.messages.items.at(-1);
+    const lastVersion = snapshot.versions.items.at(-1);
+    return {
+      chat: new Chat(snapshot.chat, this.#dependencies),
+      messages: {
+        items: snapshot.messages.items,
+        nextCursor: snapshot.messages.hasMore && lastMessage
+          ? encodeMessageCursor({ createdAt: lastMessage.createdAt, id: lastMessage.id })
+          : null,
+      },
+      versions: {
+        items: snapshot.versions.items.map((version) => new Version(version, this.#dependencies)),
+        nextCursor: snapshot.versions.hasMore && lastVersion
+          ? encodeVersionCursor({ number: lastVersion.number })
+          : null,
+      },
+    };
+  }
+
+  async #fallbackSnapshot(
+    request: Parameters<NonNullable<Repository["readChatSnapshot"]>>[1],
+  ): Promise<ChatReadSnapshot<Framework> | null> {
+    const [chat, messages, versions] = await Promise.all([
+      this.#dependencies.repository.getChat<Framework>(this.#dependencies.scope, request.chatId),
+      this.#dependencies.repository.listMessagePage(
+        this.#dependencies.scope,
+        request.chatId,
+        request.messages.limit,
+        request.messages.after,
+      ),
+      this.#dependencies.repository.listVersionPage<Framework>(
+        this.#dependencies.scope,
+        request.chatId,
+        request.versions.limit,
+        request.versions.after,
+      ),
+    ]);
+    return chat ? { chat, messages, versions } : null;
   }
 
   async restore(id: string): Promise<Chat<Framework>> {
