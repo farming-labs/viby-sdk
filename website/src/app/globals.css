@@ -67,7 +67,6 @@ svg {
   --landing-fg-4: rgb(255 255 255 / 0.35);
   --landing-fg-5: rgb(255 255 255 / 0.2);
   --landing-border: rgb(255 255 255 / 0.06);
-  --landing-border-subtle: rgb(255 255 255 / 0.04);
   --landing-header-height: 64px;
   --landing-rail-inset: 12px;
   --landing-content-inset: clamp(1.25rem, 2.25vw, 2rem);
@@ -105,7 +104,7 @@ svg {
   top: 0;
   bottom: 0;
   width: 1px;
-  background: var(--landing-border-subtle);
+  background: var(--landing-border);
   content: "";
 }
 
