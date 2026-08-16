@@ -68,6 +68,7 @@ svg {
   --landing-fg-5: rgb(255 255 255 / 0.2);
   --landing-border: rgb(255 255 255 / 0.06);
   --landing-border-subtle: rgb(255 255 255 / 0.04);
+  --landing-rail-inset: 7px;
   position: relative;
   isolation: isolate;
   height: 100svh;
@@ -85,11 +86,30 @@ svg {
 }
 
 .landing-rails > span {
+  position: relative;
   display: block;
   width: min(100%, 1320px);
   height: 100%;
   margin-inline: auto;
   border-inline: 1px solid var(--landing-border);
+}
+
+.landing-rails > span::before,
+.landing-rails > span::after {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--landing-border-subtle);
+  content: "";
+}
+
+.landing-rails > span::before {
+  left: var(--landing-rail-inset);
+}
+
+.landing-rails > span::after {
+  right: var(--landing-rail-inset);
 }
 
 .landing-header {
@@ -1124,7 +1144,27 @@ html.dark #nd-docs-layout[data-fd-framework] figure.shiki {
   }
 
   .landing-header > div {
+    position: relative;
     border-inline: 1px solid var(--landing-border);
+  }
+
+  .landing-header > div::before,
+  .landing-header > div::after {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 1px;
+    background: var(--landing-border-subtle);
+    content: "";
+    pointer-events: none;
+  }
+
+  .landing-header > div::before {
+    left: var(--landing-rail-inset);
+  }
+
+  .landing-header > div::after {
+    right: var(--landing-rail-inset);
   }
 }
 
