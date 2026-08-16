@@ -114,6 +114,24 @@ export interface RepositoryPage<Item> {
   readonly hasMore: boolean;
 }
 
+export interface ChatReadSnapshotOptions {
+  readonly chatId: string;
+  readonly messages: {
+    readonly limit: number;
+    readonly after: MessagePageCursor | null;
+  };
+  readonly versions: {
+    readonly limit: number;
+    readonly after: VersionPageCursor | null;
+  };
+}
+
+export interface ChatReadSnapshot<Framework extends FrameworkId = FrameworkId> {
+  readonly chat: ChatData<Framework>;
+  readonly messages: RepositoryPage<MessageData>;
+  readonly versions: RepositoryPage<VersionData<Framework>>;
+}
+
 export interface ChatPageCursor {
   readonly updatedAt: Date;
   readonly id: string;
@@ -394,6 +412,14 @@ extends DeploymentHistoryStore, PreviewSessionStore, ToolSourceRegistryStore, To
     scope: UserScope,
     id: string,
   ): Promise<ChatData<Framework> | null>;
+  /**
+   * Optional aggregate read used by detail views. Adapters that omit this
+   * method retain full compatibility through the SDK's parallel fallback.
+   */
+  readChatSnapshot?<Framework extends FrameworkId>(
+    scope: UserScope,
+    options: ChatReadSnapshotOptions,
+  ): Promise<ChatReadSnapshot<Framework> | null>;
   listChats<Framework extends FrameworkId>(
     scope: UserScope,
     limit: number,

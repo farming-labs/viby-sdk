@@ -170,21 +170,21 @@ async function route<Framework extends FrameworkId>(
   }
 
   if (segments[0] === "chats" && segments[1]) {
-    const chat = await user.chats.get(segments[1]);
     if (segments.length === 2) {
       if (request.method === "GET") {
-        const [messages, versions] = await Promise.all([
-          chat.listMessages(pageOptions(url)),
-          chat.listVersions(pageOptions(url)),
-        ]);
+        const snapshot = await user.chats.snapshot(segments[1], {
+          messages: pageOptions(url, "messages"),
+          versions: pageOptions(url, "versions"),
+        });
         return json({
-          chat: chatValue(chat),
-          messages: messages.items,
-          messagesNextCursor: messages.nextCursor,
-          versions: versions.items.map(versionValue),
-          versionsNextCursor: versions.nextCursor,
+          chat: chatValue(snapshot.chat),
+          messages: snapshot.messages.items,
+          messagesNextCursor: snapshot.messages.nextCursor,
+          versions: snapshot.versions.items.map(versionValue),
+          versionsNextCursor: snapshot.versions.nextCursor,
         });
       }
+      const chat = await user.chats.get(segments[1]);
       if (request.method === "PATCH") {
         const body = await requestObject(request, maxBodyBytes);
         const updated = await chat.update({
@@ -204,6 +204,8 @@ async function route<Framework extends FrameworkId>(
       }
       return methodNotAllowed("GET, PATCH, DELETE");
     }
+
+    const chat = await user.chats.get(segments[1]);
 
     if (segments[2] === "attachments" && segments[3] && segments.length === 4) {
       if (request.method !== "GET") return methodNotAllowed("GET");
@@ -1161,10 +1163,15 @@ async function optionalRequestObject(
   return jsonObject(parsed, "Request body") as Record<string, unknown>;
 }
 
-function pageOptions(url: URL): { readonly limit?: number; readonly after?: string } {
+function pageOptions(
+  url: URL,
+  prefix = "",
+): { readonly limit?: number; readonly after?: string } {
+  const limit = prefix ? `${prefix}Limit` : "limit";
+  const after = prefix ? `${prefix}After` : "after";
   return {
-    ...(url.searchParams.has("limit") ? { limit: queryInteger(url, "limit") } : {}),
-    ...(url.searchParams.has("after") ? { after: url.searchParams.get("after")! } : {}),
+    ...(url.searchParams.has(limit) ? { limit: queryInteger(url, limit) } : {}),
+    ...(url.searchParams.has(after) ? { after: url.searchParams.get(after)! } : {}),
   };
 }
 

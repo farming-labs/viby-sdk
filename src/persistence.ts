@@ -7,6 +7,8 @@
 export type {
   Repository as PersistenceAdapter,
   AppendGenerationEventRecord,
+  ChatReadSnapshot,
+  ChatReadSnapshotOptions,
   ChatPageCursor,
   ClaimGenerationAttemptRecord,
   ClaimOutboundEventDeliveryRecord,

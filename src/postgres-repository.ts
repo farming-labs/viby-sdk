@@ -66,6 +66,8 @@ import type {
 } from "./sandbox.js";
 import type {
   AppendGenerationEventRecord,
+  ChatReadSnapshot,
+  ChatReadSnapshotOptions,
   ChatPageCursor,
   ClaimGenerationAttemptRecord,
   ClaimOutboundEventDeliveryRecord,
@@ -325,6 +327,14 @@ interface AttachmentRow {
   artifact_key: string;
   content?: Uint8Array;
   created_at: Date;
+}
+
+interface ChatSnapshotRow {
+  readonly chat: ChatRow;
+  readonly messages: MessageRow[];
+  readonly versions: VersionRow[];
+  readonly parts: MessagePartRow[];
+  readonly attachments: AttachmentRow[];
 }
 
 interface StoredAttachmentInput {
@@ -923,6 +933,111 @@ export class PostgresRepository implements Repository {
       LIMIT 1
     `;
     return row ? mapChat<Framework>(row) : null;
+  }
+
+  async readChatSnapshot<Framework extends FrameworkId>(
+    scope: UserScope,
+    options: ChatReadSnapshotOptions,
+  ): Promise<ChatReadSnapshot<Framework> | null> {
+    await this.assertReady();
+    const messageAfterAt = options.messages.after?.createdAt.toISOString() ?? null;
+    const messageAfterId = options.messages.after?.id ?? null;
+    const versionAfter = options.versions.after?.number ?? null;
+    const [row] = await this.#sql<ChatSnapshotRow[]>`
+      WITH selected_chat AS (
+        SELECT * FROM viby.chats
+        WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+          AND id = ${options.chatId} AND deleted_at IS NULL
+        LIMIT 1
+      ), selected_messages AS (
+        SELECT id, chat_id, generation_id, role, content, finish_reason, created_at
+        FROM viby.messages
+        WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+          AND chat_id = ${options.chatId}
+          AND EXISTS (SELECT 1 FROM selected_chat)
+          AND (
+            ${messageAfterAt}::timestamptz IS NULL
+            OR date_trunc('milliseconds', created_at) > ${messageAfterAt}::timestamptz
+            OR (
+              date_trunc('milliseconds', created_at) = ${messageAfterAt}::timestamptz
+              AND id > ${messageAfterId}::uuid
+            )
+          )
+        ORDER BY date_trunc('milliseconds', created_at), id
+        LIMIT ${options.messages.limit + 1}
+      ), selected_versions AS (
+        SELECT id, chat_id, generation_id, parent_version_id, number, origin,
+          framework, title, summary, created_at
+        FROM viby.versions
+        WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+          AND chat_id = ${options.chatId}
+          AND EXISTS (SELECT 1 FROM selected_chat)
+          AND (${versionAfter}::integer IS NULL OR number < ${versionAfter}::integer)
+        ORDER BY number DESC
+        LIMIT ${options.versions.limit + 1}
+      )
+      SELECT
+        to_jsonb(chat) AS chat,
+        COALESCE((
+          SELECT jsonb_agg(to_jsonb(message)
+            ORDER BY date_trunc('milliseconds', message.created_at), message.id)
+          FROM selected_messages AS message
+        ), '[]'::jsonb) AS messages,
+        COALESCE((
+          SELECT jsonb_agg(to_jsonb(version) ORDER BY version.number DESC)
+          FROM selected_versions AS version
+        ), '[]'::jsonb) AS versions,
+        COALESCE((
+          SELECT jsonb_agg(to_jsonb(part) ORDER BY part.message_id, part.position)
+          FROM viby.message_parts AS part
+          WHERE part.tenant_id = ${scope.tenantId} AND part.user_id = ${scope.userId}
+            AND part.message_id IN (SELECT id FROM selected_messages)
+        ), '[]'::jsonb) AS parts,
+        COALESCE((
+          SELECT jsonb_agg(to_jsonb(attachment)
+            ORDER BY attachment.message_id, attachment.created_at, attachment.id)
+          FROM viby.attachments AS attachment
+          WHERE attachment.tenant_id = ${scope.tenantId} AND attachment.user_id = ${scope.userId}
+            AND attachment.message_id IN (SELECT id FROM selected_messages)
+        ), '[]'::jsonb) AS attachments
+      FROM selected_chat AS chat
+    `;
+    if (!row) return null;
+
+    const parts = new Map<string, MessagePart[]>();
+    for (const part of row.parts) {
+      const current = parts.get(part.message_id) ?? [];
+      current.push(mapMessagePart(withCreatedAt(part)));
+      parts.set(part.message_id, current);
+    }
+    const attachments = new Map<string, AttachmentData[]>();
+    for (const attachment of row.attachments) {
+      const current = attachments.get(attachment.message_id) ?? [];
+      current.push(mapAttachment(withCreatedAt(attachment)));
+      attachments.set(attachment.message_id, current);
+    }
+    const messages = row.messages.map((message) => {
+      const hydrated = withCreatedAt(message);
+      return mapMessage(
+        hydrated,
+        parts.get(hydrated.id) ?? [],
+        attachments.get(hydrated.id) ?? [],
+      );
+    });
+    return {
+      chat: mapChat<Framework>({
+        ...row.chat,
+        created_at: repositoryDate(row.chat.created_at),
+        updated_at: repositoryDate(row.chat.updated_at),
+        deleted_at: repositoryNullableDate(row.chat.deleted_at),
+        purge_after: repositoryNullableDate(row.chat.purge_after),
+      }),
+      messages: createPage(messages, options.messages.limit),
+      versions: createPage(
+        row.versions.map((version) => mapVersion<Framework>(withCreatedAt(version))),
+        options.versions.limit,
+      ),
+    };
   }
 
   async updateChat<Framework extends FrameworkId>(
@@ -4089,6 +4204,20 @@ function mapChat<Framework extends FrameworkId>(row: ChatRow): ChatData<Framewor
 
 function createPage<Item>(items: Item[], limit: number): RepositoryPage<Item> {
   return { items: items.slice(0, limit), hasMore: items.length > limit };
+}
+
+function withCreatedAt<Row extends { created_at: Date }>(row: Row): Row {
+  return { ...row, created_at: repositoryDate(row.created_at) };
+}
+
+function repositoryDate(value: unknown): Date {
+  const date = value instanceof Date ? value : new Date(String(value));
+  if (!Number.isFinite(date.getTime())) throw new Error("Postgres returned an invalid date.");
+  return date;
+}
+
+function repositoryNullableDate(value: unknown): Date | null {
+  return value === null ? null : repositoryDate(value);
 }
 
 function defaultGenerationConfiguration(): GenerationConfigurationData {
