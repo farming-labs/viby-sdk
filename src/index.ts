@@ -70,6 +70,11 @@ export { DownloadArtifact } from "./download.js";
 export { AgentWorkspace } from "./agent-workspace.js";
 export { AgentProjectGenerator } from "./agent-runner.js";
 export { defineGenerationEngine } from "./generation-engine.js";
+export {
+  normalizeGenerationQuality,
+  verifyGenerationQuality,
+} from "./generation-quality.js";
+export type * from "./generation-quality.js";
 export { createVibyApi, vibyApi } from "./api-host.js";
 export {
   createVibyWebClient,
@@ -353,6 +358,7 @@ export {
   DatabaseNotReadyError,
   GenerationCancelledError,
   GenerationError,
+  GenerationQualityError,
   GenerationStateError,
   GenerationTaskRequiredError,
   IntegrationAuthorizationError,

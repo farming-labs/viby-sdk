@@ -132,6 +132,8 @@ interface VibyBaseConfig<Framework extends FrameworkId = FrameworkId> {
   readonly tools?: ToolSourcesConfig<Framework>;
   readonly generation?: {
     readonly execution?: "embedded" | "worker";
+    /** Optional sandbox checks that must pass before an immutable version is committed. */
+    readonly quality?: GenerationQualityConfig;
   };
   readonly retention?: {
     readonly deletedChatsMs?: number | null;
@@ -169,6 +171,23 @@ export interface AgentRunnerConfig {
   readonly commandTimeoutMs?: number;
   readonly maxCommandOutputBytes?: number;
   readonly sandboxPorts?: readonly number[];
+}
+
+export interface GenerationQualityCommand {
+  /** Stable identifier surfaced in durable generation events. */
+  readonly id: string;
+  readonly command: string;
+  readonly args?: readonly string[];
+  readonly cwd?: string;
+  readonly env?: Readonly<Record<string, string>>;
+  readonly timeoutMs?: number;
+}
+
+export interface GenerationQualityConfig {
+  /** Preparation commands such as dependency installation. */
+  readonly prepare?: readonly GenerationQualityCommand[];
+  /** Required checks such as typecheck, test, and build. */
+  readonly checks: readonly GenerationQualityCommand[];
 }
 
 export interface UserScope {
@@ -668,6 +687,8 @@ export type GenerationEventType =
   | "part.completed"
   | "part.failed"
   | "artifact.created"
+  | "quality.started"
+  | "quality.completed"
   | "attempt.waiting"
   | "task.created"
   | "task.resolved"
@@ -713,6 +734,17 @@ export interface GenerationEventDataMap {
     readonly mediaType: string;
     readonly size: number;
     readonly checksum: string;
+  };
+  readonly "quality.started": {
+    readonly checkId: string;
+    readonly phase: "prepare" | "check";
+  };
+  readonly "quality.completed": {
+    readonly checkId: string;
+    readonly phase: "prepare" | "check";
+    readonly status: "passed" | "failed";
+    readonly exitCode: number | null;
+    readonly durationMs: number | null;
   };
   readonly "attempt.waiting": { readonly taskId: string };
   readonly "task.created": { readonly task: GenerationTaskRequest & { readonly id: string } };

@@ -110,6 +110,7 @@ try {
     "migrations/0020_visual_artifacts.sql",
     "migrations/0021_project_artifacts.sql",
     "migrations/0022_integration_connections.sql",
+    "migrations/0032_generation_quality_events.sql",
   ]) {
     assert.ok(paths.has(path), `packed package is missing ${path}`);
   }
