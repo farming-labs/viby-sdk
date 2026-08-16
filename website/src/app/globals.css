@@ -120,6 +120,31 @@ svg {
   font-size: 0.9rem;
 }
 
+/* Carry the marketing lockup into both documentation navigation shells. The
+ * text remains real link content; only the terminal glyph is decorative. */
+#nd-sidebar > div:first-child a[href="/"],
+#nd-subnav > a[href="/"] {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.42rem;
+  color: var(--color-fd-foreground);
+  font-family: var(--font-pixel);
+  font-size: 0.9rem;
+  font-weight: 400;
+  letter-spacing: -0.01em;
+}
+
+#nd-sidebar > div:first-child a[href="/"]::before,
+#nd-subnav > a[href="/"]::before {
+  content: "›_";
+  font-family: var(--font-mono);
+  font-size: 1.08rem;
+  font-weight: 620;
+  letter-spacing: -0.22em;
+  line-height: 1;
+  transform: translateY(-0.5px);
+}
+
 .viby-wordmark {
   font-family: var(--font-pixel);
   font-weight: 400;
