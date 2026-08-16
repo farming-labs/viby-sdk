@@ -5,7 +5,7 @@ const docs = defineDocs({
   entry: "docs",
   contentDir: "docs",
   nav: {
-    title: "Viby",
+    title: "viby",
     url: "/",
   },
   metadata: {

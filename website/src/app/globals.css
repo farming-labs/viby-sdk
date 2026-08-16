@@ -67,7 +67,9 @@ svg {
   --landing-fg-4: rgb(255 255 255 / 0.35);
   --landing-fg-5: rgb(255 255 255 / 0.2);
   --landing-border: rgb(255 255 255 / 0.06);
-  --landing-border-subtle: rgb(255 255 255 / 0.04);
+  --landing-header-height: 64px;
+  --landing-rail-inset: 12px;
+  --landing-content-inset: clamp(1.25rem, 2.25vw, 2rem);
   position: relative;
   isolation: isolate;
   height: 100svh;
@@ -79,17 +81,39 @@ svg {
 
 .landing-rails {
   position: absolute;
-  inset: 0;
+  top: var(--landing-header-height);
+  right: 0;
+  bottom: 0;
+  left: 0;
   display: none;
   pointer-events: none;
 }
 
 .landing-rails > span {
+  position: relative;
   display: block;
   width: min(100%, 1320px);
   height: 100%;
   margin-inline: auto;
   border-inline: 1px solid var(--landing-border);
+}
+
+.landing-rails > span::before,
+.landing-rails > span::after {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--landing-border);
+  content: "";
+}
+
+.landing-rails > span::before {
+  left: var(--landing-rail-inset);
+}
+
+.landing-rails > span::after {
+  right: var(--landing-rail-inset);
 }
 
 .landing-header {
@@ -105,11 +129,11 @@ svg {
 .landing-header > div {
   display: flex;
   width: min(100%, 1320px);
-  height: 64px;
+  height: var(--landing-header-height);
   align-items: center;
   justify-content: space-between;
   margin-inline: auto;
-  padding: 0 24px;
+  padding: 0 var(--landing-content-inset);
 }
 
 .viby-logo {
@@ -118,6 +142,31 @@ svg {
   gap: 0.42rem;
   color: #fff;
   font-size: 0.9rem;
+}
+
+/* Carry the marketing lockup into both documentation navigation shells. The
+ * text remains real link content; only the terminal glyph is decorative. */
+#nd-sidebar > div:first-child a[href="/"],
+#nd-subnav > a[href="/"] {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.42rem;
+  color: var(--color-fd-foreground);
+  font-family: var(--font-pixel);
+  font-size: 0.9rem;
+  font-weight: 400;
+  letter-spacing: -0.01em;
+}
+
+#nd-sidebar > div:first-child a[href="/"]::before,
+#nd-subnav > a[href="/"]::before {
+  content: "›_";
+  font-family: var(--font-mono);
+  font-size: 1.08rem;
+  font-weight: 620;
+  letter-spacing: -0.22em;
+  line-height: 1;
+  transform: translateY(-0.5px);
 }
 
 .viby-wordmark {
@@ -152,7 +201,7 @@ svg {
 .hero-copy {
   width: min(100%, 1320px);
   margin-inline: auto;
-  padding: 0 24px;
+  padding: 0 var(--landing-content-inset);
 }
 
 .hero-copy > * {
