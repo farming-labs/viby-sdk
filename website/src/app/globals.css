@@ -1,10 +1,12 @@
 @import "@fontsource-variable/geist/wght.css";
 @import "@fontsource-variable/geist-mono/wght.css";
+@import "@fontsource/geist-pixel/latin-400.css";
 @import "@farming-labs/theme/shadcn/css";
 
 :root {
   --font-sans: "Geist Variable", "Geist", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "Geist Mono Variable", "Geist Mono", ui-monospace, SFMono-Regular, monospace;
+  --font-pixel: "Geist Pixel", var(--font-sans);
   color-scheme: light;
   font-family: var(--font-sans);
   font-synthesis: none;
@@ -17,7 +19,7 @@
 html {
   min-width: 320px;
   min-height: 100%;
-  background: #000;
+  background: #0a0a0a;
   scroll-behavior: smooth;
 }
 
@@ -26,6 +28,12 @@ body {
   margin: 0;
   font-family: var(--font-sans);
   text-rendering: optimizeLegibility;
+}
+
+html:has(.landing-shell),
+body:has(.landing-shell) {
+  height: 100%;
+  overflow: hidden;
 }
 
 a {
@@ -43,8 +51,7 @@ svg {
 }
 
 ::selection {
-  background: #fff;
-  color: #000;
+  background: rgb(255 255 255 / 0.2);
 }
 
 :focus-visible {
@@ -53,111 +60,210 @@ svg {
 }
 
 .landing-shell {
+  --landing-bg: #0a0a0a;
+  --landing-fg: #fff;
+  --landing-fg-2: rgb(255 255 255 / 0.7);
+  --landing-fg-3: rgb(255 255 255 / 0.5);
+  --landing-fg-4: rgb(255 255 255 / 0.35);
+  --landing-fg-5: rgb(255 255 255 / 0.2);
+  --landing-border: rgb(255 255 255 / 0.06);
+  --landing-border-subtle: rgb(255 255 255 / 0.04);
+  position: relative;
+  isolation: isolate;
   height: 100svh;
   overflow: hidden;
-  background: #000;
+  background: var(--landing-bg);
+  color: var(--landing-fg);
+  color-scheme: dark;
+}
+
+.landing-rails {
+  position: absolute;
+  inset: 0;
+  display: none;
+  pointer-events: none;
+}
+
+.landing-rails > span {
+  display: block;
+  width: min(100%, 1320px);
+  height: 100%;
+  margin-inline: auto;
+  border-inline: 1px solid var(--landing-border);
+}
+
+.landing-header {
+  position: fixed;
+  z-index: 20;
+  top: 0;
+  right: 0;
+  left: 0;
+  border-bottom: 1px solid var(--landing-border);
+  background: var(--landing-bg);
+}
+
+.landing-header > div {
+  display: flex;
+  width: min(100%, 1320px);
+  height: 64px;
+  align-items: center;
+  justify-content: space-between;
+  margin-inline: auto;
+  padding: 0 24px;
+}
+
+.viby-logo {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.42rem;
   color: #fff;
+  font-size: 0.9rem;
+}
+
+.viby-wordmark {
+  font-family: var(--font-pixel);
+  font-weight: 400;
+  letter-spacing: -0.01em;
+}
+
+.terminal-glyph {
+  font-family: var(--font-mono);
+  font-size: 1.08rem;
+  font-weight: 620;
+  letter-spacing: -0.22em;
+  transform: translateY(-0.5px);
+}
+
+.header-docs {
+  display: inline-flex;
+  min-height: 36px;
+  align-items: center;
+  color: var(--landing-fg-2);
+  font-size: 0.8125rem;
+  font-weight: 520;
+  transition: color 150ms ease;
 }
 
 .landing-hero {
   position: relative;
-  width: min(calc(100% - 48px), 1500px);
-  height: 100svh;
-  margin-inline: auto;
-  overflow: hidden;
-  border-inline: 1px solid rgb(255 255 255 / 0.14);
-}
-
-.landing-hero::after {
-  position: absolute;
-  z-index: 2;
-  inset: 0;
-  background: linear-gradient(90deg, #000 0%, rgb(0 0 0 / 0.92) 32%, rgb(0 0 0 / 0.18) 68%, #0000 100%);
-  content: "";
-  pointer-events: none;
-}
-
-.hero-status {
-  position: absolute;
-  z-index: 8;
-  top: 25px;
-  left: 25px;
-  display: inline-flex;
-  align-items: center;
-  gap: 0.55rem;
-  color: rgb(255 255 255 / 0.43);
-  font-family: var(--font-mono);
-  font-size: 0.61rem;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.hero-status > span {
-  width: 5px;
-  height: 5px;
-  background: #fff;
-  box-shadow: 0 0 0 3px rgb(255 255 255 / 0.12);
+  padding-top: 176px;
 }
 
 .hero-copy {
-  position: absolute;
-  z-index: 8;
-  top: 50%;
-  left: clamp(25px, 5vw, 76px);
-  width: min(610px, 51vw);
-  transform: translateY(-54%);
+  width: min(100%, 1320px);
+  margin-inline: auto;
+  padding: 0 24px;
 }
 
-.hero-kicker {
-  margin: 0 0 1.4rem;
-  color: rgb(255 255 255 / 0.48);
-  font-family: var(--font-mono);
-  font-size: 0.65rem;
-  letter-spacing: 0.09em;
-  text-transform: uppercase;
+.hero-copy > * {
+  max-width: 740px;
 }
 
 .hero-copy h1 {
   margin: 0;
-  max-width: 650px;
-  font-size: clamp(4rem, 5.65vw, 5.9rem);
-  font-weight: 590;
-  letter-spacing: -0.072em;
-  line-height: 0.94;
-  text-wrap: balance;
+  font-family: var(--font-pixel);
+  font-size: 4.5rem;
+  font-weight: 400;
+  letter-spacing: -0.035em;
+  line-height: 1.03;
 }
 
-.hero-description {
-  max-width: 540px;
-  margin: 1.75rem 0 0;
-  color: rgb(255 255 255 / 0.56);
-  font-size: clamp(0.94rem, 1.15vw, 1.05rem);
+.hero-copy > p {
+  margin: 1.5rem 0 0;
+  color: var(--landing-fg-2);
+  font-size: 1.25rem;
   line-height: 1.6;
   text-wrap: balance;
 }
 
+.hero-install {
+  display: flex;
+  width: fit-content;
+  align-items: center;
+  gap: 0.55rem;
+  margin-top: 1.5rem;
+  margin-bottom: 0.375rem;
+  color: var(--landing-fg);
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+  line-height: 1.5;
+}
+
+.hero-install > span {
+  color: var(--landing-fg-3);
+  user-select: none;
+}
+
+.hero-install code {
+  display: block;
+  width: 18ch;
+  font: inherit;
+}
+
+.hero-install-command {
+  display: block;
+  width: 0;
+  overflow: hidden;
+  border-right: 1px solid var(--landing-fg-2);
+  white-space: nowrap;
+  animation:
+    install-command-typing 6.8s steps(18, end) infinite,
+    install-command-caret 720ms step-end infinite;
+}
+
+@keyframes install-command-typing {
+  0%,
+  8% {
+    width: 0;
+  }
+
+  42%,
+  68% {
+    width: 18ch;
+  }
+
+  96%,
+  100% {
+    width: 0;
+  }
+}
+
+@keyframes install-command-caret {
+  0%,
+  45% {
+    border-color: var(--landing-fg-2);
+  }
+
+  46%,
+  100% {
+    border-color: transparent;
+  }
+}
+
 .hero-actions {
   display: flex;
-  flex-wrap: wrap;
-  gap: 0.62rem;
-  margin-top: 1.8rem;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
 }
 
 .hero-button {
   display: inline-flex;
-  min-height: 43px;
+  min-height: 40px;
   align-items: center;
   justify-content: center;
-  gap: 0.55rem;
-  border: 1px solid rgb(255 255 255 / 0.25);
-  padding: 0.68rem 0.92rem;
-  font-size: 0.78rem;
-  font-weight: 580;
+  gap: 0.52rem;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  padding: 0 1rem;
+  font-size: 0.875rem;
+  font-weight: 550;
+  white-space: nowrap;
   transition:
-    transform 120ms ease,
-    color 160ms ease,
-    background-color 160ms ease,
-    border-color 160ms ease;
+    color 150ms ease,
+    background-color 150ms ease,
+    border-color 150ms ease,
+    transform 120ms ease;
 }
 
 .hero-button:active {
@@ -165,227 +271,346 @@ svg {
 }
 
 .hero-button svg {
-  width: 15px;
-  height: 15px;
+  width: 16px;
+  height: 16px;
 }
 
 .hero-button-primary {
-  border-color: #fff;
   background: #fff;
   color: #000;
 }
 
-.hero-button-primary:hover {
-  border-color: #d8d8d8;
-  background: #d8d8d8;
-}
-
 .hero-button-secondary {
-  background: rgb(255 255 255 / 0.04);
+  background: transparent;
   color: #fff;
 }
 
-.hero-button-secondary:hover {
-  border-color: rgb(255 255 255 / 0.48);
-  background: rgb(255 255 255 / 0.09);
+.stage-wrap {
+  width: min(100%, 1320px);
+  margin: 3.5rem auto 0;
+  overflow: hidden;
 }
 
-.network-visual {
-  position: absolute;
-  z-index: 1;
-  top: 8%;
-  right: -2.5%;
-  width: min(69vw, 1050px);
-  aspect-ratio: 1000 / 540;
-  color: rgb(255 255 255 / 0.18);
+.product-stage {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--landing-border);
+  background-color: #b8b8b8;
+  background-image:
+    radial-gradient(900px 420px at 26% 18%, rgb(255 255 255 / 0.55) 0%, transparent 62%),
+    radial-gradient(720px 520px at 82% 72%, rgb(0 0 0 / 0.18) 0%, transparent 58%),
+    linear-gradient(180deg, rgb(0 0 0 / 0.12) 0%, transparent 55%);
+  box-shadow:
+    0 50px 90px rgb(0 0 0 / 0.55),
+    inset 0 2px 0 rgb(255 255 255 / 0.06),
+    inset 0 -1px 0 rgb(0 0 0 / 0.24);
+  padding: 40px;
 }
 
-.network-label,
-.network-caption {
+.grain,
+.stage-overlay {
   position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.grain {
+  opacity: 0.7;
+}
+
+.grain::before {
+  position: absolute;
+  inset: 0;
+  background-image: url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAAAP0lEQVR4nO3QoQkAIBAEwZ//aQ0YzZzJq8M0p7oJ9A8jzq0AAACAvw9Yx0n4Kkq6qgAAAAAAAAAAAPw4b8m8wN8bK9yS8yZ0bA9x5wAAc2u7oQAAAABJRU5ErkJggg==");
+  content: "";
+  mix-blend-mode: overlay;
+  opacity: 0.06;
+}
+
+.stage-overlay {
+  background: rgb(0 0 0 / 0.1);
+}
+
+.stage-content {
+  position: relative;
+  width: 100%;
+  max-width: 1160px;
+  margin-inline: auto;
+}
+
+.app-mockup {
+  overflow: hidden;
+  border: 1px solid rgb(255 255 255 / 0.06);
+  border-radius: 12px;
+  background: #111;
+  box-shadow: 0 24px 70px rgb(0 0 0 / 0.3);
+}
+
+.mock-titlebar {
   display: flex;
-  color: rgb(255 255 255 / 0.36);
-  font-family: var(--font-mono);
-  font-size: 0.58rem;
-  letter-spacing: 0.08em;
+  min-height: 41px;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid rgb(255 255 255 / 0.06);
+  padding: 10px 16px;
+}
+
+.mock-project,
+.mock-running {
+  display: flex;
+  align-items: center;
+}
+
+.mock-project {
+  gap: 0.5rem;
+  color: rgb(255 255 255 / 0.25);
+  font-size: 0.6875rem;
+}
+
+.window-dots {
+  display: flex;
+  gap: 0.375rem;
+}
+
+.window-dots i {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: rgb(255 255 255 / 0.1);
+}
+
+.mock-running {
+  gap: 0.375rem;
+  color: rgb(255 255 255 / 0.2);
+  font-size: 0.6875rem;
+}
+
+.mock-running i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: rgb(16 185 129 / 0.7);
+}
+
+.mock-body {
+  display: flex;
+  min-height: 390px;
+}
+
+.mock-sidebar {
+  width: 176px;
+  flex: 0 0 auto;
+  border-right: 1px solid rgb(255 255 255 / 0.06);
+  padding: 12px;
+}
+
+.mock-sidebar-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.mock-sidebar-heading > span {
+  color: rgb(255 255 255 / 0.25);
+  font-size: 0.625rem;
+  font-weight: 520;
+  letter-spacing: 0.07em;
   text-transform: uppercase;
 }
 
-.network-label {
-  top: 0;
-  right: 4%;
-  left: 20%;
-  justify-content: space-between;
-  border-top: 1px solid rgb(255 255 255 / 0.12);
-  padding-top: 10px;
-}
-
-.network-live {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.42rem;
-}
-
-.network-live i {
-  width: 4px;
-  height: 4px;
-  background: #fff;
-  animation: network-pulse 2.4s ease-in-out infinite;
-}
-
-.network-map {
-  width: 100%;
-  height: auto;
-  margin-top: 19px;
-  overflow: visible;
-}
-
-.world-shape {
-  fill: url(#world-pixels);
-}
-
-.network-routes {
-  fill: none;
-  stroke: url(#route-fade);
-  stroke-dasharray: 2 7;
-  stroke-width: 0.7;
-}
-
-.network-signal {
-  color: #fff;
-  fill: currentColor;
-}
-
-.signal-pixel {
-  opacity: 0.28;
-  animation: signal-flicker 4.8s ease-in-out infinite;
-}
-
-.signal-delay-1 {
-  animation-delay: -0.9s;
-}
-
-.signal-delay-2 {
-  animation-delay: -1.8s;
-}
-
-.signal-delay-3 {
-  animation-delay: -2.7s;
-}
-
-.signal-delay-4 {
-  animation-delay: -3.6s;
-}
-
-.network-caption {
-  right: 4%;
-  bottom: 2%;
-  gap: 1.5rem;
-}
-
-.network-caption span::before {
-  display: inline-block;
-  width: 4px;
-  height: 4px;
-  margin-right: 0.42rem;
-  background: rgb(255 255 255 / 0.7);
-  content: "";
-  vertical-align: 1px;
-}
-
-.hero-rail {
-  position: absolute;
-  z-index: 9;
-  right: 0;
-  bottom: 0;
-  left: 0;
+.mock-sidebar-heading > i {
   display: grid;
-  min-height: 84px;
-  grid-template-columns: minmax(300px, 1.65fr) repeat(3, 1fr);
-  border-top: 1px solid rgb(255 255 255 / 0.14);
-  background: rgb(0 0 0 / 0.8);
-  backdrop-filter: blur(12px);
+  width: 16px;
+  height: 16px;
+  place-items: center;
+  border-radius: 4px;
+  background: rgb(255 255 255 / 0.06);
+  color: rgb(255 255 255 / 0.3);
+  font-size: 0.625rem;
+  font-style: normal;
 }
 
-.install-command,
-.rail-item {
+.mock-session {
+  display: flex;
+  border-radius: 6px;
+  padding: 8px 10px;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.mock-session-active {
+  background: rgb(255 255 255 / 0.06);
+}
+
+.mock-session strong {
+  color: rgb(255 255 255 / 0.3);
+  font-size: 0.6875rem;
+  font-weight: 480;
+}
+
+.mock-session-active strong {
+  color: rgb(255 255 255 / 0.7);
+  font-weight: 520;
+}
+
+.mock-session small {
+  color: rgb(255 255 255 / 0.15);
+  font-size: 0.625rem;
+}
+
+.mock-session-active small {
+  color: rgb(255 255 255 / 0.25);
+}
+
+.mock-chat {
   display: flex;
   min-width: 0;
-  align-items: center;
-  border-right: 1px solid rgb(255 255 255 / 0.14);
-  padding: 0 24px;
-}
-
-.install-command {
-  gap: 1rem;
-  font-family: var(--font-mono);
-  font-size: 0.7rem;
-}
-
-.install-command > span,
-.rail-item strong {
-  color: rgb(255 255 255 / 0.34);
-  font-size: 0.58rem;
-  font-weight: 450;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.install-command code {
-  overflow: hidden;
-  color: rgb(255 255 255 / 0.88);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.rail-item {
+  flex: 1;
   flex-direction: column;
-  align-items: flex-start;
-  justify-content: center;
-  gap: 0.48rem;
+}
+
+.mock-messages {
+  display: flex;
+  min-height: 326px;
+  flex: 1;
+  padding: 20px;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.mock-user-row {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.mock-user-row p {
+  max-width: 80%;
+  margin: 0;
+  border-radius: 16px 16px 6px 16px;
+  background: rgb(255 255 255 / 0.06);
+  color: rgb(255 255 255 / 0.6);
+  padding: 10px 14px;
+  font-size: 0.75rem;
+  line-height: 1.5;
+}
+
+.mock-response {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.tool-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-radius: 8px;
+  background: rgb(255 255 255 / 0.04);
+  color: rgb(255 255 255 / 0.3);
+  padding: 8px 12px;
+  font-size: 0.625rem;
+}
+
+.tool-summary > span,
+.tool-summary b {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 480;
+}
+
+.tool-summary svg {
+  width: 12px;
+  height: 12px;
+  color: rgb(255 255 255 / 0.25);
+}
+
+.tool-summary > i {
+  width: 1px;
+  height: 12px;
+  background: rgb(255 255 255 / 0.08);
+}
+
+.tool-summary b {
+  gap: 2px;
+}
+
+.tool-summary b i {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: rgb(16 185 129 / 0.7);
+}
+
+.tool-summary b i:last-child {
+  background: rgb(255 255 255 / 0.1);
+}
+
+.mock-agent-text {
+  max-width: 90%;
+  margin: 0;
+  color: rgb(255 255 255 / 0.5);
+  font-size: 0.75rem;
+  line-height: 1.55;
+}
+
+.file-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.file-badges span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 6px;
+  background: rgb(255 255 255 / 0.05);
+  color: rgb(255 255 255 / 0.3);
+  padding: 4px 8px;
   font-family: var(--font-mono);
+  font-size: 0.625rem;
 }
 
-.rail-item:last-child {
-  border-right: 0;
+.file-badges svg {
+  width: 10px;
+  height: 10px;
 }
 
-.rail-item span {
-  color: rgb(255 255 255 / 0.74);
-  font-size: 0.66rem;
-  letter-spacing: 0.025em;
-  text-transform: uppercase;
+.mock-composer {
+  border-top: 1px solid rgb(255 255 255 / 0.06);
+  padding: 12px;
 }
 
-@keyframes network-pulse {
-  0%,
-  100% {
-    opacity: 0.35;
-  }
-
-  50% {
-    opacity: 1;
-    box-shadow: 0 0 0 4px rgb(255 255 255 / 0.08);
-  }
+.mock-composer > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-radius: 12px;
+  background: rgb(255 255 255 / 0.04);
+  color: rgb(255 255 255 / 0.2);
+  padding: 10px 12px;
+  font-size: 0.6875rem;
 }
 
-@keyframes signal-flicker {
-  0%,
-  100% {
-    opacity: 0.18;
-  }
+.mock-composer span {
+  flex: 1;
+}
 
-  42% {
-    opacity: 0.28;
-  }
+.mock-composer i {
+  display: grid;
+  width: 20px;
+  height: 20px;
+  place-items: center;
+  border-radius: 6px;
+  background: rgb(255 255 255 / 0.8);
+  color: #000;
+}
 
-  50% {
-    opacity: 0.96;
-  }
-
-  60% {
-    opacity: 0.36;
-  }
+.mock-composer svg {
+  width: 10px;
+  height: 10px;
 }
 
 /* Farm renders the same document shell as the shared shadcn theme. Keep the
@@ -590,7 +815,7 @@ html.dark #nd-docs-layout[data-fd-framework] figure.shiki {
 
 #nd-sidebar[data-collapsed="false"] a[href="/docs/api/v1"]::before,
 #nd-sidebar-mobile a[href="/docs/api/v1"]::before {
-  content: "Build with Viby";
+  content: "Build with viby";
 }
 
 #nd-sidebar[data-collapsed="false"] a[href="/docs/integrations/github"]::before,
@@ -603,109 +828,74 @@ html.dark #nd-docs-layout[data-fd-framework] figure.shiki {
   content: "Operations";
 }
 
-@media (max-width: 980px) {
-  .landing-hero {
-    width: min(calc(100% - 32px), 1500px);
+@media (min-width: 768px) {
+  .landing-rails {
+    display: block;
   }
 
-  .hero-copy {
-    width: min(620px, calc(100% - 72px));
-  }
-
-  .network-visual {
-    top: 15%;
-    right: -26%;
-    width: 1080px;
-    opacity: 0.72;
-  }
-
-  .landing-hero::after {
-    background: linear-gradient(90deg, #000 0%, rgb(0 0 0 / 0.94) 46%, rgb(0 0 0 / 0.2) 100%);
-  }
-
-  .hero-rail {
-    grid-template-columns: minmax(280px, 1.5fr) repeat(3, 1fr);
-  }
-
-  .install-command,
-  .rail-item {
-    padding-inline: 18px;
+  .landing-header > div {
+    border-inline: 1px solid var(--landing-border);
   }
 }
 
-@media (max-width: 680px) {
+@media (max-width: 767px) {
   .landing-hero {
-    width: calc(100% - 24px);
-    height: 100svh;
-  }
-
-  .hero-status {
-    top: 19px;
-    left: 16px;
-    font-size: 0.51rem;
-  }
-
-  .hero-copy {
-    top: 46%;
-    left: 16px;
-    width: calc(100% - 32px);
-    transform: translateY(-50%);
-  }
-
-  .hero-kicker {
-    margin-bottom: 1rem;
-    font-size: 0.55rem;
+    padding-top: 96px;
   }
 
   .hero-copy h1 {
-    font-size: clamp(2.9rem, 13vw, 3.5rem);
-    line-height: 0.93;
+    font-size: 2.25rem;
+    letter-spacing: -0.045em;
   }
 
-  .hero-description {
-    max-width: 420px;
-    margin-top: 1.25rem;
-    font-size: 0.84rem;
-    line-height: 1.5;
+  .hero-copy > p {
+    margin-top: 1rem;
+    font-size: 1rem;
+    line-height: 1.65;
   }
 
   .hero-actions {
-    margin-top: 1.35rem;
+    margin-top: 0.75rem;
   }
 
-  .hero-button {
-    min-height: 40px;
-    padding: 0.58rem 0.72rem;
-    font-size: 0.72rem;
-  }
-
-  .network-visual {
-    top: 7%;
-    right: -620px;
-    width: 1050px;
-    opacity: 0.48;
-  }
-
-  .network-label,
-  .network-caption {
-    display: none;
-  }
-
-  .landing-hero::after {
-    background: linear-gradient(90deg, #000 0%, rgb(0 0 0 / 0.84) 64%, rgb(0 0 0 / 0.1) 100%);
-  }
-
-  .hero-rail {
-    min-height: 66px;
-    grid-template-columns: 1fr;
-  }
-
-  .install-command {
-    border-right: 0;
+  .stage-wrap {
+    margin-top: 2.5rem;
     padding-inline: 16px;
   }
 
-  .rail-item {
+  .product-stage {
+    padding: 12px;
+  }
+
+  .mock-body {
+    min-height: 390px;
+  }
+
+  .mock-sidebar {
+    display: none;
+  }
+
+  .mock-messages {
+    padding: 16px;
+  }
+
+  .mock-project > span:last-child {
+    overflow: hidden;
+    max-width: 150px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .tool-summary {
+    gap: 6px;
+  }
+
+  .tool-summary > i:nth-of-type(2),
+  .tool-summary > span:last-child {
+    display: none;
+  }
+
+  .file-badges span:last-child {
     display: none;
   }
 
@@ -715,35 +905,21 @@ html.dark #nd-docs-layout[data-fd-framework] figure.shiki {
   }
 }
 
-@media (max-height: 720px) and (min-width: 681px) {
-  .hero-copy {
-    transform: translateY(-57%);
-  }
-
-  .hero-kicker {
-    margin-bottom: 1rem;
-  }
-
-  .hero-copy h1 {
-    font-size: clamp(3.8rem, 7vw, 5.8rem);
-  }
-
-  .hero-description {
-    margin-top: 1.2rem;
-  }
-
-  .hero-actions {
-    margin-top: 1.2rem;
-  }
-
-  .hero-rail {
-    min-height: 70px;
-  }
-}
-
 @media (hover: hover) and (pointer: fine) {
+  .header-docs:hover {
+    color: var(--landing-fg);
+  }
+
   .hero-button:hover {
     transform: translateY(-1px);
+  }
+
+  .hero-button-primary:hover {
+    background: rgb(255 255 255 / 0.9);
+  }
+
+  .hero-button-secondary:hover {
+    background: rgb(255 255 255 / 0.05);
   }
 }
 
@@ -759,5 +935,11 @@ html.dark #nd-docs-layout[data-fd-framework] figure.shiki {
     animation-iteration-count: 1 !important;
     scroll-behavior: auto !important;
     transition-duration: 0.01ms !important;
+  }
+
+  .hero-install-command {
+    width: 18ch;
+    border-right: 0;
+    animation: none;
   }
 }
