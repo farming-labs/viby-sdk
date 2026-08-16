@@ -68,6 +68,7 @@ svg {
   --landing-fg-5: rgb(255 255 255 / 0.2);
   --landing-border: rgb(255 255 255 / 0.06);
   --landing-border-subtle: rgb(255 255 255 / 0.04);
+  --landing-header-height: 64px;
   --landing-rail-inset: 12px;
   --landing-content-inset: clamp(1.25rem, 2.25vw, 2rem);
   position: relative;
@@ -81,7 +82,10 @@ svg {
 
 .landing-rails {
   position: absolute;
-  inset: 0;
+  top: var(--landing-header-height);
+  right: 0;
+  bottom: 0;
+  left: 0;
   display: none;
   pointer-events: none;
 }
@@ -126,7 +130,7 @@ svg {
 .landing-header > div {
   display: flex;
   width: min(100%, 1320px);
-  height: 64px;
+  height: var(--landing-header-height);
   align-items: center;
   justify-content: space-between;
   margin-inline: auto;
@@ -1145,27 +1149,7 @@ html.dark #nd-docs-layout[data-fd-framework] figure.shiki {
   }
 
   .landing-header > div {
-    position: relative;
     border-inline: 1px solid var(--landing-border);
-  }
-
-  .landing-header > div::before,
-  .landing-header > div::after {
-    position: absolute;
-    top: 0;
-    bottom: 0;
-    width: 1px;
-    background: var(--landing-border-subtle);
-    content: "";
-    pointer-events: none;
-  }
-
-  .landing-header > div::before {
-    left: var(--landing-rail-inset);
-  }
-
-  .landing-header > div::after {
-    right: var(--landing-rail-inset);
   }
 }
 
