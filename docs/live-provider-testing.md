@@ -1,3 +1,8 @@
+---
+title: "Live provider verification"
+description: "Run the opt-in adapter suite against disposable GitHub, Bitbucket, Vercel, and Cloudflare resources."
+---
+
 # Live provider verification
 
 The live provider suite verifies the shipped adapters against disposable resources in real GitHub, Bitbucket, Vercel, and Cloudflare accounts. It is intentionally excluded from ordinary pull-request CI because it creates external resources and requires user-owned credentials.

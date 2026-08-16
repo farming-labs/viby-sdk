@@ -28,18 +28,22 @@ const docs = defineDocs({
   },
   themeToggle: {
     enabled: true,
-    default: "light",
+    default: "dark",
   },
   search: {
     provider: "simple",
     enabled: true,
     maxResults: 12,
   },
-  breadcrumb: true,
+  breadcrumb: false,
   readingTime: false,
   pageActions: {
     position: "below-title",
-    copyMarkdown: true,
+    copyMarkdown: {
+      enabled: true,
+      label: "Copy Page",
+      copiedLabel: "Copied",
+    },
     openDocs: {
       enabled: true,
       target: "markdown",
@@ -58,20 +62,52 @@ export default {
   ...docs,
   navigation: {
     sidebar: [
-      { label: "Overview", slug: "" },
-      { label: "Credentials", slug: "credentials" },
-      { label: "Capabilities", slug: "capabilities" },
-      { label: "API v1", slug: "api/v1" },
-      { label: "Web API host", slug: "api-host" },
-      { label: "Runtime boundaries", slug: "runtime" },
-      { label: "Quality matrix", slug: "quality-matrix" },
-      { label: "GitHub integration", slug: "integrations/github" },
-      { label: "Vercel integration", slug: "integrations/vercel" },
-      { label: "Cloudflare integration", slug: "integrations/cloudflare" },
-      { label: "Bitbucket integration", slug: "integrations/bitbucket" },
-      { label: "Live provider testing", slug: "live-provider-testing" },
-      { label: "Publishing", slug: "publishing" },
-      { label: "v0 capability reference", slug: "api/v0-core" },
+      {
+        label: "Get started",
+        children: [
+          { label: "Overview", slug: "" },
+          { label: "Quickstart", slug: "getting-started" },
+          { label: "Core concepts", slug: "concepts" },
+          { label: "Capabilities", slug: "capabilities" },
+          { label: "Credentials", slug: "credentials" },
+        ],
+      },
+      {
+        label: "SDK reference",
+        children: [
+          { label: "Reference overview", slug: "api" },
+          { label: "Client and configuration", slug: "api/client" },
+          { label: "Chats and projects", slug: "api/chats" },
+          { label: "Generations and events", slug: "api/generations" },
+          { label: "Versions and artifacts", slug: "api/versions" },
+          { label: "Previews and sandboxes", slug: "api/previews" },
+          { label: "Tool sources", slug: "api/tool-sources" },
+          { label: "Integrations", slug: "api/integrations" },
+          { label: "Errors", slug: "api/errors" },
+          { label: "Package entry points", slug: "api/entry-points" },
+          { label: "Complete v1 contract", slug: "api/v1" },
+          { label: "Web API host", slug: "api-host" },
+        ],
+      },
+      {
+        label: "Guides",
+        children: [
+          { label: "Runtime boundaries", slug: "runtime" },
+          { label: "Quality and evaluation", slug: "quality-matrix" },
+          { label: "Live provider testing", slug: "live-provider-testing" },
+          { label: "Publishing", slug: "publishing" },
+          { label: "v0 capability reference", slug: "api/v0-core" },
+        ],
+      },
+      {
+        label: "Provider guides",
+        children: [
+          { label: "GitHub", slug: "integrations/github" },
+          { label: "Bitbucket", slug: "integrations/bitbucket" },
+          { label: "Vercel", slug: "integrations/vercel" },
+          { label: "Cloudflare", slug: "integrations/cloudflare" },
+        ],
+      },
     ],
   },
 };

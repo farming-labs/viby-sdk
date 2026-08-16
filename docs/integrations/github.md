@@ -1,3 +1,8 @@
+---
+title: "GitHub repository integration"
+description: "Connect a GitHub App installation, import source, push immutable versions, and open pull requests."
+---
+
 # GitHub repository integration
 
 The GitHub adapter connects each Viby user to a GitHub App installation while keeping GitHub credentials inside Viby's secret-store boundary.

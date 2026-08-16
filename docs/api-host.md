@@ -1,3 +1,8 @@
+---
+title: "Web API host"
+description: "Mount Viby as a framework-neutral Web Request/Response API with a typed client and resumable SSE."
+---
+
 # Web API host
 
 `createVibyApi()` turns a configured Viby client into one framework-neutral `fetch(Request): Promise<Response>` handler. It uses only Web `Request`, `Response`, `Headers`, `ReadableStream`, URL, and crypto-compatible SDK surfaces, so the same host can be mounted in Node, Bun, Workers, or a framework route.

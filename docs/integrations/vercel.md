@@ -1,3 +1,8 @@
+---
+title: "Vercel deployment integration"
+description: "Connect Vercel accounts and deploy immutable framework source through the provider-neutral deployment contract."
+---
+
 # Vercel deployment integration
 
 `@viby/sdk/integrations/vercel` connects each product user to their own Vercel account and implements the provider-neutral deployment contract. The host owns the Vercel Integration registration, OAuth credentials, callback route, database, and secret-encryption key. Viby never sends the resulting Vercel access token to the browser, a model, or a normal application record.

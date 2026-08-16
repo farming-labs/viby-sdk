@@ -1,3 +1,8 @@
+---
+title: "Runtime boundaries"
+description: "Use the Web-standard core and keep Node, database, filesystem, browser, and provider code behind explicit entry points."
+---
+
 # Runtime boundaries
 
 Viby publishes a Web-standard contract separately from adapters that require Node.js or a vendor SDK.

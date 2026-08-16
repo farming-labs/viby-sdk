@@ -1,3 +1,8 @@
+---
+title: "Publishing"
+description: "Authenticate a release workstation, validate the package, publish to npm, and recover interrupted releases."
+---
+
 # Publishing `@viby/sdk`
 
 Publishing is intentionally local and manually approved. GitHub Actions validates changes, but it does not hold npm credentials or publish releases.

@@ -1,4 +1,9 @@
-# Shipped capability inventory
+---
+title: "Shipped capabilities"
+description: "The implemented SDK, adapter, integration, verification, and ownership inventory."
+---
+
+# Shipped capabilities
 
 This inventory describes the current `@viby/sdk` source on `main`. “Shipped” means an implemented, typed contract with automated coverage. It does not mean Viby hosts the resource or owns its credentials.
 
