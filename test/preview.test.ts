@@ -291,6 +291,42 @@ test("hosts configured durable previews without a product lifecycle callback", a
   assert.equal(second.cached, true);
   assert.equal(adapter.creates.length, 1);
 
+  const previewId = String(first.id);
+  const listResponse = await api.fetch(new Request(
+    `https://app.example/api/viby/previews?versionId=${version.id}&status=ready`,
+  ));
+  assert.equal(listResponse.status, 200);
+  const list = await listResponse.json() as { previews: Array<{ id: string }> };
+  assert.deepEqual(list.previews.map((item) => item.id), [previewId]);
+
+  const detailResponse = await api.fetch(new Request(
+    `https://app.example/api/viby/previews/${previewId}`,
+  ));
+  assert.equal((await detailResponse.json() as { preview: { status: string } }).preview.status, "ready");
+
+  const reconnectResponse = await api.fetch(new Request(
+    `https://app.example/api/viby/previews/${previewId}/reconnect`,
+    { method: "POST" },
+  ));
+  assert.equal(reconnectResponse.status, 200);
+  assert.equal(
+    (await reconnectResponse.json() as { preview: { status: string } }).preview.status,
+    "ready",
+  );
+
+  const stopResponse = await api.fetch(new Request(
+    `https://app.example/api/viby/previews/${previewId}`,
+    { method: "DELETE" },
+  ));
+  assert.equal((await stopResponse.json() as { preview: { status: string } }).preview.status, "stopped");
+
+  const cleanupResponse = await api.fetch(new Request(
+    "https://app.example/api/viby/previews/cleanup",
+    { method: "POST", body: JSON.stringify({ limit: 10 }) },
+  ));
+  assert.equal(cleanupResponse.status, 200);
+  assert.equal((await cleanupResponse.json() as { cleaned: number }).cleaned, 0);
+
   await viby.close();
 });
 

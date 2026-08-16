@@ -33,6 +33,41 @@ import type {
   ToolSourceConnectionData,
 } from "./tool-source-authorization.js";
 import type { PreviewEvent } from "./preview.js";
+import type { PreviewSessionData, PreviewSessionListOptions } from "./preview.js";
+import type {
+  EnvironmentVariableData,
+  ListEnvironmentVariablesInput,
+  SetEnvironmentVariableInput,
+} from "./environment.js";
+import type {
+  ConfiguredIntegrationStatus,
+  ConnectIntegrationInput,
+  ConnectIntegrationResult,
+  DisconnectIntegrationResult,
+} from "./integration-client.js";
+import type {
+  CreateDeploymentProjectInput,
+  CreateRepositoryBranchInput,
+  CreateRepositoryInput,
+  DeploymentData,
+  DeploymentEnvironment,
+  DeploymentProjectData,
+  IntegrationPage,
+  ListDeploymentProjectsInput,
+  ListRepositoriesInput,
+  ListRepositoryBranchesInput,
+  ListRepositoryOwnersInput,
+  RepositoryBranchData,
+  RepositoryData,
+  RepositoryOwnerData,
+} from "./integrations.js";
+import type { IntegrationConnectionData } from "./integration-store.js";
+import type { PushVersionRepositoryResult } from "./repository-integrations.js";
+import type { RepositoryLinkData, RepositoryPushData } from "./repository-history.js";
+import type {
+  DeploymentProjectLinkData,
+  DeploymentRecordData,
+} from "./deployment-history.js";
 
 const DEFAULT_BASE_URL = "/api/viby";
 const DEFAULT_MAX_RECONNECTS = 5;
@@ -61,6 +96,11 @@ export type VibyApiToolCall = VibyApiJson<ToolCallData>;
 export type VibyApiToolSource = VibyApiJson<ToolSourceRegistrationData>;
 export type VibyApiToolSourceConnection = VibyApiJson<ToolSourceConnectionData>;
 export type VibyApiPreviewEvent = VibyApiJson<PreviewEvent>;
+export type VibyApiPreview<Framework extends FrameworkId = FrameworkId> = VibyApiJson<
+  PreviewSessionData<Framework>
+>;
+export type VibyApiEnvironmentVariable = VibyApiJson<EnvironmentVariableData>;
+export type VibyApiIntegrationConnection = VibyApiJson<IntegrationConnectionData>;
 export type VibyWebPreviewStreamEvent<Result extends JsonValue = JsonValue> =
   | VibyApiPreviewEvent
   | { readonly type: "preview.result"; readonly result: Result }
@@ -155,6 +195,60 @@ export interface VibyWebDeleteChatInput {
   readonly retentionMs?: number | null;
 }
 
+export type VibyWebForkVersionInput = {
+  readonly title?: string;
+  readonly summary?: string;
+  readonly metadata?: ChatMetadata;
+};
+
+export type VibyWebRestoreVersionInput = {
+  readonly title?: string;
+  readonly summary?: string;
+};
+
+export interface VibyWebPushVersionInput {
+  readonly integrationId: string;
+  readonly connectionId?: string;
+  readonly repository: {
+    readonly owner: string;
+    readonly name: string;
+    readonly createIfMissing?: boolean;
+    readonly description?: string;
+    readonly visibility?: "private" | "internal" | "public";
+  };
+  readonly branch: string | {
+    readonly name: string;
+    readonly from?: string;
+    readonly createIfMissing?: boolean;
+  };
+  readonly commit: {
+    readonly message: string;
+    readonly expectedHead?: string;
+  };
+  readonly pullRequest?: {
+    readonly base: string;
+    readonly title: string;
+    readonly body?: string;
+    readonly draft?: boolean;
+    readonly providerOptions?: Readonly<Record<string, JsonValue>>;
+  };
+  readonly providerOptions?: Readonly<Record<string, JsonValue>>;
+  readonly idempotencyKey?: string;
+}
+
+export interface VibyWebDeployVersionInput {
+  readonly integrationId: string;
+  readonly connectionId?: string;
+  readonly project: string | { readonly id: string } | {
+    readonly name: string;
+    readonly createIfMissing?: boolean;
+    readonly providerOptions?: Readonly<Record<string, JsonValue>>;
+  };
+  readonly environment: DeploymentEnvironment;
+  readonly providerOptions?: Readonly<Record<string, JsonValue>>;
+  readonly idempotencyKey?: string;
+}
+
 export interface VibyWebCreateToolSourceInput {
   readonly type: string;
   readonly name: string;
@@ -221,6 +315,11 @@ export interface VibyWebImportProjectResult<Framework extends FrameworkId = Fram
   readonly version: VibyApiVersion<Framework>;
 }
 
+export interface VibyWebForkVersionResult<Framework extends FrameworkId = FrameworkId>
+extends VibyWebVersionDetail<Framework> {
+  readonly chat: VibyApiChat<Framework>;
+}
+
 export interface VibyWebGenerationDetail<Framework extends FrameworkId = FrameworkId> {
   readonly generation: VibyApiGeneration;
   readonly attempts: readonly VibyApiGenerationAttempt[];
@@ -264,6 +363,43 @@ export interface VibyWebChatsClient<Framework extends FrameworkId = FrameworkId>
     input?: VibyWebDeleteChatInput,
     options?: VibyWebRequestOptions,
   ): Promise<{ readonly deletion: VibyApiJson<ChatDeletionData> }>;
+  restore(
+    chatId: string,
+    options?: VibyWebRequestOptions,
+  ): Promise<{ readonly chat: VibyApiChat<Framework> }>;
+  repositoryLinks(
+    chatId: string,
+    options?: VibyWebRequestOptions,
+  ): Promise<{ readonly links: readonly VibyApiJson<RepositoryLinkData>[] }>;
+  repositoryPushes(
+    chatId: string,
+    options?: VibyWebRequestOptions,
+  ): Promise<{ readonly pushes: readonly VibyApiJson<RepositoryPushData>[] }>;
+  deploymentProjects(
+    chatId: string,
+    options?: VibyWebRequestOptions,
+  ): Promise<{ readonly projects: readonly VibyApiJson<DeploymentProjectLinkData>[] }>;
+  deployments(
+    chatId: string,
+    options?: VibyWebRequestOptions,
+  ): Promise<{ readonly deployments: readonly VibyApiJson<DeploymentRecordData>[] }>;
+  readonly environment: {
+    list(
+      chatId: string,
+      input?: ListEnvironmentVariablesInput & VibyWebRequestOptions,
+    ): Promise<{ readonly variables: readonly VibyApiEnvironmentVariable[] }>;
+    set(
+      chatId: string,
+      input: SetEnvironmentVariableInput,
+      options?: VibyWebRequestOptions,
+    ): Promise<{ readonly variable: VibyApiEnvironmentVariable }>;
+    delete(
+      chatId: string,
+      environment: string,
+      name: string,
+      options?: VibyWebRequestOptions,
+    ): Promise<{ readonly deleted: boolean }>;
+  };
   readonly messages: {
     list(chatId: string, options?: VibyWebPageOptions): Promise<VibyWebMessagePage>;
     get(
@@ -295,6 +431,40 @@ export interface VibyWebChatsClient<Framework extends FrameworkId = FrameworkId>
       input: VibyWebApplySourceChangesInput,
       options?: VibyWebRequestOptions,
     ): Promise<VibyWebVersionDetail<Framework>>;
+    restore(
+      chatId: string,
+      versionId: string,
+      input?: VibyWebRestoreVersionInput,
+      options?: VibyWebRequestOptions,
+    ): Promise<VibyWebVersionDetail<Framework>>;
+    fork(
+      chatId: string,
+      versionId: string,
+      input?: VibyWebForkVersionInput,
+      options?: VibyWebRequestOptions,
+    ): Promise<VibyWebForkVersionResult<Framework>>;
+    repositoryPushes(
+      chatId: string,
+      versionId: string,
+      options?: VibyWebRequestOptions,
+    ): Promise<{ readonly pushes: readonly VibyApiJson<RepositoryPushData>[] }>;
+    push(
+      chatId: string,
+      versionId: string,
+      input: VibyWebPushVersionInput,
+      options?: VibyWebRequestOptions,
+    ): Promise<{ readonly result: VibyApiJson<PushVersionRepositoryResult> }>;
+    deployments(
+      chatId: string,
+      versionId: string,
+      options?: VibyWebRequestOptions,
+    ): Promise<{ readonly deployments: readonly VibyApiJson<DeploymentRecordData>[] }>;
+    deploy(
+      chatId: string,
+      versionId: string,
+      input: VibyWebDeployVersionInput,
+      options?: VibyWebRequestOptions,
+    ): Promise<{ readonly deployment: VibyApiJson<DeploymentData> }>;
     iterate(
       chatId: string,
       versionId: string,
@@ -400,7 +570,103 @@ export interface VibyWebToolSourcesClient {
 export interface VibyWebClient<Framework extends FrameworkId = FrameworkId> {
   readonly chats: VibyWebChatsClient<Framework>;
   readonly generations: VibyWebGenerationsClient<Framework>;
+  readonly previews: VibyWebPreviewsClient<Framework>;
+  readonly integrations: VibyWebIntegrationsClient;
   readonly toolSources: VibyWebToolSourcesClient;
+}
+
+export interface VibyWebPreviewsClient<Framework extends FrameworkId = FrameworkId> {
+  list(
+    input?: PreviewSessionListOptions & VibyWebRequestOptions,
+  ): Promise<{ readonly previews: readonly VibyApiPreview<Framework>[] }>;
+  get(
+    previewId: string,
+    options?: VibyWebRequestOptions,
+  ): Promise<{ readonly preview: VibyApiPreview<Framework> }>;
+  stop(
+    previewId: string,
+    options?: VibyWebRequestOptions,
+  ): Promise<{ readonly preview: VibyApiPreview<Framework> }>;
+  reconnect(
+    previewId: string,
+    options?: VibyWebRequestOptions,
+  ): Promise<{ readonly preview: VibyApiPreview<Framework> }>;
+  cleanup(
+    limit?: number,
+    options?: VibyWebRequestOptions,
+  ): Promise<{ readonly cleaned: number }>;
+}
+
+export interface VibyWebIntegrationCategoryClient {
+  list(options?: VibyWebRequestOptions): Promise<{
+    readonly integrations: readonly VibyApiJson<ConfiguredIntegrationStatus>[];
+  }>;
+  connections(integrationId: string, options?: VibyWebRequestOptions): Promise<{
+    readonly connections: readonly VibyApiIntegrationConnection[];
+  }>;
+  connect(
+    integrationId: string,
+    input: Omit<ConnectIntegrationInput, "signal">,
+    options?: VibyWebRequestOptions,
+  ): Promise<{ readonly result: VibyApiJson<ConnectIntegrationResult> }>;
+  disconnect(
+    integrationId: string,
+    connectionId: string,
+    options?: VibyWebRequestOptions,
+  ): Promise<{ readonly result: VibyApiJson<DisconnectIntegrationResult> }>;
+}
+
+export interface VibyWebRepositoryIntegrationsClient extends VibyWebIntegrationCategoryClient {
+  owners(
+    integrationId: string,
+    input?: ListRepositoryOwnersInput & { readonly connectionId?: string } & VibyWebRequestOptions,
+  ): Promise<VibyApiJson<IntegrationPage<RepositoryOwnerData>>>;
+  repositories(
+    integrationId: string,
+    input?: ListRepositoriesInput & { readonly connectionId?: string } & VibyWebRequestOptions,
+  ): Promise<VibyApiJson<IntegrationPage<RepositoryData>>>;
+  createRepository(
+    integrationId: string,
+    input: CreateRepositoryInput,
+    options?: VibyWebRequestOptions & { readonly connectionId?: string },
+  ): Promise<{ readonly repository: VibyApiJson<RepositoryData> }>;
+  branches(
+    integrationId: string,
+    input: ListRepositoryBranchesInput & { readonly connectionId?: string } & VibyWebRequestOptions,
+  ): Promise<VibyApiJson<IntegrationPage<RepositoryBranchData>>>;
+  createBranch(
+    integrationId: string,
+    input: CreateRepositoryBranchInput,
+    options?: VibyWebRequestOptions & { readonly connectionId?: string },
+  ): Promise<{ readonly branch: VibyApiJson<RepositoryBranchData> }>;
+}
+
+export interface VibyWebDeploymentIntegrationsClient extends VibyWebIntegrationCategoryClient {
+  projects(
+    integrationId: string,
+    input?: ListDeploymentProjectsInput & { readonly connectionId?: string } & VibyWebRequestOptions,
+  ): Promise<VibyApiJson<IntegrationPage<DeploymentProjectData>>>;
+  createProject(
+    integrationId: string,
+    input: CreateDeploymentProjectInput<Record<string, JsonValue>>,
+    options?: VibyWebRequestOptions & { readonly connectionId?: string },
+  ): Promise<{ readonly project: VibyApiJson<DeploymentProjectData> }>;
+  getDeployment(
+    integrationId: string,
+    deploymentId: string,
+    options?: VibyWebRequestOptions & { readonly connectionId?: string },
+  ): Promise<{ readonly deployment: VibyApiJson<DeploymentData | null> }>;
+  cancelDeployment(
+    integrationId: string,
+    deploymentId: string,
+    idempotencyKey: string,
+    options?: VibyWebRequestOptions & { readonly connectionId?: string },
+  ): Promise<{ readonly deployment: VibyApiJson<DeploymentData> }>;
+}
+
+export interface VibyWebIntegrationsClient {
+  readonly repository: VibyWebRepositoryIntegrationsClient;
+  readonly deployment: VibyWebDeploymentIntegrationsClient;
 }
 
 export class VibyApiClientError extends Error {
@@ -487,6 +753,64 @@ export function createVibyWebClient<Framework extends FrameworkId = FrameworkId>
       undefined,
       request,
     ),
+    restore: (chatId, request = {}) => transport.json(
+      "POST",
+      `/chats/${segment(chatId)}/restore`,
+      {},
+      undefined,
+      request,
+    ),
+    repositoryLinks: (chatId, request = {}) => transport.json(
+      "GET",
+      `/chats/${segment(chatId)}/repository-links`,
+      undefined,
+      undefined,
+      request,
+    ),
+    repositoryPushes: (chatId, request = {}) => transport.json(
+      "GET",
+      `/chats/${segment(chatId)}/repository-pushes`,
+      undefined,
+      undefined,
+      request,
+    ),
+    deploymentProjects: (chatId, request = {}) => transport.json(
+      "GET",
+      `/chats/${segment(chatId)}/deployment-projects`,
+      undefined,
+      undefined,
+      request,
+    ),
+    deployments: (chatId, request = {}) => transport.json(
+      "GET",
+      `/chats/${segment(chatId)}/deployments`,
+      undefined,
+      undefined,
+      request,
+    ),
+    environment: Object.freeze({
+      list: (chatId: string, input = {}) => transport.json(
+        "GET",
+        `/chats/${segment(chatId)}/environment`,
+        undefined,
+        input,
+        input,
+      ),
+      set: (chatId: string, input: SetEnvironmentVariableInput, request = {}) => transport.json(
+        "PUT",
+        `/chats/${segment(chatId)}/environment/${segment(input.environment)}/${segment(input.name)}`,
+        { value: input.value, ...(input.secret === undefined ? {} : { secret: input.secret }) },
+        undefined,
+        request,
+      ),
+      delete: (chatId: string, environment: string, name: string, request = {}) => transport.json(
+        "DELETE",
+        `/chats/${segment(chatId)}/environment/${segment(environment)}/${segment(name)}`,
+        undefined,
+        undefined,
+        request,
+      ),
+    }),
     messages: Object.freeze({
       list: (chatId: string, input: VibyWebPageOptions = {}) => transport.json<VibyWebMessagePage>(
         "GET",
@@ -514,7 +838,7 @@ export function createVibyWebClient<Framework extends FrameworkId = FrameworkId>
         )
       ),
     }),
-    versions: Object.freeze({
+    versions: {
       list: (chatId: string, input: VibyWebPageOptions = {}) => transport.json<VibyWebVersionPage<Framework>>(
         "GET",
         `/chats/${segment(chatId)}/versions`,
@@ -548,6 +872,72 @@ export function createVibyWebClient<Framework extends FrameworkId = FrameworkId>
       ) => transport.json<VibyWebVersionDetail<Framework>>(
         "POST",
         `/chats/${segment(chatId)}/versions/${segment(versionId)}/changes`,
+        input,
+        undefined,
+        request,
+      ),
+      restore: (
+        chatId: string,
+        versionId: string,
+        input: VibyWebRestoreVersionInput = {},
+        request: VibyWebRequestOptions = {},
+      ) => transport.json<VibyWebVersionDetail<Framework>>(
+        "POST",
+        `/chats/${segment(chatId)}/versions/${segment(versionId)}/restore`,
+        input,
+        undefined,
+        request,
+      ),
+      fork: (
+        chatId: string,
+        versionId: string,
+        input: VibyWebForkVersionInput = {},
+        request: VibyWebRequestOptions = {},
+      ) => transport.json<VibyWebForkVersionResult<Framework>>(
+        "POST",
+        `/chats/${segment(chatId)}/versions/${segment(versionId)}/fork`,
+        input,
+        undefined,
+        request,
+      ),
+      repositoryPushes: (chatId: string, versionId: string, request = {}) => transport.json<{
+        readonly pushes: readonly VibyApiJson<RepositoryPushData>[];
+      }>(
+        "GET",
+        `/chats/${segment(chatId)}/versions/${segment(versionId)}/repository-pushes`,
+        undefined,
+        undefined,
+        request,
+      ),
+      push: (
+        chatId: string,
+        versionId: string,
+        input: VibyWebPushVersionInput,
+        request: VibyWebRequestOptions = {},
+      ) => transport.json<{ readonly result: VibyApiJson<PushVersionRepositoryResult> }>(
+        "POST",
+        `/chats/${segment(chatId)}/versions/${segment(versionId)}/repository-pushes`,
+        input,
+        undefined,
+        request,
+      ),
+      deployments: (chatId: string, versionId: string, request = {}) => transport.json<{
+        readonly deployments: readonly VibyApiJson<DeploymentRecordData>[];
+      }>(
+        "GET",
+        `/chats/${segment(chatId)}/versions/${segment(versionId)}/deployments`,
+        undefined,
+        undefined,
+        request,
+      ),
+      deploy: (
+        chatId: string,
+        versionId: string,
+        input: VibyWebDeployVersionInput,
+        request: VibyWebRequestOptions = {},
+      ) => transport.json<{ readonly deployment: VibyApiJson<DeploymentData> }>(
+        "POST",
+        `/chats/${segment(chatId)}/versions/${segment(versionId)}/deployments`,
         input,
         undefined,
         request,
@@ -589,7 +979,7 @@ export function createVibyWebClient<Framework extends FrameworkId = FrameworkId>
         versionId: string,
         request: VibyWebRequestOptions = {},
       ) => previewStream<Result>(transport, chatId, versionId, request),
-    }),
+    },
     toolSources: Object.freeze({
       list: (chatId: string, request: VibyWebRequestOptions = {}) => transport.json<{
         readonly toolSources: readonly VibyApiToolSource[];
@@ -656,6 +1046,164 @@ export function createVibyWebClient<Framework extends FrameworkId = FrameworkId>
       request,
     ),
   };
+  const previews: VibyWebPreviewsClient<Framework> = {
+    list: (input = {}) => transport.json(
+      "GET",
+      "/previews",
+      undefined,
+      input,
+      input,
+    ),
+    get: (previewId, request = {}) => transport.json(
+      "GET",
+      `/previews/${segment(previewId)}`,
+      undefined,
+      undefined,
+      request,
+    ),
+    stop: (previewId, request = {}) => transport.json(
+      "DELETE",
+      `/previews/${segment(previewId)}`,
+      undefined,
+      undefined,
+      request,
+    ),
+    reconnect: (previewId, request = {}) => transport.json(
+      "POST",
+      `/previews/${segment(previewId)}/reconnect`,
+      {},
+      undefined,
+      request,
+    ),
+    cleanup: (limit, request = {}) => transport.json(
+      "POST",
+      "/previews/cleanup",
+      limit === undefined ? {} : { limit },
+      undefined,
+      request,
+    ),
+  };
+  const integrationCategory = (
+    category: "repository" | "deployment",
+  ): VibyWebIntegrationCategoryClient => ({
+    list: (request = {}) => transport.json(
+      "GET",
+      `/integrations/${category}`,
+      undefined,
+      undefined,
+      request,
+    ),
+    connections: (integrationId, request = {}) => transport.json(
+      "GET",
+      `/integrations/${category}/${segment(integrationId)}/connections`,
+      undefined,
+      undefined,
+      request,
+    ),
+    connect: (integrationId, input, request = {}) => transport.json(
+      "POST",
+      `/integrations/${category}/${segment(integrationId)}/connect`,
+      input,
+      undefined,
+      request,
+    ),
+    disconnect: (integrationId, connectionId, request = {}) => transport.json(
+      "DELETE",
+      `/integrations/${category}/${segment(integrationId)}/connections/${segment(connectionId)}`,
+      undefined,
+      undefined,
+      request,
+    ),
+  });
+  const repositoryIntegrations: VibyWebRepositoryIntegrationsClient = {
+    ...integrationCategory("repository"),
+    owners: (integrationId, input = {}) => transport.json(
+      "GET",
+      `/integrations/repository/${segment(integrationId)}/owners`,
+      undefined,
+      input,
+      input,
+    ),
+    repositories: (integrationId, input = {}) => transport.json(
+      "GET",
+      `/integrations/repository/${segment(integrationId)}/repositories`,
+      undefined,
+      input,
+      input,
+    ),
+    createRepository: (integrationId, input, request = {}) => transport.json(
+      "POST",
+      `/integrations/repository/${segment(integrationId)}/repositories`,
+      input,
+      request,
+      request,
+    ),
+    branches: (integrationId, input) => transport.json(
+      "GET",
+      `/integrations/repository/${segment(integrationId)}/branches`,
+      undefined,
+      {
+        owner: input.repository.owner,
+        name: input.repository.name,
+        ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
+        ...(input.limit === undefined ? {} : { limit: input.limit }),
+        ...(input.connectionId === undefined ? {} : { connectionId: input.connectionId }),
+      },
+      input,
+    ),
+    createBranch: (integrationId, input, request = {}) => transport.json(
+      "POST",
+      `/integrations/repository/${segment(integrationId)}/branches`,
+      {
+        owner: input.repository.owner,
+        repository: input.repository.name,
+        name: input.name,
+        from: input.from,
+      },
+      request,
+      request,
+    ),
+  };
+  const deploymentIntegrations: VibyWebDeploymentIntegrationsClient = {
+    ...integrationCategory("deployment"),
+    projects: (integrationId, input = {}) => transport.json(
+      "GET",
+      `/integrations/deployment/${segment(integrationId)}/projects`,
+      undefined,
+      input,
+      input,
+    ),
+    createProject: (integrationId, input, request = {}) => transport.json(
+      "POST",
+      `/integrations/deployment/${segment(integrationId)}/projects`,
+      input,
+      request,
+      request,
+    ),
+    getDeployment: (integrationId, deploymentId, request = {}) => transport.json(
+      "GET",
+      `/integrations/deployment/${segment(integrationId)}/deployments/${segment(deploymentId)}`,
+      undefined,
+      request,
+      request,
+    ),
+    cancelDeployment: (
+      integrationId,
+      deploymentId,
+      idempotencyKey,
+      request = {},
+    ) => transport.json(
+      "DELETE",
+      `/integrations/deployment/${segment(integrationId)}/deployments/${segment(deploymentId)}`,
+      { idempotencyKey },
+      request,
+      request,
+    ),
+  };
+  const integrations: VibyWebIntegrationsClient = Object.freeze({
+    repository: Object.freeze(repositoryIntegrations),
+    deployment: Object.freeze(deploymentIntegrations),
+  });
   const toolSources: VibyWebToolSourcesClient = {
     list: (input = {}) => transport.json(
       "GET",
@@ -717,6 +1265,8 @@ export function createVibyWebClient<Framework extends FrameworkId = FrameworkId>
   return Object.freeze({
     chats: Object.freeze(chats),
     generations: Object.freeze(generations),
+    previews: Object.freeze(previews),
+    integrations,
     toolSources: Object.freeze(toolSources),
   });
 }

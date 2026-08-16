@@ -205,6 +205,12 @@ async function route<Framework extends FrameworkId>(
       return methodNotAllowed("GET, PATCH, DELETE");
     }
 
+    if (segments[2] === "restore" && segments.length === 3) {
+      if (request.method !== "POST") return methodNotAllowed("POST");
+      const restored = await user.chats.restore(segments[1]);
+      return json({ chat: chatValue(restored) });
+    }
+
     const chat = await user.chats.get(segments[1]);
 
     if (segments[2] === "attachments" && segments[3] && segments.length === 4) {
@@ -325,6 +331,41 @@ async function route<Framework extends FrameworkId>(
         }
         return methodNotAllowed("GET, POST");
       }
+      if (segments[4] === "restore" && segments.length === 5) {
+        if (request.method !== "POST") return methodNotAllowed("POST");
+        const body = await optionalRequestObject(request, maxBodyBytes);
+        const restored = await version.restore({
+          ...(body.title === undefined
+            ? {}
+            : { title: requiredString(body.title, "title", 200) }),
+          ...(body.summary === undefined
+            ? {}
+            : { summary: requiredString(body.summary, "summary", 2_000) }),
+        });
+        return json({ version: versionValue(restored), entries: await restored.entries() }, 201);
+      }
+      if (segments[4] === "fork" && segments.length === 5) {
+        if (request.method !== "POST") return methodNotAllowed("POST");
+        const body = await optionalRequestObject(request, maxBodyBytes);
+        const forked = await version.fork({
+          ...(body.title === undefined
+            ? {}
+            : { title: requiredString(body.title, "title", 200) }),
+          ...(body.summary === undefined
+            ? {}
+            : { summary: requiredString(body.summary, "summary", 2_000) }),
+          ...(body.metadata === undefined
+            ? {}
+            : { metadata: jsonObject(body.metadata, "metadata") }),
+        });
+        const forkedVersion = await forked.latestVersion();
+        if (!forkedVersion) throw new NotFoundError("Forked version");
+        return json({
+          chat: chatValue(forked),
+          version: versionValue(forkedVersion),
+          entries: await forkedVersion.entries(),
+        }, 201);
+      }
       if (segments[4] === "repository-pushes") {
         if (segments.length === 5 && request.method === "GET") {
           return json({ pushes: await version.repositoryPushes() });
@@ -385,6 +426,46 @@ async function route<Framework extends FrameworkId>(
         return result instanceof Response ? result : json(result, 201);
       }
       return methodNotAllowed("GET, POST");
+    }
+  }
+
+  if (segments[0] === "previews") {
+    if (segments.length === 1) {
+      if (request.method !== "GET") return methodNotAllowed("GET");
+      return json({ previews: await user.previews.list({
+        ...(url.searchParams.has("chatId") ? { chatId: url.searchParams.get("chatId")! } : {}),
+        ...(url.searchParams.has("versionId")
+          ? { versionId: url.searchParams.get("versionId")! }
+          : {}),
+        ...(url.searchParams.has("status")
+          ? { status: previewStatus(url.searchParams.get("status")) }
+          : {}),
+      }) });
+    }
+    if (segments[1] === "cleanup" && segments.length === 2) {
+      if (request.method !== "POST") return methodNotAllowed("POST");
+      const body = await optionalRequestObject(request, maxBodyBytes);
+      return json({ cleaned: await user.previews.cleanupExpired(
+        body.limit === undefined ? undefined : positiveInteger(body.limit, "limit"),
+      ) });
+    }
+    if (segments[1]) {
+      const preview = await user.previews.get(segments[1]);
+      if (segments.length === 2 && request.method === "GET") {
+        return json({ preview: preview.data() });
+      }
+      if (
+        (segments.length === 2 && request.method === "DELETE")
+        || (segments[2] === "stop" && segments.length === 3 && request.method === "POST")
+      ) {
+        await preview.stop(request.signal);
+        return json({ preview: preview.data() });
+      }
+      if (segments[2] === "reconnect" && segments.length === 3 && request.method === "POST") {
+        await preview.reconnect(request.signal);
+        return json({ preview: preview.data() });
+      }
+      return methodNotAllowed("GET, DELETE, POST");
     }
   }
 
@@ -1181,6 +1262,19 @@ function queryInteger(url: URL, name: string): number {
     throw new ConfigurationError(`${name} must be a non-negative integer.`);
   }
   return Number(value);
+}
+
+function previewStatus(value: unknown): "starting" | "ready" | "failed" | "stopped" | "expired" {
+  if (
+    value !== "starting"
+    && value !== "ready"
+    && value !== "failed"
+    && value !== "stopped"
+    && value !== "expired"
+  ) {
+    throw new ConfigurationError("status must be a valid preview status.");
+  }
+  return value;
 }
 
 function queryObject(url: URL, name: string): Readonly<Record<string, JsonValue>> {
