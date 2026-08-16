@@ -89,6 +89,11 @@ import {
   normalizeGenerationEngineIdentity,
   type GenerationEngine,
 } from "./generation-engine.js";
+import {
+  normalizeGenerationQuality,
+  verifyGenerationQuality,
+  type NormalizedGenerationQualityConfig,
+} from "./generation-quality.js";
 import type {
   ChatReadSnapshot,
   CreateAttachmentRecord,
@@ -614,6 +619,12 @@ class VibyClient<Framework extends FrameworkId> implements Viby<Framework> {
     this.#skills = normalizeSkillGroups(
       withFrameworkSkill(config.framework, config.skills),
     );
+    const quality = normalizeGenerationQuality(config.generation?.quality);
+    if (quality && !this.#sandbox) {
+      throw new ConfigurationError(
+        "generation.quality requires a sandbox adapter configured on createViby.",
+      );
+    }
     this.#runner = new GenerationRunner({
       framework: this.framework,
       repository: this.#repository,
@@ -622,7 +633,9 @@ class VibyClient<Framework extends FrameworkId> implements Viby<Framework> {
       registry: this.#registry,
       automatic: normalizeGenerationExecution(config.generation) === "embedded",
       sandbox: this.#sandbox,
+      sandboxPolicy: config.sandboxPolicy,
       sandboxes: this.#sandboxes,
+      quality,
       agent: normalizeAgentRunnerConfig(config.agent),
       telemetry: normalizeTelemetry(config.telemetry),
       cost: normalizeCostConfig(config.cost),
@@ -2493,6 +2506,25 @@ async function materializeVersionEntries(
   }));
 }
 
+async function materializeCandidateEntries(
+  repository: Repository,
+  scope: UserScope,
+  baseVersionId: string | null,
+  entries: readonly VersionEntry[],
+): Promise<SandboxFile[]> {
+  return Promise.all(entries.map(async (entry) => {
+    if (entry.type !== "artifact") return { path: entry.path, content: entry.content };
+    if (!baseVersionId) {
+      throw new ConfigurationError(
+        `Generated source artifact ${entry.path} has no immutable base version.`,
+      );
+    }
+    const artifact = await repository.getProjectArtifact(scope, baseVersionId, entry.artifactId);
+    if (!artifact) throw new NotFoundError("Project artifact");
+    return { path: entry.path, content: artifact.bytes };
+  }));
+}
+
 async function materializeVersionSourceFiles(
   repository: Repository,
   scope: UserScope,
@@ -2808,7 +2840,9 @@ interface RunnerDependencies<Framework extends FrameworkId> {
   readonly registry: GenerationRunRegistry;
   readonly automatic: boolean;
   readonly sandbox: SandboxAdapter | undefined;
+  readonly sandboxPolicy: VibyConfig<Framework>["sandboxPolicy"];
   readonly sandboxes: SandboxRegistry;
+  readonly quality: NormalizedGenerationQualityConfig | undefined;
   readonly agent: ReturnType<typeof normalizeAgentRunnerConfig>;
   readonly telemetry: VibyTelemetry | undefined;
   readonly cost: NormalizedGenerationCostConfig | undefined;
@@ -3156,6 +3190,44 @@ class GenerationRunner<Framework extends FrameworkId> {
       const entries = output.kind === "changes"
         ? applyVersionEntryChanges(previousEntries, output.changes)
         : mergeGeneratedFilesWithArtifacts(previousEntries, output.files);
+      if (this.#dependencies.quality) {
+        await verifyGenerationQuality({
+          config: this.#dependencies.quality,
+          adapter: this.#dependencies.sandbox!,
+          ...(this.#dependencies.sandboxPolicy
+            ? { policy: this.#dependencies.sandboxPolicy }
+            : {}),
+          scope,
+          chatId: chat.id,
+          framework: chat.framework,
+          files: await materializeCandidateEntries(
+            this.#dependencies.repository,
+            scope,
+            generation.baseVersionId,
+            entries,
+          ),
+          signal,
+          onEvent: async (event) => {
+            if (event.type === "quality.started") {
+              await this.#dependencies.repository.appendGenerationEvent(scope, {
+                generationId,
+                attemptId,
+                leaseToken,
+                type: event.type,
+                data: event.data,
+              });
+              return;
+            }
+            await this.#dependencies.repository.appendGenerationEvent(scope, {
+              generationId,
+              attemptId,
+              leaseToken,
+              type: event.type,
+              data: event.data,
+            });
+          },
+        });
+      }
       const { files, artifacts: projectArtifacts } = splitVersionEntries(entries);
       const changes = output.kind === "changes" ? output.changes : null;
       const inputTokens = output.usage.inputTokens ?? null;
