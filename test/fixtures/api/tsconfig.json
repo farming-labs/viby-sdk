@@ -4,7 +4,10 @@
     "noEmit": true,
     "paths": {
       "@viby/sdk": ["../../../src/index.ts"],
-      "@viby/sdk/mcp": ["../../../src/mcp.ts"]
+      "@viby/sdk/mcp": ["../../../src/mcp.ts"],
+      "@viby/sdk/storage/postgres": ["../../../src/storage-postgres.ts"],
+      "@viby/sdk/storage/s3": ["../../../src/artifact-s3.ts"],
+      "@viby/sdk/environment/postgres": ["../../../src/environment-postgres.ts"]
     }
   },
   "include": ["./v0.2.4.ts"],

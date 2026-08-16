@@ -50,6 +50,14 @@ for await (const event of viby.generations.stream(generation.id)) {
 const state = await viby.generations.get(generation.id);
 const source = await viby.chats.versions.download(chat.id, state.version!.id);
 
+const restored = await viby.chats.versions.restore(chat.id, state.version!.id);
+const forked = await viby.chats.versions.fork(chat.id, restored.version.id, {
+  title: "Analytics experiment",
+});
+
+const previews = await viby.previews.list({ chatId: chat.id, status: "ready" });
+if (previews.previews[0]) await viby.previews.stop(previews.previews[0].id);
+
 const tools = await viby.toolSources.create({
   type: "mcp",
   name: "Company tools",
@@ -70,6 +78,7 @@ All paths are relative to `basePath` (default `/api/viby`).
 | `POST /chats` | create a chat; include `prompt` to start its first generation |
 | `POST /chats/imports` | import a project from text/binary files, a base64 ZIP, or a connected repository |
 | `GET/PATCH/DELETE /chats/:chatId` | load, update, or retention-delete a chat |
+| `POST /chats/:chatId/restore` | restore a retention-deleted chat before its purge deadline |
 | `GET/POST /chats/:chatId/messages` | list messages or start a generation |
 | `GET /chats/:chatId/messages/:messageId` | load one durable message |
 | `GET /chats/:chatId/attachments/:attachmentId` | stream private attachment bytes with verified metadata headers |
@@ -81,6 +90,8 @@ All paths are relative to `basePath` (default `/api/viby`).
 | `GET /chats/:chatId/versions` | list immutable versions |
 | `GET /chats/:chatId/versions/:versionId` | load version metadata and entries |
 | `GET/POST /chats/:chatId/versions/:versionId/changes` | inspect or apply immutable source changes |
+| `POST /chats/:chatId/versions/:versionId/restore` | create a new version from a previous immutable snapshot |
+| `POST /chats/:chatId/versions/:versionId/fork` | create a new chat whose first version references the source snapshot |
 | `POST /chats/:chatId/versions/:versionId/messages` | iterate from an exact version |
 | `GET /chats/:chatId/versions/:versionId/download` | download raw framework source as ZIP |
 | `POST /chats/:chatId/versions/:versionId/preview` | open a configured durable preview or invoke a host override |
@@ -97,6 +108,10 @@ All paths are relative to `basePath` (default `/api/viby`).
 | `POST /generations/:generationId/retry` | add a retry attempt |
 | `POST /generations/:generationId/resume` | resume an interrupted attempt |
 | `POST /generations/:generationId/tasks/:taskId` | resolve a typed plan, question, or permission task |
+| `GET /previews` | list durable previews by chat, version, or status |
+| `GET/DELETE /previews/:previewId` | load or stop a durable preview |
+| `POST /previews/:previewId/reconnect` | reconnect the configured sandbox to a durable preview lease |
+| `POST /previews/cleanup` | stop and release expired previews with an optional bounded limit |
 | `GET/POST /integrations/callback` | complete a provider authorization through durable state |
 | `GET/POST /tool-sources/callback` | complete tool-source authorization through durable single-use state |
 | `GET/POST /tool-sources` | list/filter registrations or create a public credential-free registration |

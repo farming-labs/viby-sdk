@@ -14,6 +14,7 @@ import {
 } from "../src/web-client.js";
 import { MemoryRepository } from "./helpers/memory-repository.js";
 import { MemorySecretStore } from "./helpers/memory-integration-store.js";
+import { MemoryEnvironmentVariableStore } from "./helpers/memory-environment-store.js";
 
 const usage: LanguageModelUsage = {
   inputTokens: 10,
@@ -75,6 +76,7 @@ test("consumes the Web API host through typed chat, stream, preview, and downloa
       framework: "farm",
       model: "test/web-client" as LanguageModel,
       storage: { secrets },
+      environment: { store: new MemoryEnvironmentVariableStore() },
       tools: { adapters: { "web-oauth": toolAdapter } },
     },
     {
@@ -160,6 +162,40 @@ test("consumes the Web API host through typed chat, stream, preview, and downloa
       "write",
     );
 
+    const restoredVersion = await client.chats.versions.restore(
+      created.chat.id,
+      generation.version!.id,
+      { title: "Restored web project" },
+    );
+    assert.ok(restoredVersion.version.parentVersionId);
+    assert.equal(restoredVersion.version.origin, "restored");
+    const forked = await client.chats.versions.fork(created.chat.id, edited.version.id, {
+      title: "Forked web project",
+      metadata: { workspace: "fork" },
+    });
+    assert.notEqual(forked.chat.id, created.chat.id);
+    assert.equal(forked.version.origin, "forked");
+
+    const savedVariable = await client.chats.environment.set(created.chat.id, {
+      environment: "preview",
+      name: "PUBLIC_API_ORIGIN",
+      value: "https://api.example",
+    });
+    assert.equal(savedVariable.variable.name, "PUBLIC_API_ORIGIN");
+    assert.equal(
+      (await client.chats.environment.list(created.chat.id, { environment: "preview" }))
+        .variables[0]?.value,
+      "https://api.example",
+    );
+    assert.equal(
+      (await client.chats.environment.delete(
+        created.chat.id,
+        "preview",
+        "PUBLIC_API_ORIGIN",
+      )).deleted,
+      true,
+    );
+
     const preview = await client.chats.versions.preview<{ readonly url: string }>(
       created.chat.id,
       generation.version!.id,
@@ -212,9 +248,116 @@ test("consumes the Web API host through typed chat, stream, preview, and downloa
       (await client.toolSources.archive(registered.toolSource.id)).toolSource.status,
       "archived",
     );
+
+    await client.chats.delete(forked.chat.id);
+    assert.equal((await client.chats.restore(forked.chat.id)).chat.id, forked.chat.id);
   } finally {
     await viby.close();
   }
+});
+
+test("maps provider-neutral preview and integration operations onto the Web API", async () => {
+  const requests: Array<{ readonly method: string; readonly url: string; readonly body: unknown }> = [];
+  const client = createVibyWebClient({
+    baseUrl: "https://app.example/api/viby",
+    fetch: async (input, init) => {
+      requests.push({
+        method: init?.method ?? "GET",
+        url: String(input),
+        body: init?.body ? JSON.parse(String(init.body)) : null,
+      });
+      const path = new URL(String(input)).pathname;
+      if (path.endsWith("/previews")) return Response.json({ previews: [] });
+      if (path.endsWith("/previews/cleanup")) return Response.json({ cleaned: 2 });
+      if (path.includes("/previews/")) {
+        return Response.json({ preview: { id: "preview-1", status: "ready" } });
+      }
+      if (path.endsWith("/connections")) return Response.json({ connections: [] });
+      if (path.endsWith("/connect")) {
+        return Response.json({ result: { status: "authorization-required", url: "https://provider.example" } });
+      }
+      if (path.includes("/connections/")) {
+        return Response.json({ result: { connection: { status: "revoked" }, providerRevoked: true } });
+      }
+      if (path.endsWith("/owners")) return Response.json({ items: [], nextCursor: null });
+      if (path.endsWith("/repositories")) {
+        return init?.method === "POST"
+          ? Response.json({ repository: { id: "repository-1" } }, { status: 201 })
+          : Response.json({ items: [], nextCursor: null });
+      }
+      if (path.endsWith("/branches")) {
+        return init?.method === "POST"
+          ? Response.json({ branch: { name: "feature" } }, { status: 201 })
+          : Response.json({ items: [], nextCursor: null });
+      }
+      if (path.endsWith("/projects")) {
+        return init?.method === "POST"
+          ? Response.json({ project: { id: "project-1" } }, { status: 201 })
+          : Response.json({ items: [], nextCursor: null });
+      }
+      if (path.includes("/deployments/")) {
+        return Response.json({ deployment: { id: "deployment-1", status: "ready" } });
+      }
+      return Response.json({ integrations: [] });
+    },
+  });
+
+  await client.previews.list({ chatId: "chat-1", status: "ready" });
+  await client.previews.get("preview-1");
+  await client.previews.stop("preview-1");
+  await client.previews.reconnect("preview-1");
+  assert.equal((await client.previews.cleanup(10)).cleaned, 2);
+  await client.integrations.repository.list();
+  await client.integrations.repository.connections("github");
+  await client.integrations.repository.connect("github", {
+    callbackUrl: "https://app.example/callback",
+    returnTo: "/settings",
+  });
+  await client.integrations.repository.disconnect("github", "connection-1");
+  await client.integrations.repository.owners("github", { connectionId: "connection-1" });
+  await client.integrations.repository.repositories("github", {
+    owner: "farming-labs",
+    connectionId: "connection-1",
+  });
+  await client.integrations.repository.createRepository("github", {
+    owner: "farming-labs",
+    name: "viby",
+  }, { connectionId: "connection-1" });
+  await client.integrations.repository.branches("github", {
+    repository: { owner: "farming-labs", name: "viby" },
+    connectionId: "connection-1",
+  });
+  await client.integrations.repository.createBranch("github", {
+    repository: { owner: "farming-labs", name: "viby" },
+    name: "feature",
+    from: "main",
+  }, { connectionId: "connection-1" });
+  await client.integrations.deployment.projects("vercel", { connectionId: "connection-2" });
+  await client.integrations.deployment.createProject("vercel", { name: "viby" }, {
+    connectionId: "connection-2",
+  });
+  await client.integrations.deployment.getDeployment("vercel", "deployment-1", {
+    connectionId: "connection-2",
+  });
+  await client.integrations.deployment.cancelDeployment(
+    "vercel",
+    "deployment-1",
+    "cancel-1",
+    { connectionId: "connection-2" },
+  );
+
+  assert.equal(requests[0]?.url,
+    "https://app.example/api/viby/previews?chatId=chat-1&status=ready");
+  assert.deepEqual(requests.find((item) => item.url.includes("/branches?")), {
+    method: "GET",
+    url: "https://app.example/api/viby/integrations/repository/github/branches?owner=farming-labs&name=viby&connectionId=connection-1",
+    body: null,
+  });
+  assert.deepEqual(requests.at(-1), {
+    method: "DELETE",
+    url: "https://app.example/api/viby/integrations/deployment/vercel/deployments/deployment-1?connectionId=connection-2",
+    body: { idempotencyKey: "cancel-1" },
+  });
 });
 
 test("reconnects an interrupted SSE stream from its last durable cursor", async () => {
