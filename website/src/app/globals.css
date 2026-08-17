@@ -1048,7 +1048,7 @@ svg {
 }
 
 #nd-docs-layout[data-fd-framework] figure.shiki > [role="region"] {
-  padding-inline: 0;
+  padding: 0 !important;
 }
 
 html.dark #nd-docs-layout[data-fd-framework] figure.shiki {
