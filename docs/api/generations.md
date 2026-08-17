@@ -112,6 +112,8 @@ Trace parts use four event phases:
 
 Supported final message-part types are `text`, `status`, `reasoning-summary`, `file-read`,
 `file-edit`, `search`, `command`, `tool-call`, `error`, and `usage`.
+Completed `file-edit` parts distinguish `create`, `update`, `delete`, and `move` operations. The
+legacy `write` operation remains part of the readable contract for older persisted messages.
 
 ## Outbound delivery
 

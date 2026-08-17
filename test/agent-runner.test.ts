@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { MockLanguageModelV4 } from "ai/test";
 import { AgentProjectGenerator, normalizeAgentRunnerConfig } from "../src/agent-runner.js";
+import type { AgentTraceWriter } from "../src/generator.js";
 import { SandboxSession, sandboxCapabilities } from "../src/sandbox.js";
+import type { FileEditMessagePartData } from "../src/types.js";
 
 const usage = {
   inputTokens: { total: 10, noCache: 10, cacheRead: undefined, cacheWrite: undefined },
@@ -148,6 +150,64 @@ test("uses workspace tools in the default bounded agent loop", async () => {
   assert.equal(output.files[0]?.content, "export const app = true;\n");
   assert.equal(output.usage.totalTokens, 60);
   assert.equal(model.doGenerateCalls.length, 2);
+});
+
+test("classifies workspace writes as created or updated in the agent trace", async () => {
+  const model = new MockLanguageModelV4({
+    doGenerate: [
+      toolCall("update-existing", "workspace_write_file", {
+        path: "src/index.ts",
+        content: "export const app = 2;\n",
+        mediaType: "text/javascript",
+      }),
+      toolCall("create-new", "workspace_write_file", {
+        path: "src/new.ts",
+        content: "export const added = true;\n",
+        mediaType: "text/javascript",
+      }),
+      completion("Classified edits", "Updated one file and added another."),
+    ],
+  });
+  const completed: FileEditMessagePartData[] = [];
+  const trace: AgentTraceWriter = {
+    async start(type) {
+      return {
+        id: `part-${type}-${completed.length}`,
+        type,
+        async delta() {},
+        async complete(data) {
+          if (type === "file-edit") completed.push(data as FileEditMessagePartData);
+        },
+        async fail() {},
+      };
+    },
+  };
+  const generator = new AgentProjectGenerator<"farm">(model, {
+    maxSteps: 4,
+    maxDurationMs: 10_000,
+    maxTokens: 10_000,
+  });
+
+  await generator.generate({
+    framework: "farm",
+    prompt: "Update the project and add a module",
+    messages: [],
+    previousFiles: [{
+      path: "src/index.ts",
+      content: "export const app = 1;\n",
+      mediaType: "text/javascript",
+      size: 22,
+      checksum: "before",
+      locked: false,
+    }],
+    skills: [],
+    tasks: [],
+  }, { trace });
+
+  assert.deepEqual(completed, [
+    { operation: "update", path: "src/index.ts" },
+    { operation: "create", path: "src/new.ts" },
+  ]);
 });
 
 test("gates sandbox tools by capabilities and enforces the command budget", async () => {

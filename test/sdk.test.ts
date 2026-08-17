@@ -370,7 +370,18 @@ test("persists typed ordered message parts with message, generation, and attempt
   const edit = assistant.parts[0]!;
   assert.equal(edit.type, "file-edit");
   if (edit.type !== "file-edit") throw new Error("Expected a file edit part");
-  assert.deepEqual(edit.data, { operation: "write", path: "src/index.ts" });
+  assert.deepEqual(edit.data, { operation: "create", path: "src/index.ts" });
+
+  const nextVersion = await version.iterate({ prompt: "Update the dashboard" });
+  const nextMessages = (await chat.listMessages()).items;
+  const nextAssistant = nextMessages.find((message) => (
+    message.role === "assistant" && message.generationId === nextVersion.generationId
+  ));
+  assert.ok(nextAssistant);
+  const nextEdit = nextAssistant.parts.find((part) => part.type === "file-edit");
+  assert.equal(nextEdit?.type, "file-edit");
+  if (nextEdit?.type !== "file-edit") throw new Error("Expected an updated file part");
+  assert.deepEqual(nextEdit.data, { operation: "update", path: "src/index.ts" });
   const usagePart = assistant.parts[2]!;
   assert.equal(usagePart.type, "usage");
   if (usagePart.type !== "usage") throw new Error("Expected a usage part");

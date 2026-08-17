@@ -281,6 +281,9 @@ async function createAgentTools<Framework extends FrameworkId>(
   approval: AgentApprovalState,
   toolSources: ToolSourcesConfig<Framework> | undefined,
 ) {
+  const workspacePaths = new Set(
+    (await workspace.tools.listFiles()).map((file) => file.path),
+  );
   const workspaceTools = {
     workspace_list_files: tool({
       description: "List source files in the mutable project workspace.",
@@ -345,27 +348,31 @@ async function createAgentTools<Framework extends FrameworkId>(
         content: z.string(),
         mediaType: z.string().max(200).nullable(),
       }),
-      execute: async ({ path, content, mediaType }, { toolCallId }) => executeDurableTool(
-        options,
-        {
-          toolCallId,
-          name: "workspace.write-file",
-          effect: "write",
-          arguments: { path, content, mediaType },
-        },
-        { type: "file-edit", complete: () => ({ operation: "write", path }) },
-        async () => {
-          const change = await workspace.tools.writeFile({
-            path,
-            content,
-            ...(mediaType ? { mediaType } : {}),
-          });
-          if (input.sandbox?.supports("files")) {
-            await input.sandbox.writeFiles([{ path, content }], signalOptions(options.signal));
-          }
-          return change;
-        },
-      ),
+      execute: async ({ path, content, mediaType }, { toolCallId }) => {
+        const operation = workspacePaths.has(path) ? "update" as const : "create" as const;
+        return executeDurableTool(
+          options,
+          {
+            toolCallId,
+            name: "workspace.write-file",
+            effect: "write",
+            arguments: { path, content, mediaType },
+          },
+          { type: "file-edit", complete: () => ({ operation, path }) },
+          async () => {
+            const change = await workspace.tools.writeFile({
+              path,
+              content,
+              ...(mediaType ? { mediaType } : {}),
+            });
+            if (input.sandbox?.supports("files")) {
+              await input.sandbox.writeFiles([{ path, content }], signalOptions(options.signal));
+            }
+            workspacePaths.add(path);
+            return change;
+          },
+        );
+      },
     }),
     workspace_delete_file: tool({
       description: "Delete one source file from the mutable project workspace.",
@@ -374,7 +381,11 @@ async function createAgentTools<Framework extends FrameworkId>(
         options,
         { toolCallId, name: "workspace.delete-file", effect: "write", arguments: { path } },
         { type: "file-edit", complete: () => ({ operation: "delete", path }) },
-        async () => workspace.tools.deleteFile({ path }),
+        async () => {
+          const change = await workspace.tools.deleteFile({ path });
+          workspacePaths.delete(path);
+          return change;
+        },
       ),
     }),
     workspace_move_file: tool({
@@ -387,7 +398,12 @@ async function createAgentTools<Framework extends FrameworkId>(
         options,
         { toolCallId, name: "workspace.move-file", effect: "write", arguments: { from, to } },
         { type: "file-edit", complete: () => ({ operation: "move", from, to }) },
-        async () => workspace.tools.moveFile({ from, to }),
+        async () => {
+          const change = await workspace.tools.moveFile({ from, to });
+          workspacePaths.delete(from);
+          workspacePaths.add(to);
+          return change;
+        },
       ),
     }),
   };
