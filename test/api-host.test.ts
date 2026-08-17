@@ -301,6 +301,45 @@ test("hosts chat, message, stream, task, preview, and download flows with Web AP
   }
 });
 
+test("adds authenticated session headers to successful and failed API responses", async () => {
+  const viby = createVibyWithDependencies(
+    { framework: "farm", model: "test/api-session" as never },
+    {
+      repository: new MemoryRepository(),
+      generator: {
+        async generate() {
+          throw new Error("The generator is not used by this test.");
+        },
+      },
+      skillResolver: new SkillResolver({}),
+    },
+  );
+  const api = createVibyApi({
+    viby,
+    authenticate: () => ({
+      scope,
+      headers: {
+        "Set-Cookie": "viby_session=rotated; Path=/; HttpOnly; SameSite=Lax",
+        "X-Session-Rotated": "true",
+      },
+    }),
+  });
+
+  try {
+    const success = await api.fetch(new Request("https://app.example/api/viby/chats"));
+    assert.equal(success.status, 200);
+    assert.equal(success.headers.get("x-session-rotated"), "true");
+    assert.match(success.headers.get("set-cookie") ?? "", /viby_session=rotated/);
+
+    const failure = await api.fetch(new Request("https://app.example/api/viby/chats/not-found"));
+    assert.equal(failure.status, 404);
+    assert.equal(failure.headers.get("x-session-rotated"), "true");
+    assert.match(failure.headers.get("set-cookie") ?? "", /viby_session=rotated/);
+  } finally {
+    await viby.close();
+  }
+});
+
 test("handles public integration callbacks before product authentication", async () => {
   let authCalls = 0;
   const api = createVibyApi({

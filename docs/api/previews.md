@@ -98,7 +98,7 @@ approved action key can then be resumed safely without bypassing policy for unre
 | `status` | `starting`, `ready`, `failed`, `stopped`, or `expired`. |
 | `url` | Provider URL when ready, otherwise `null`. |
 | `data()` | Returns the complete durable preview record. |
-| `reconnect(signal?)` | Reconnects the underlying sandbox and refreshes this handle. |
+| `reconnect(signal?)` | Reconnects the underlying sandbox, re-runs readiness, and refreshes this handle. A non-aborted readiness failure stops the stale sandbox and persists `failed`. |
 | `stop(signal?)` | Idempotently stops the process/sandbox and persists `stopped`. |
 
 Starting a preview materializes source, starts the configured process, obtains a port URL, and waits

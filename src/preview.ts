@@ -491,6 +491,16 @@ export class PreviewRegistry<Framework extends FrameworkId = FrameworkId> {
       });
       return this.#store.markPreviewReady(scope, preview.id, url, new Date());
     } catch (error) {
+      if (!signal?.aborted) {
+        await sandbox.stop().catch(() => undefined);
+        this.#sessions.delete(preview.id);
+        await this.#store.failPreviewSession(
+          scope,
+          preview.id,
+          errorMessage(error),
+          new Date(),
+        ).catch(() => undefined);
+      }
       throw new PreviewError(preview.id, `Preview ${preview.id} could not be reconnected.`, {
         cause: error,
       });
