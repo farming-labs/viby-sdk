@@ -3257,7 +3257,7 @@ class GenerationRunner<Framework extends FrameworkId> {
         changes,
         assistantMessage: output.summary,
         assistantParts: [
-          ...mergeTraceAndFileEditParts(trace.completedParts(), files, changes),
+          ...mergeTraceAndFileEditParts(trace.completedParts(), files, changes, previousEntries),
           { type: "text", data: { text: output.summary } },
           usageMessagePart(inputTokens, outputTokens, totalTokens, cost),
         ],
@@ -3510,39 +3510,57 @@ function mergeTraceAndFileEditParts(
   traceParts: readonly MessagePartInput[],
   files: readonly VersionFile[],
   changes: readonly SourceChange[] | null,
+  previousEntries: readonly VersionEntry[],
 ): MessagePartInput[] {
   const tracedEdits = new Set(traceParts.flatMap((part) => (
     part.type === "file-edit" ? [fileEditPartKey(part)] : []
   )));
   return [
     ...traceParts,
-    ...fileEditMessageParts(files, changes).filter((part) => !tracedEdits.has(fileEditPartKey(part))),
+    ...fileEditMessageParts(files, changes, previousEntries)
+      .filter((part) => !tracedEdits.has(fileEditPartKey(part))),
   ];
 }
 
 function fileEditPartKey(part: MessagePartInput<"file-edit">): string {
   return part.data.operation === "move"
     ? `move:${part.data.from}:${part.data.to}`
-    : `${part.data.operation}:${part.data.path}`;
+    : part.data.operation === "delete"
+      ? `delete:${part.data.path}`
+      : `write:${part.data.path}`;
 }
 
 function fileEditMessageParts(
   files: readonly VersionFile[],
   changes: readonly SourceChange[] | null,
+  previousEntries: readonly VersionEntry[],
 ): MessagePartInput<"file-edit">[] {
+  const previousByPath = new Map(previousEntries.map((entry) => [entry.path, entry]));
   if (!changes) {
-    return files.map((file) => ({
-      type: "file-edit",
-      data: { operation: "write", path: file.path },
-    }));
+    return files.flatMap((file): MessagePartInput<"file-edit">[] => {
+      const previous = previousByPath.get(file.path);
+      if (previous?.type === "text" && previous.checksum === file.checksum) return [];
+      return [{
+        type: "file-edit",
+        data: { operation: previous ? "update" : "create", path: file.path },
+      }];
+    });
   }
+  const existingPaths = new Set(previousEntries.map((entry) => entry.path));
   return changes.map((change) => {
     switch (change.type) {
-      case "write":
-        return { type: "file-edit", data: { operation: "write", path: change.path } };
-      case "delete":
+      case "write": {
+        const operation = existingPaths.has(change.path) ? "update" as const : "create" as const;
+        existingPaths.add(change.path);
+        return { type: "file-edit", data: { operation, path: change.path } };
+      }
+      case "delete": {
+        existingPaths.delete(change.path);
         return { type: "file-edit", data: { operation: "delete", path: change.path } };
+      }
       case "move":
+        existingPaths.delete(change.from);
+        existingPaths.add(change.to);
         return {
           type: "file-edit",
           data: { operation: "move", from: change.from, to: change.to },

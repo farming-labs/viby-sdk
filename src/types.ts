@@ -483,7 +483,8 @@ export type MessagePartType = (typeof MESSAGE_PART_TYPES)[number];
 
 export type FileEditMessagePartData =
   | {
-      readonly operation: "write" | "delete";
+      /** `write` is retained for records created before create/update classification was added. */
+      readonly operation: "create" | "update" | "write" | "delete";
       readonly path: string;
     }
   | {

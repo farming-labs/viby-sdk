@@ -1293,7 +1293,7 @@ for (const message of messages) {
 }
 ```
 
-The durable part types are `text`, `status`, `reasoning-summary`, `file-read`, `file-edit`, `search`, `command`, `tool-call`, `error`, and `usage`. Each part is linked to its message and, when applicable, the logical generation and immutable attempt. `reasoning-summary` is provider-safe summary text; Viby does not expose or promise hidden model reasoning.
+The durable part types are `text`, `status`, `reasoning-summary`, `file-read`, `file-edit`, `search`, `command`, `tool-call`, `error`, and `usage`. File edits distinguish `create`, `update`, `delete`, and `move`; the legacy `write` value remains readable for records persisted by older releases. Each part is linked to its message and, when applicable, the logical generation and immutable attempt. `reasoning-summary` is provider-safe summary text; Viby does not expose or promise hidden model reasoning.
 
 ## Skill categories
 
