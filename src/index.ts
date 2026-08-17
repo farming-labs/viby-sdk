@@ -85,6 +85,7 @@ export {
 export type * from "./web-client.js";
 export type {
   VibyApi,
+  VibyApiAuthenticatedSession,
   VibyApiAuthenticationResult,
   VibyApiOptions,
   VibyApiPreviewContext,

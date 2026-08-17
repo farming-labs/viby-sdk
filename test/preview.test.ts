@@ -213,6 +213,32 @@ test("starts, persists, reconnects, and stops a durable version preview", async 
   await first.close();
 });
 
+test("marks a stale preview failed when its reconnected server is not ready", async () => {
+  const repository = new MemoryRepository();
+  const adapter = new PreviewSandboxAdapter();
+  const { viby: first, version } = await importVersion(repository, adapter);
+  const preview = await version.preview();
+
+  const second = createPreviewViby(repository, adapter, {
+    ...defaultPreviewConfig,
+    readiness: {
+      timeoutMs: 20,
+      intervalMs: 1,
+      check: async () => false,
+    },
+  });
+  const restored = await second.forUser(scope).previews.get(preview.id);
+  await assert.rejects(() => restored.reconnect(), /could not be reconnected/);
+
+  const failed = await second.forUser(scope).previews.get(preview.id);
+  assert.equal(failed.status, "failed");
+  assert.match(failed.data().error ?? "", /readiness/i);
+  assert.equal(adapter.instances.get("preview-1")?.stopCalls, 1);
+
+  await second.close();
+  await first.close();
+});
+
 test("streams provider-neutral preview phases and terminal output", async () => {
   const repository = new MemoryRepository();
   const adapter = new PreviewSandboxAdapter();

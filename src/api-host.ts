@@ -33,7 +33,23 @@ import type { ToolSourceRegistrationStatus } from "./tool-source-registry.js";
 const DEFAULT_BASE_PATH = "/api/viby";
 const DEFAULT_BODY_BYTES = 10 * 1024 * 1024;
 
-export type VibyApiAuthenticationResult = UserScope | Response | null;
+/**
+ * An authenticated product session with optional headers to add to the API response.
+ *
+ * Response headers are useful for rotating a signed session cookie during the same
+ * request that establishes the Viby tenant/user scope. They are never persisted or
+ * exposed to generation code.
+ */
+export interface VibyApiAuthenticatedSession {
+  readonly scope: UserScope;
+  readonly headers?: HeadersInit;
+}
+
+export type VibyApiAuthenticationResult =
+  | UserScope
+  | VibyApiAuthenticatedSession
+  | Response
+  | null;
 
 export interface VibyApiPreviewContext<Framework extends FrameworkId = FrameworkId> {
   readonly request: Request;
@@ -80,6 +96,7 @@ export function createVibyApi<Framework extends FrameworkId>(
   const maxBodyBytes = normalizeBodyLimit(options.maxBodyBytes);
   return Object.freeze({
     async fetch(request: Request): Promise<Response> {
+      let authenticationHeaders: HeadersInit | undefined;
       try {
         if (!(request instanceof Request)) {
           throw new ConfigurationError("Viby API fetch requires a Web Request.");
@@ -102,24 +119,34 @@ export function createVibyApi<Framework extends FrameworkId>(
         if (!authenticated) {
           return withHeaders(json({ error: "Authentication required.", code: "unauthorized" }, 401), options.headers);
         }
-        const user = options.viby.forUser(authenticated);
-        return withHeaders(await route(
+        const session = authenticationSession(authenticated);
+        authenticationHeaders = session.headers;
+        const user = options.viby.forUser(session.scope);
+        const response = await route(
           request,
           path,
-          authenticated,
+          session.scope,
           user,
           options,
           maxBodyBytes,
-        ), options.headers);
+        );
+        return withHeaders(withHeaders(response, authenticationHeaders), options.headers);
       } catch (error) {
         await options.onError?.(error, request);
-        return withHeaders(errorResponse(error), options.headers);
+        return withHeaders(withHeaders(errorResponse(error), authenticationHeaders), options.headers);
       }
     },
   });
 }
 
 export const vibyApi = createVibyApi;
+
+function authenticationSession(
+  result: UserScope | VibyApiAuthenticatedSession,
+): VibyApiAuthenticatedSession {
+  if ("scope" in result) return result;
+  return { scope: result };
+}
 
 async function route<Framework extends FrameworkId>(
   request: Request,

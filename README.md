@@ -690,7 +690,7 @@ await restored.reconnect();
 await restored.stop();
 ```
 
-Each preview is bound to one immutable version and one persisted sandbox lease. Viby records readiness, URL, failure, expiry, and stop state; `user.previews.list(...)` reloads history and `cleanupExpired()` closes stale records. Concurrent starts for the same version and preview inputs share one sandbox. `files` is a provider-neutral escape hatch for preview-only configuration and does not mutate the durable version. `onEvent` reports workspace preparation, commands, stdout/stderr, server startup, readiness, success, and failure without exposing provider-specific types.
+Each preview is bound to one immutable version and one persisted sandbox lease. Viby records readiness, URL, failure, expiry, and stop state; `user.previews.list(...)` reloads history and `cleanupExpired()` closes stale records. `preview.reconnect()` re-runs readiness and durably fails a stale non-listening sandbox instead of returning its old URL. Concurrent starts for the same version and preview inputs share one sandbox. `files` is a provider-neutral escape hatch for preview-only configuration and does not mutate the durable version. `onEvent` reports workspace preparation, commands, stdout/stderr, server startup, readiness, success, and failure without exposing provider-specific types.
 
 The Web API and typed client can carry the same progress directly to a product UI:
 
@@ -1050,7 +1050,10 @@ const api = createVibyApi({
   authenticate: async (request) => {
     const session = await auth.session(request);
     return session
-      ? { tenantId: session.organizationId, userId: session.userId }
+      ? {
+          scope: { tenantId: session.organizationId, userId: session.userId },
+          headers: session.setCookie ? { "Set-Cookie": session.setCookie } : undefined,
+        }
       : new Response("Unauthorized", { status: 401 });
   },
   preview: true,

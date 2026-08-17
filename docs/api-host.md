@@ -22,6 +22,20 @@ const api = createVibyApi({
 
 The host owns authentication. Returning `null` produces a JSON `401`; returning a `Response` preserves a product-specific redirect or denial. Every resource route after authentication uses the returned tenant/user scope. Integration and tool-source callbacks are deliberately public because their hashed, single-use authorization state establishes the original scope.
 
+An authenticator that creates or rotates a cookie can return the scope and response headers together.
+The headers are applied to both successful route responses and SDK error responses, and are never
+persisted or exposed to generation code:
+
+```ts
+authenticate: async (request) => {
+  const session = await sessions.readOrCreate(request);
+  return {
+    scope: { tenantId: session.tenantId, userId: session.userId },
+    headers: session.setCookie ? { "Set-Cookie": session.setCookie } : undefined,
+  };
+},
+```
+
 ## Typed Web client
 
 `createVibyWebClient()` consumes this contract from browsers, Workers, Bun, Node, or another Web-compatible runtime. It owns route construction, attachment encoding, typed errors, binary download responses, and SSE reconnection from the last acknowledged cursor.
