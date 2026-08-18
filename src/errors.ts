@@ -48,18 +48,27 @@ export class GenerationError extends VibyError {
 export class GenerationQualityError extends VibyError {
   readonly checkId: string;
   readonly exitCode: number | null;
+  readonly detail: string | null;
 
-  constructor(checkId: string, exitCode: number | null, options?: ErrorOptions) {
+  constructor(
+    checkId: string,
+    exitCode: number | null,
+    options?: ErrorOptions & { readonly detail?: string | null },
+  ) {
+    const detail = options?.detail?.trim() || null;
     super(
       "generation_quality_failed",
-      exitCode === null
-        ? `Generation quality check ${checkId} could not run.`
-        : `Generation quality check ${checkId} failed with exit code ${exitCode}.`,
+      `${
+        exitCode === null
+          ? `Generation quality check ${checkId} could not run.`
+          : `Generation quality check ${checkId} failed with exit code ${exitCode}.`
+      }${detail ? `\n${detail}` : ""}`,
       options,
     );
     this.name = "GenerationQualityError";
     this.checkId = checkId;
     this.exitCode = exitCode;
+    this.detail = detail;
   }
 }
 

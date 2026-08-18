@@ -8,6 +8,7 @@ import {
 } from "./sandbox.js";
 import type {
   FrameworkId,
+  GenerationQualityFailure,
   GenerationQualityCommand,
   GenerationQualityConfig,
   UserScope,
@@ -17,6 +18,7 @@ import { createId, normalizeProjectPath } from "./utils.js";
 const DEFAULT_COMMAND_TIMEOUT_MS = 300_000;
 const MAX_COMMAND_TIMEOUT_MS = 900_000;
 const MAX_COMMANDS = 30;
+const MAX_FAILURE_DETAIL_LENGTH = 8_000;
 
 export interface NormalizedGenerationQualityCommand {
   readonly id: string;
@@ -31,6 +33,7 @@ export interface NormalizedGenerationQualityConfig {
   readonly prepare: readonly NormalizedGenerationQualityCommand[];
   readonly checks: readonly NormalizedGenerationQualityCommand[];
   readonly timeoutMs: number;
+  readonly formatFailure?: GenerationQualityConfig["formatFailure"];
 }
 
 export type GenerationQualityEvent =
@@ -49,6 +52,7 @@ export type GenerationQualityEvent =
         readonly status: "passed" | "failed";
         readonly exitCode: number | null;
         readonly durationMs: number | null;
+        readonly detail: string | null;
       };
     };
 
@@ -84,6 +88,7 @@ export function normalizeGenerationQuality(
       3_600_000,
       [...prepare, ...checks].reduce((total, command) => total + command.timeoutMs, 0),
     ),
+    ...(value.formatFailure ? { formatFailure: value.formatFailure } : {}),
   });
 }
 
@@ -154,6 +159,19 @@ export async function verifyGenerationQuality<Framework extends FrameworkId>(inp
             timeoutMs: command.timeoutMs,
             signal: input.signal,
           });
+          const detail =
+            result.exitCode === 0 || !input.config.formatFailure
+              ? null
+              : normalizeFailureDetail(
+                  await input.config.formatFailure({
+                    checkId: command.id,
+                    phase,
+                    exitCode: result.exitCode,
+                    durationMs: result.durationMs,
+                    stdout: result.stdout,
+                    stderr: result.stderr,
+                  } satisfies GenerationQualityFailure),
+                );
           await input.onEvent({
             type: "quality.completed",
             data: {
@@ -162,10 +180,11 @@ export async function verifyGenerationQuality<Framework extends FrameworkId>(inp
               status: result.exitCode === 0 ? "passed" : "failed",
               exitCode: result.exitCode,
               durationMs: result.durationMs,
+              detail,
             },
           });
           if (result.exitCode !== 0) {
-            throw new GenerationQualityError(command.id, result.exitCode);
+            throw new GenerationQualityError(command.id, result.exitCode, { detail });
           }
         } catch (error) {
           if (!(error instanceof GenerationQualityError)) {
@@ -177,6 +196,7 @@ export async function verifyGenerationQuality<Framework extends FrameworkId>(inp
                 status: "failed",
                 exitCode: null,
                 durationMs: null,
+                detail: null,
               },
             });
             throw new GenerationQualityError(command.id, null, { cause: error });
@@ -188,6 +208,18 @@ export async function verifyGenerationQuality<Framework extends FrameworkId>(inp
   } finally {
     await session?.stop().catch(() => undefined);
   }
+}
+
+function normalizeFailureDetail(value: string | null | undefined): string | null {
+  if (typeof value !== "string") return null;
+  const normalized = value
+    .replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, "")
+    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, "")
+    .trim();
+  if (!normalized) return null;
+  return normalized.length <= MAX_FAILURE_DETAIL_LENGTH
+    ? normalized
+    : `${normalized.slice(0, MAX_FAILURE_DETAIL_LENGTH)}\n[diagnostics truncated]`;
 }
 
 function normalizeCommand(
