@@ -130,6 +130,104 @@ test("starts asynchronously, persists streamed deltas, and resumes from an event
   await viby.close();
 });
 
+test("queues, applies, and exposes idempotent durable steering", async () => {
+  let started!: () => void;
+  let release!: () => void;
+  const running = new Promise<void>((resolve) => { started = resolve; });
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const applied: string[] = [];
+  const appliedAttachments: string[] = [];
+  const generator: ProjectGenerator<"farm"> = {
+    async generate(_input, options) {
+      started();
+      await gate;
+      const steering = await options!.steering!.consume();
+      applied.push(...steering.map((entry) => entry.prompt));
+      appliedAttachments.push(...steering.flatMap((entry) => (
+        entry.attachments.map((attachment) => new TextDecoder().decode(attachment.bytes))
+      )));
+      return projectOutput(1);
+    },
+  };
+  const { repository, viby } = setup(generator);
+  const scope = { tenantId: "tenant-a", userId: "user-a" };
+  const chat = await viby.forUser(scope).chats.create();
+  const generation = await chat.start({ prompt: "Build a dashboard" });
+  await running;
+
+  const first = await generation.steer({
+    prompt: "Keep the navigation compact.",
+    idempotencyKey: "composer-message-42",
+    attachments: [{
+      filename: "direction.txt",
+      mediaType: "text/plain",
+      bytes: new TextEncoder().encode("Prefer a narrow rail"),
+    }],
+  });
+  const duplicate = await generation.steer({
+    prompt: "This duplicate body must not replace the original.",
+    idempotencyKey: "composer-message-42",
+  });
+  assert.equal(duplicate.id, first.id);
+  assert.equal(duplicate.prompt, first.prompt);
+  assert.equal((await generation.steering()).length, 1);
+
+  release();
+  assert.equal((await generation.wait({ pollIntervalMs: 10 })).status, "succeeded");
+  assert.deepEqual(applied, ["Keep the navigation compact."]);
+  assert.deepEqual(appliedAttachments, ["Prefer a narrow rail"]);
+  assert.equal((await generation.steering())[0]?.status, "applied");
+  assert.equal((await generation.steering())[0]?.appliedAttemptId, first.submittedAttemptId);
+  assert.deepEqual(
+    (await generation.events({ limit: 100 })).events
+      .filter((event) => event.type.startsWith("steering."))
+      .map((event) => event.type),
+    ["steering.queued", "steering.applied"],
+  );
+  assert.ok(repository.messages.some((message) => (
+    message.id === first.messageId && message.content === first.prompt
+  )));
+  await assert.rejects(() => generation.steer("Too late"), GenerationStateError);
+  await viby.close();
+});
+
+test("fences settlement and restarts the active attempt for late steering", async () => {
+  let settledBoundary!: () => void;
+  let release!: () => void;
+  const atBoundary = new Promise<void>((resolve) => { settledBoundary = resolve; });
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  let calls = 0;
+  const applied: string[] = [];
+  const generator: ProjectGenerator<"farm"> = {
+    async generate(_input, options) {
+      calls += 1;
+      const steering = await options!.steering!.consume();
+      applied.push(...steering.map((entry) => entry.prompt));
+      if (calls === 1) {
+        settledBoundary();
+        await gate;
+      }
+      return projectOutput(calls);
+    },
+  };
+  const { viby } = setup(generator);
+  const generation = await (await viby
+    .forUser({ tenantId: "tenant-a", userId: "user-a" })
+    .chats.create())
+    .start({ prompt: "Build a dashboard" });
+  await atBoundary;
+  await generation.steer("Switch to a narrow navigation rail.");
+  release();
+
+  const outcome = await generation.wait({ pollIntervalMs: 10 });
+  assert.equal(outcome.status, "succeeded");
+  assert.equal(calls, 2);
+  assert.deepEqual(applied, ["Switch to a narrow navigation rail."]);
+  assert.equal((await generation.attempts()).length, 1);
+  assert.equal((await generation.steering())[0]?.status, "applied");
+  await viby.close();
+});
+
 test("streams resumable typed agent trace part lifecycles into the durable message", async () => {
   const generator: ProjectGenerator<"farm"> = {
     async generate(_input, options) {

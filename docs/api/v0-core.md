@@ -64,6 +64,7 @@ The official v2 documentation organizes the API around these resources and endpo
 | Delete a chat | Delete Chat | `chat.delete`, time-bounded restore, and explicit batched purge | Shipped |
 | Stop work | stop/cancel active agent work | `generation.cancel` | Shipped |
 | Resume interrupted work | Resume Chat Stream and async task continuation | event cursor plus `generation.resume` | Shipped |
+| Steer active work | send a follow-up while the agent is running | durable `generation.steer`, safe-boundary consumption, and queued/applied cursor events | Shipped |
 | Per-request system prompt | `systemPrompt` | durable generation-scoped instructions | Shipped |
 | Per-request model options | `modelConfiguration` | stable configured model aliases with persisted provider/model identity | Shipped |
 | Per-request skills | remote, memory, and project skills | durable categorized overrides plus stored resolved snapshots | Shipped |

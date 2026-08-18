@@ -499,10 +499,11 @@ async function route<Framework extends FrameworkId>(
   if (segments[0] === "generations" && segments[1]) {
     const generation = await user.generations.get(segments[1]);
     if (segments.length === 2 && request.method === "GET") {
-      const [data, attempts, tasks, toolCalls, artifacts] = await Promise.all([
+      const [data, attempts, tasks, steering, toolCalls, artifacts] = await Promise.all([
         generation.data(),
         generation.attempts(),
         generation.tasks(),
+        generation.steering(),
         generation.toolCalls(),
         generation.artifacts(),
       ]);
@@ -513,6 +514,7 @@ async function route<Framework extends FrameworkId>(
         generation: data,
         attempts,
         tasks,
+        steering,
         toolCalls,
         artifacts,
         version: version ? versionValue(version) : null,
@@ -533,6 +535,22 @@ async function route<Framework extends FrameworkId>(
         }));
       }
       return methodNotAllowed("GET");
+    }
+    if (segments[2] === "steering" && segments.length === 3) {
+      if (request.method === "GET") {
+        return json({ steering: await generation.steering() });
+      }
+      if (request.method === "POST") {
+        const body = await requestObject(request, maxBodyBytes);
+        return json({ steering: await generation.steer({
+          prompt: requiredString(body.prompt, "prompt", 100_000),
+          ...(body.idempotencyKey === undefined
+            ? {}
+            : { idempotencyKey: requiredString(body.idempotencyKey, "idempotencyKey", 500) }),
+          ...(body.attachments === undefined ? {} : { attachments: attachments(body.attachments) }),
+        }) }, 202);
+      }
+      return methodNotAllowed("GET, POST");
     }
     if (segments.length === 3 && request.method === "POST") {
       if (segments[2] === "cancel") {

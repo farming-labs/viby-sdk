@@ -13,6 +13,7 @@ import type {
   GeneratedArtifactContent,
   GeneratedArtifactData,
   GenerationTaskData,
+  GenerationSteeringData,
   MessageData,
   MessagePart,
   MessagePartInput,
@@ -43,6 +44,8 @@ import type {
   CreateAttemptRecord,
   CreatedGeneration,
   CreateGenerationRecord,
+  CreateGenerationSteeringRecord,
+  ConsumeGenerationSteeringRecord,
   CreateVisualArtifactRecord,
   CreateToolCallRecord,
   DeleteChatRecord,
@@ -67,7 +70,12 @@ import type {
   VersionPageCursor,
 } from "../../src/repository.js";
 import { createId, sha256 } from "../../src/utils.js";
-import { ConfigurationError, GenerationStateError, NotFoundError } from "../../src/errors.js";
+import {
+  ConfigurationError,
+  GenerationStateError,
+  GenerationSteeringPendingError,
+  NotFoundError,
+} from "../../src/errors.js";
 import { normalizeAndRedactToolPayload } from "../../src/redaction.js";
 import type { GenerationCostData } from "../../src/telemetry.js";
 import type {
@@ -125,6 +133,7 @@ type MemoryChatRecord = ChatData & {
 };
 
 interface MemoryMessageInput {
+  readonly id?: string;
   readonly chatId: string;
   readonly generationId: string;
   readonly attemptId: string;
@@ -156,6 +165,7 @@ export class MemoryRepository implements Repository {
   readonly changes = new Map<string, SourceChange[]>();
   readonly events: Array<GenerationEvent & ScopedRecord> = [];
   readonly tasks = new Map<string, GenerationTaskData & ScopedRecord>();
+  readonly steering = new Map<string, GenerationSteeringData & ScopedRecord>();
   readonly skills = new Map<string, ResolvedSkill[]>();
   readonly sandboxLeases = new Map<string, SandboxLeaseData & ScopedRecord>();
   readonly previewSessions = new Map<string, PreviewSessionData & ScopedRecord>();
@@ -451,6 +461,9 @@ export class MemoryRepository implements Repository {
       for (const [taskId, task] of this.tasks) {
         if (generationIds.includes(task.generationId)) this.tasks.delete(taskId);
       }
+      for (const [steeringId, steering] of this.steering) {
+        if (generationIds.includes(steering.generationId)) this.steering.delete(steeringId);
+      }
       for (const [toolCallId, toolCall] of this.toolCalls) {
         if (generationIds.includes(toolCall.generationId)) this.toolCalls.delete(toolCallId);
       }
@@ -609,6 +622,104 @@ export class MemoryRepository implements Repository {
       reason: "initial",
     });
     return { generation, attempt };
+  }
+
+  async createGenerationSteering(
+    scope: UserScope,
+    input: CreateGenerationSteeringRecord,
+  ): Promise<GenerationSteeringData> {
+    if (input.idempotencyKey) {
+      const existing = [...this.steering.values()].find((steering) => (
+        inScope(steering, scope)
+        && steering.generationId === input.generationId
+        && steering.idempotencyKey === input.idempotencyKey
+      ));
+      if (existing) return existing;
+    }
+    const generation = this.#requireGeneration(scope, input.generationId);
+    if (generation.status !== "queued" && generation.status !== "running" && generation.status !== "waiting") {
+      throw new GenerationStateError(
+        generation.id,
+        `Generation ${generation.id} cannot be steered from ${generation.status}.`,
+      );
+    }
+    const now = new Date();
+    const message = this.#addMessage(scope, {
+      id: input.messageId,
+      chatId: generation.chatId,
+      generationId: generation.id,
+      attemptId: generation.activeAttemptId,
+      role: "user",
+      content: input.prompt,
+      parts: [{ type: "text", data: { text: input.prompt } }],
+      attachments: input.attachments ?? [],
+      createdAt: now,
+    });
+    const steering: GenerationSteeringData & ScopedRecord = {
+      id: input.id,
+      generationId: generation.id,
+      messageId: message.id,
+      submittedAttemptId: generation.activeAttemptId,
+      appliedAttemptId: null,
+      prompt: input.prompt,
+      status: "queued",
+      idempotencyKey: input.idempotencyKey ?? null,
+      createdAt: now,
+      appliedAt: null,
+      ...scope,
+    };
+    this.steering.set(steering.id, steering);
+    this.#append(scope, generation.id, generation.activeAttemptId, "steering.queued", {
+      steeringId: steering.id,
+      messageId: steering.messageId,
+      prompt: steering.prompt,
+    });
+    return steering;
+  }
+
+  async listGenerationSteering(
+    scope: UserScope,
+    generationId: string,
+  ): Promise<GenerationSteeringData[]> {
+    this.#requireGeneration(scope, generationId);
+    return [...this.steering.values()]
+      .filter((steering) => inScope(steering, scope) && steering.generationId === generationId)
+      .sort((left, right) => (
+        left.createdAt.getTime() - right.createdAt.getTime() || left.id.localeCompare(right.id)
+      ));
+  }
+
+  async consumeGenerationSteering(
+    scope: UserScope,
+    input: ConsumeGenerationSteeringRecord,
+  ): Promise<GenerationSteeringData[]> {
+    const generation = this.#requireGeneration(scope, input.generationId);
+    const attempt = this.#requireAttempt(scope, input.attemptId);
+    if (
+      generation.status !== "running"
+      || generation.activeAttemptId !== attempt.id
+      || !this.#hasWorkerLease(attempt, input.leaseToken)
+    ) {
+      throw new GenerationStateError(generation.id, "The generation worker lease is no longer active.");
+    }
+    const queued = (await this.listGenerationSteering(scope, generation.id))
+      .filter((steering) => steering.status === "queued");
+    const now = new Date();
+    return queued.map((steering) => {
+      const applied = {
+        ...this.steering.get(steering.id)!,
+        status: "applied" as const,
+        appliedAttemptId: attempt.id,
+        appliedAt: now,
+      };
+      this.steering.set(applied.id, applied);
+      this.#append(scope, generation.id, attempt.id, "steering.applied", {
+        steeringId: applied.id,
+        messageId: applied.messageId,
+        prompt: applied.prompt,
+      });
+      return applied;
+    });
   }
 
   async startGenerationAttempt(
@@ -958,6 +1069,9 @@ export class MemoryRepository implements Repository {
     ) {
       throw new GenerationStateError(generation.id, `Generation ${generation.id} is not running.`);
     }
+    if ([...this.steering.values()].some((entry) => (
+      inScope(entry, scope) && entry.generationId === generation.id && entry.status === "queued"
+    ))) throw new GenerationSteeringPendingError(generation.id);
     const existing = [...this.versions.values()].filter(
       (version) => version.chatId === generation.chatId && inScope(version, scope),
     );
@@ -1045,6 +1159,9 @@ export class MemoryRepository implements Repository {
     ) {
       throw new GenerationStateError(generation.id, `Generation ${generation.id} is not running.`);
     }
+    if ([...this.steering.values()].some((entry) => (
+      inScope(entry, scope) && entry.generationId === generation.id && entry.status === "queued"
+    ))) throw new GenerationSteeringPendingError(generation.id);
     const now = new Date();
     const task = {
       ...input.task,
@@ -2460,7 +2577,7 @@ export class MemoryRepository implements Repository {
     return source;
   }
 
-  #addMessage(scope: UserScope, input: MemoryMessageInput): void {
+  #addMessage(scope: UserScope, input: MemoryMessageInput): MessageData & ScopedRecord {
     const message = createMemoryMessage(scope, input);
     this.messages.push(message);
     for (const [index, attachment] of (input.attachments ?? []).entries()) {
@@ -2483,6 +2600,7 @@ export class MemoryRepository implements Repository {
         this.toolCalls.set(toolCall.id, { ...toolCall, messageId: message.id });
       }
     }
+    return message;
   }
 
   #addGeneratedArtifacts(
@@ -2696,7 +2814,7 @@ function createMemoryMessage(
   scope: UserScope,
   input: MemoryMessageInput,
 ): MessageData & ScopedRecord {
-  const id = createId();
+  const id = input.id ?? createId();
   const parts = input.parts.map((part, position) => ({
     id: part.id ?? createId(),
     messageId: id,

@@ -69,7 +69,7 @@ test("exposes scoped durable Viby operations through a real MCP connection", asy
   try {
     const listed = await client.listTools();
     assert.deepEqual(listed.tools.map((tool) => tool.name), registration.names);
-    assert.equal(registration.names.length, 12);
+    assert.equal(registration.names.length, 13);
 
     const created = await call(client, "viby_chat_create", {
       title: "MCP dashboard",

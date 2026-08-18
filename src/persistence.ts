@@ -23,6 +23,8 @@ export type {
   CreateGeneratedArtifactRecord,
   CreateVisualArtifactRecord,
   CreateGenerationRecord,
+  CreateGenerationSteeringRecord,
+  ConsumeGenerationSteeringRecord,
   CreateSourceVersionRecord,
   CreateToolCallRecord,
   DeleteChatRecord,

@@ -168,6 +168,24 @@ export function registerVibyMcpTools<Framework extends FrameworkId>(
     return resultValue({ generation: await generation.cancel(reason) });
   });
 
+  server.registerTool(name("generation_steer"), {
+    title: "Steer Viby generation",
+    description: "Queue a durable instruction for an active generation and apply it at the next safe agent boundary.",
+    inputSchema: z.object({
+      generationId: z.string().min(1),
+      prompt: z.string().min(1).max(100_000),
+      idempotencyKey: z.string().min(1).max(500).optional(),
+    }),
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
+  }, async ({ generationId, prompt, idempotencyKey }) => {
+    const generation = await options.viby.generations.get(generationId);
+    const steering = await generation.steer({
+      prompt,
+      ...(idempotencyKey === undefined ? {} : { idempotencyKey }),
+    });
+    return resultValue({ steering });
+  });
+
   server.registerTool(name("generation_task_resolve"), {
     title: "Resolve Viby generation task",
     description: "Resolve a persisted plan, question, or permission task and safely resume generation.",
