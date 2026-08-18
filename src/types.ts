@@ -183,11 +183,27 @@ export interface GenerationQualityCommand {
   readonly timeoutMs?: number;
 }
 
+export interface GenerationQualityFailure {
+  readonly checkId: string;
+  readonly phase: "prepare" | "check";
+  readonly exitCode: number;
+  readonly durationMs: number;
+  /** Raw command output. Return only explicitly sanitized text from `formatFailure`. */
+  readonly stdout: string;
+  /** Raw command output. Return only explicitly sanitized text from `formatFailure`. */
+  readonly stderr: string;
+}
+
 export interface GenerationQualityConfig {
   /** Preparation commands such as dependency installation. */
   readonly prepare?: readonly GenerationQualityCommand[];
   /** Required checks such as typecheck, test, and build. */
   readonly checks: readonly GenerationQualityCommand[];
+  /**
+   * Converts a failed command result into safe, user-facing diagnostics.
+   * Raw output is never persisted unless the host explicitly returns it here.
+   */
+  readonly formatFailure?: (failure: GenerationQualityFailure) => string | null | undefined;
 }
 
 export interface UserScope {
@@ -746,6 +762,8 @@ export interface GenerationEventDataMap {
     readonly status: "passed" | "failed";
     readonly exitCode: number | null;
     readonly durationMs: number | null;
+    /** Sanitized host-provided diagnostics. Older durable events may omit this field. */
+    readonly detail?: string | null;
   };
   readonly "attempt.waiting": { readonly taskId: string };
   readonly "task.created": { readonly task: GenerationTaskRequest & { readonly id: string } };

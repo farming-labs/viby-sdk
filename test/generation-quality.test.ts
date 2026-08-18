@@ -13,7 +13,7 @@ import {
   type SandboxInstance,
 } from "../src/sandbox.js";
 import { SkillResolver } from "../src/skills.js";
-import type { VersionFile } from "../src/types.js";
+import type { GenerationQualityConfig, VersionFile } from "../src/types.js";
 import { sha256 } from "../src/utils.js";
 import { MemoryRepository } from "./helpers/memory-repository.js";
 
@@ -92,7 +92,10 @@ class QualitySandboxAdapter implements SandboxAdapter {
   }
 }
 
-function setup(adapter: QualitySandboxAdapter) {
+function setup(
+  adapter: QualitySandboxAdapter,
+  formatFailure?: GenerationQualityConfig["formatFailure"],
+) {
   const repository = new MemoryRepository();
   const viby = createVibyWithDependencies(
     {
@@ -110,6 +113,7 @@ function setup(adapter: QualitySandboxAdapter) {
             { id: "typecheck", command: "npm", args: ["run", "typecheck"] },
             { id: "build", command: "npm", args: ["run", "build"] },
           ],
+          ...(formatFailure ? { formatFailure } : {}),
         },
       },
     },
@@ -175,6 +179,30 @@ test("fails the attempt without committing source when a quality check fails", a
     assert.equal(completed.at(-1)?.data.status, "failed");
     assert.doesNotMatch(JSON.stringify(events.events), /must-not-be-durable/);
     await assert.rejects(() => chat.generate({ prompt: "Fail again" }), GenerationError);
+  } finally {
+    await viby.close();
+  }
+});
+
+test("persists only host-sanitized quality diagnostics", async () => {
+  const adapter = new QualitySandboxAdapter("build");
+  const { viby } = setup(
+    adapter,
+    ({ checkId, stderr }) => `${checkId}: ${stderr.trim()} (credentials redacted)`,
+  );
+  try {
+    const user = viby.forUser({ tenantId: "quality-detail-tenant", userId: "quality-detail-user" });
+    const chat = await user.chats.create({ title: "Quality diagnostics" });
+    const generation = await chat.start({ prompt: "Build a broken project" });
+    const outcome = await generation.wait({ pollIntervalMs: 10 });
+    assert.equal(outcome.status, "failed");
+    if (outcome.status !== "failed") throw new Error("Expected quality failure");
+    assert.match(outcome.error, /build: build failed \(credentials redacted\)/);
+
+    const events = await generation.events({ limit: 100 });
+    const completed = events.events.filter((event) => event.type === "quality.completed");
+    assert.equal(completed.at(-1)?.data.detail, "build: build failed (credentials redacted)");
+    assert.doesNotMatch(JSON.stringify(events.events), /must-not-be-durable/);
   } finally {
     await viby.close();
   }
