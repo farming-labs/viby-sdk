@@ -464,7 +464,7 @@ const engine = defineGenerationEngine({
 export const viby = createViby({ framework: "farmjs", engine });
 ```
 
-Use `engines` for request-selectable aliases just as the AI SDK shortcut uses `models`. Generation engine authors can run `verifyGenerationEngine` from `@viby/sdk/generation/conformance` against caller-owned deterministic scenarios. The suite validates identity, portable outputs, and cancellation without assuming a provider or orchestration design.
+Use `engines` for request-selectable aliases just as the AI SDK shortcut uses `models`. Generation engine authors can run `verifyGenerationEngine` from `@viby/sdk/generation/conformance` against caller-owned deterministic scenarios. The suite validates identity, portable outputs, durable steering consumption, and cancellation without assuming a provider or orchestration design.
 
 Remote skill strings use the stable skills.sh `owner/repository/slug` form. Local skills can point at a directory containing `SKILL.md` or at the file itself. Remote skills are resolved through the authenticated skills.sh API when Vercel OIDC is available, with public GitHub repositories as the portable fallback. Set `GITHUB_TOKEN` only when you need higher GitHub API limits.
 
@@ -997,6 +997,25 @@ if (outcome.status === "succeeded") {
 }
 ```
 
+Steer an active run without cancelling it or creating a competing generation:
+
+```ts
+await generation.steer("Keep the navigation compact and preserve the auth flow");
+
+await generation.steer({
+  prompt: "Use the attached reference for the empty state",
+  attachments: [referenceImage],
+  idempotencyKey: composerMessageId,
+});
+```
+
+Steering is a durable user message, not an in-memory callback. It is accepted while the generation
+is queued, running, or waiting, and the next worker applies it at a safe agent boundary. The normal
+event cursor emits `steering.queued` and `steering.applied`; `generation.steering()` restores the
+ordered records after reconnecting. The default agent checks between steps. A custom generation
+engine receives `options.steering.consume()` and decides its own safe boundaries. Viby never
+interrupts a command or repeats an external effect to apply steering.
+
 Events are committed to Postgres with monotonically increasing string cursors. A reconnecting client can continue without replaying acknowledged events:
 
 ```ts
@@ -1063,6 +1082,9 @@ export const fetch = (request: Request) => api.fetch(request);
 ```
 
 It covers chat listing/creation/update/deletion, file/ZIP/repository imports, messages, generation status and control, resumable SSE and event pages, permission-task resolution, versions, immutable source changes, iteration, private binary delivery, project environments, integration authorization and discovery, durable push/deployment workflows, ZIP downloads, public integration callbacks, and durable or host-overridden previews. JSON attachments and binary imports use base64 only at the HTTP boundary. Provider credentials remain in adapter-owned secret storage. Authentication, sessions, CORS, rate limits, and sandbox selection remain product-owned. The complete reference application mounts this helper at `/api`.
+
+Generation steering is available through `GET/POST /generations/:id/steering` and the typed Web
+client's `generations.steering(...)` / `generations.steer(...)` methods.
 
 Agent trace parts use four lifecycle events: `part.started`, `part.delta`, `part.completed`, and `part.failed`. Started events establish a stable part id, type, and trace position; deltas append live display data; completion carries the typed durable part; and failures carry a redaction-safe error. Completed trace parts retain the same id in the final assistant message. Saving the normal generation cursor is sufficient to resume both lifecycle and trace events.
 
@@ -1328,6 +1350,7 @@ Included now:
 - resumable started, delta, completed, and failed agent trace events
 - provider-neutral typed tool calls, results, secret redaction, and external-effect idempotency
 - cancellation, retry, and process recovery
+- first-class durable steering with idempotency, attachments, safe-boundary consumption, and resumable events
 - embedded or durable generation-worker execution with fenced leases and heartbeats
 - immutable attempt history and usage
 - typed plan, question, and permission tasks

@@ -53,6 +53,23 @@ export async function verifyGenerationEngine<Framework extends FrameworkId = Fra
     checks.push(name);
   }
 
+  let steeringConsumed = false;
+  const steeringOutput = await input.engine.generate(input.scenarios[0]!.input, {
+    steering: {
+      async consume() {
+        steeringConsumed = true;
+        return [];
+      },
+    },
+  });
+  validateOutput(steeringOutput, input.scenarios[0]!.expected, "steering");
+  if (!steeringConsumed) {
+    throw new GenerationEngineConformanceError(
+      "Generation engine did not consume the provider-neutral steering channel.",
+    );
+  }
+  checks.push("steering");
+
   const cancelled = new AbortController();
   cancelled.abort(new DOMException("Conformance cancellation probe.", "AbortError"));
   await Promise.resolve(

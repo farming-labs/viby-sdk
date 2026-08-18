@@ -12,6 +12,7 @@ import type {
   AttachmentContent,
   GenerationTaskData,
   GenerationTaskRequest,
+  GenerationSteeringData,
   MessageData,
   MessagePartDataMap,
   MessagePartType,
@@ -184,6 +185,17 @@ export interface GeneratorOptions {
   readonly onDelta?: (delta: string) => void | Promise<void>;
   readonly trace?: AgentTraceWriter;
   readonly toolCalls?: AgentToolCallWriter;
+  /** Durable, provider-neutral steering consumed at safe agent boundaries. */
+  readonly steering?: GenerationSteeringChannel;
+}
+
+export interface GenerationSteeringChannel {
+  consume(): Promise<readonly GenerationSteeringUpdate[]>;
+}
+
+/** A consumed steering record plus private attachment bytes for the active engine only. */
+export interface GenerationSteeringUpdate extends GenerationSteeringData {
+  readonly attachments: readonly AttachmentContent[];
 }
 
 export interface ProjectGenerator<Framework extends FrameworkId = FrameworkId> {
@@ -202,12 +214,17 @@ implements ProjectGenerator<Framework> {
     input: GeneratorInput<Framework>,
     options: GeneratorOptions = {},
   ): Promise<GeneratorOutput> {
-    if (options.onDelta) return this.#generateStreaming(input, options);
+    const steeredInput = await applyQueuedSteering(input, options);
+    if (options.onDelta) return this.#generateStreaming(steeredInput, options);
 
     const result = await generateText({
       model: this.#model,
-      system: createSystemPrompt(input.framework, input.skills, input.instructions ?? null),
-      ...createMultimodalPrompt(createGenerationPrompt(input), input.attachments),
+      system: createSystemPrompt(
+        steeredInput.framework,
+        steeredInput.skills,
+        steeredInput.instructions ?? null,
+      ),
+      ...createMultimodalPrompt(createGenerationPrompt(steeredInput), steeredInput.attachments),
       output: Output.object({
         name: "viby_generation",
         description: "A complete source project, immutable source changes, or a typed blocking task.",
@@ -217,7 +234,12 @@ implements ProjectGenerator<Framework> {
     });
 
     return withGeneratedArtifacts(
-      normalizeOutput(result.output, result.usage, result.finishReason, input.previousFiles),
+      normalizeOutput(
+        result.output,
+        result.usage,
+        result.finishReason,
+        steeredInput.previousFiles,
+      ),
       generatedFileOutputs(result.files),
     );
   }
@@ -256,6 +278,25 @@ implements ProjectGenerator<Framework> {
       generatedFileOutputs(await result.files),
     );
   }
+}
+
+async function applyQueuedSteering<Framework extends FrameworkId>(
+  input: GeneratorInput<Framework>,
+  options: GeneratorOptions,
+): Promise<GeneratorInput<Framework>> {
+  const steering = await options.steering?.consume() ?? [];
+  if (steering.length === 0) return input;
+  return {
+    ...input,
+    prompt: [
+      input.prompt,
+      ...steering.map((entry) => `Steering update for the current run:\n${entry.prompt}`),
+    ].join("\n\n"),
+    attachments: [
+      ...(input.attachments ?? []),
+      ...steering.flatMap((entry) => entry.attachments),
+    ],
+  };
 }
 
 export function generatedFileOutputs(

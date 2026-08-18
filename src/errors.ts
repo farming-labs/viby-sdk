@@ -92,6 +92,14 @@ export class GenerationStateError extends VibyError {
   }
 }
 
+/** Internal settlement fence indicating that a newly queued instruction must run first. */
+export class GenerationSteeringPendingError extends GenerationStateError {
+  constructor(generationId: string) {
+    super(generationId, `Generation ${generationId} received steering before settlement.`);
+    this.name = "GenerationSteeringPendingError";
+  }
+}
+
 export class GenerationTaskRequiredError extends VibyError {
   readonly generationId: string;
   readonly taskIds: readonly string[];

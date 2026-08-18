@@ -81,6 +81,7 @@ test("verifies provider-neutral generation engine behavior", async () => {
     identity: { provider: "fixture", model: "fixture-v1" },
     async generate(_input, options) {
       options?.signal?.throwIfAborted();
+      await options?.steering?.consume();
       return projectOutput();
     },
   });
@@ -90,7 +91,7 @@ test("verifies provider-neutral generation engine behavior", async () => {
   });
 
   assert.deepEqual(report.identity, { provider: "fixture", model: "fixture-v1" });
-  assert.deepEqual(report.checks, ["identity", "new-project", "cancellation"]);
+  assert.deepEqual(report.checks, ["identity", "new-project", "steering", "cancellation"]);
 });
 
 test("rejects engines that violate the portable output contract", async () => {

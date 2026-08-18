@@ -32,6 +32,7 @@ This inventory describes the current `@viby/sdk` source on `main`. “Shipped”
 | Durable generation | synchronous convenience methods plus addressable async `Generation` handles |
 | Live updates | persisted event cursors, resumable async iterators, standard SSE, and Web `Response` helpers |
 | Recovery | cancel, retry, resume, immutable attempts, failures, and usage |
+| Steering | durable queued/applied user instructions, idempotency, attachments, safe-boundary agent consumption, resumable events, Web API, and MCP tool |
 | Durable workers | Postgres work claims, leases, heartbeats, fencing, and host-controlled concurrency |
 | Blocking work | typed plan, question, and permission tasks with durable resolution |
 | Agent trace | started, delta, completed, and failed events on the normal generation cursor |
@@ -80,11 +81,11 @@ Preview URLs exist only when the configured adapter exposes port URLs and backgr
 | --- | --- |
 | Inbound tools | provider-neutral sources, per-chat selection, read/write/external effects, stable idempotency, durable permission tasks, and redacted call records |
 | MCP client | Streamable HTTP and custom-transport adapter with per-chat connection isolation; static headers or adapter-resolved credentials remain inside the transport factory |
-| MCP server | `registerVibyMcpTools` exposes scoped chats, generations, events, task resolution, versions, iteration, and downloads through the official MCP server SDK |
+| MCP server | `registerVibyMcpTools` exposes scoped chats, generations, events, steering, task resolution, versions, iteration, and downloads through the official MCP server SDK |
 | Outbound events | signed CloudEvents-style envelopes with stable IDs and constant-time verification |
 | Durable delivery | database claims, retry backoff, lease fencing, inspection, dead letters, and explicit redrive |
 | HTTP streaming | `Last-Event-ID` parsing, standard SSE frames, request abort propagation, and Web `Response` headers |
-| Web API host | authenticated Web Request/Response routing for chats, messages, generation controls, SSE/event pages, tasks, versions, iteration, ZIP downloads, tool-source registration/selection/connections, public provider callbacks, and host-owned previews |
+| Web API host | authenticated Web Request/Response routing for chats, messages, generation controls and steering, SSE/event pages, tasks, versions, iteration, ZIP downloads, tool-source registration/selection/connections, public provider callbacks, and host-owned previews |
 | Telemetry | provider-neutral hooks plus an OpenTelemetry-compatible tracer/meter adapter |
 | Cost attribution | host-defined currency/credit calculator, immutable attempt cost, cumulative generation cost, and usage parts |
 | Generation configuration | durable per-request model aliases, host instructions, categorized skill overlays, and JSON metadata |

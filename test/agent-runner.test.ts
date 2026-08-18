@@ -152,6 +152,55 @@ test("uses workspace tools in the default bounded agent loop", async () => {
   assert.equal(model.doGenerateCalls.length, 2);
 });
 
+test("applies durable steering before the next default-agent step", async () => {
+  const model = new MockLanguageModelV4({
+    doGenerate: [
+      toolCall("write-steered", "workspace_write_file", {
+        path: "src/index.ts",
+        content: "export const compact = true;\n",
+        mediaType: "text/javascript",
+      }),
+      completion("Steered project", "Applied the live steering update."),
+    ],
+  });
+  const generator = new AgentProjectGenerator<"farm">(model, {
+    maxSteps: 4,
+    maxDurationMs: 10_000,
+    maxTokens: 10_000,
+  });
+  let consumed = false;
+  await generator.generate({
+    framework: "farm",
+    prompt: "Build a project",
+    messages: [],
+    previousFiles: [],
+    skills: [],
+    tasks: [],
+  }, {
+    steering: {
+      async consume() {
+        if (consumed) return [];
+        consumed = true;
+        return [{
+          id: "steering-1",
+          generationId: "generation-1",
+          messageId: "message-1",
+          submittedAttemptId: "attempt-1",
+          appliedAttemptId: "attempt-1",
+          prompt: "Use a compact navigation.",
+          status: "applied",
+          idempotencyKey: null,
+          createdAt: new Date(),
+          appliedAt: new Date(),
+          attachments: [],
+        }];
+      },
+    },
+  });
+
+  assert.match(JSON.stringify(model.doGenerateCalls[0]?.prompt), /Use a compact navigation/);
+});
+
 test("classifies workspace writes as created or updated in the agent trace", async () => {
   const model = new MockLanguageModelV4({
     doGenerate: [

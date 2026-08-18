@@ -152,12 +152,38 @@ implements ProjectGenerator<Framework> {
         schema: agentResponseSchema,
       }),
       maxOutputTokens: Math.min(this.#config.maxTokens, 16_384),
-      prepareStep: ({ steps }) => {
-        if (totalStepTokens(steps) < this.#config.maxTokens) return undefined;
+      prepareStep: async ({ steps, messages }) => {
+        const steering = await options.steering?.consume() ?? [];
+        const exhausted = totalStepTokens(steps) >= this.#config.maxTokens;
+        if (!exhausted && steering.length === 0) return undefined;
         return {
-          activeTools: [],
-          toolChoice: "none" as const,
-          instructions: `${createAgentInstructions(input)}\n\nThe execution budget is exhausted. Do not call tools. Return the required complete or task outcome now based on the workspace work already performed.`,
+          ...(steering.length === 0 ? {} : {
+            messages: [
+              ...messages,
+              ...steering.map((entry) => ({
+                role: "user" as const,
+                content: entry.attachments.length === 0
+                  ? `Steering update for the current run:\n${entry.prompt}`
+                  : [
+                      {
+                        type: "text" as const,
+                        text: `Steering update for the current run:\n${entry.prompt}`,
+                      },
+                      ...entry.attachments.map((attachment) => ({
+                        type: "file" as const,
+                        data: attachment.bytes,
+                        filename: attachment.filename,
+                        mediaType: attachment.mediaType,
+                      })),
+                    ],
+              })),
+            ],
+          }),
+          ...(exhausted ? {
+            activeTools: [],
+            toolChoice: "none" as const,
+            instructions: `${createAgentInstructions(input)}\n\nThe execution budget is exhausted. Do not call tools. Return the required complete or task outcome now based on the workspace work already performed.`,
+          } : {}),
         };
       },
       stopWhen: [

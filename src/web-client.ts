@@ -11,6 +11,7 @@ import type {
   GenerationEventPage,
   GenerationTaskData,
   GenerationTaskResolution,
+  GenerationSteeringData,
   ImportFilePolicy,
   JsonValue,
   MessageData,
@@ -90,6 +91,7 @@ export type VibyApiMessage = VibyApiJson<MessageData>;
 export type VibyApiGeneration = VibyApiJson<GenerationData>;
 export type VibyApiGenerationAttempt = VibyApiJson<GenerationAttemptData>;
 export type VibyApiGenerationTask = VibyApiJson<GenerationTaskData>;
+export type VibyApiGenerationSteering = VibyApiJson<GenerationSteeringData>;
 export type VibyApiGenerationEvent = VibyApiJson<GenerationEvent>;
 export type VibyApiGeneratedArtifact = VibyApiJson<GeneratedArtifactData>;
 export type VibyApiToolCall = VibyApiJson<ToolCallData>;
@@ -136,6 +138,12 @@ export interface VibyWebGenerationInput {
   readonly instructions?: string;
   readonly skills?: SkillGroups;
   readonly metadata?: ChatMetadata;
+  readonly attachments?: readonly VibyWebAttachmentInput[];
+}
+
+export interface VibyWebGenerationSteeringInput {
+  readonly prompt: string;
+  readonly idempotencyKey?: string;
   readonly attachments?: readonly VibyWebAttachmentInput[];
 }
 
@@ -324,6 +332,7 @@ export interface VibyWebGenerationDetail<Framework extends FrameworkId = Framewo
   readonly generation: VibyApiGeneration;
   readonly attempts: readonly VibyApiGenerationAttempt[];
   readonly tasks: readonly VibyApiGenerationTask[];
+  readonly steering: readonly VibyApiGenerationSteering[];
   readonly toolCalls: readonly VibyApiToolCall[];
   readonly artifacts: readonly VibyApiGeneratedArtifact[];
   readonly version: VibyApiVersion<Framework> | null;
@@ -523,6 +532,15 @@ export interface VibyWebGenerationsClient<Framework extends FrameworkId = Framew
     generationId: string,
     options?: VibyWebRequestOptions,
   ): Promise<{ readonly generation: VibyApiGeneration }>;
+  steering(
+    generationId: string,
+    options?: VibyWebRequestOptions,
+  ): Promise<{ readonly steering: readonly VibyApiGenerationSteering[] }>;
+  steer(
+    generationId: string,
+    input: VibyWebGenerationSteeringInput,
+    options?: VibyWebRequestOptions,
+  ): Promise<{ readonly steering: VibyApiGenerationSteering }>;
   resolveTask(
     generationId: string,
     taskId: string,
@@ -1038,6 +1056,20 @@ export function createVibyWebClient<Framework extends FrameworkId = FrameworkId>
       undefined,
       request,
     ),
+    steering: (generationId, request = {}) => transport.json(
+      "GET",
+      `/generations/${segment(generationId)}/steering`,
+      undefined,
+      undefined,
+      request,
+    ),
+    steer: (generationId, input, request = {}) => transport.json(
+      "POST",
+      `/generations/${segment(generationId)}/steering`,
+      generationBody(input),
+      undefined,
+      request,
+    ),
     resolveTask: (generationId, taskId, resolution, request = {}) => transport.json(
       "POST",
       `/generations/${segment(generationId)}/tasks/${segment(taskId)}`,
@@ -1528,7 +1560,9 @@ function parsePreviewEvent<Result extends JsonValue>(
   return value as VibyWebPreviewStreamEvent<Result>;
 }
 
-function generationBody(input: VibyWebCreateChatInput | VibyWebGenerationInput): object {
+function generationBody(
+  input: VibyWebCreateChatInput | VibyWebGenerationInput | VibyWebGenerationSteeringInput,
+): object {
   return {
     ...input,
     ...(input.attachments === undefined ? {} : {

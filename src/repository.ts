@@ -19,6 +19,7 @@ import type {
   GenerationEventDataMap,
   GenerationEventType,
   GenerationTaskData,
+  GenerationSteeringData,
   GenerationTaskRequest,
   GenerationTaskResolution,
   MessageData,
@@ -193,6 +194,21 @@ export interface CreateAttachmentRecord {
   readonly bytes: Uint8Array;
   readonly size: number;
   readonly checksum: string;
+}
+
+export interface CreateGenerationSteeringRecord {
+  readonly id: string;
+  readonly messageId: string;
+  readonly generationId: string;
+  readonly prompt: string;
+  readonly idempotencyKey?: string;
+  readonly attachments?: readonly CreateAttachmentRecord[];
+}
+
+export interface ConsumeGenerationSteeringRecord {
+  readonly generationId: string;
+  readonly attemptId: string;
+  readonly leaseToken: string;
 }
 
 export interface CreateGeneratedArtifactRecord {
@@ -431,6 +447,18 @@ extends DeploymentHistoryStore, PreviewSessionStore, ToolSourceRegistryStore, To
     metadata: ChatMetadata,
   ): Promise<RepositoryPage<ChatData<Framework>>>;
   createGeneration(scope: UserScope, input: CreateGenerationRecord): Promise<CreatedGeneration>;
+  createGenerationSteering(
+    scope: UserScope,
+    input: CreateGenerationSteeringRecord,
+  ): Promise<GenerationSteeringData>;
+  listGenerationSteering(
+    scope: UserScope,
+    generationId: string,
+  ): Promise<GenerationSteeringData[]>;
+  consumeGenerationSteering(
+    scope: UserScope,
+    input: ConsumeGenerationSteeringRecord,
+  ): Promise<GenerationSteeringData[]>;
   startGenerationAttempt(
     scope: UserScope,
     generationId: string,

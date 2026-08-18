@@ -267,6 +267,11 @@ test("maps provider-neutral preview and integration operations onto the Web API"
         body: init?.body ? JSON.parse(String(init.body)) : null,
       });
       const path = new URL(String(input)).pathname;
+      if (path.endsWith("/steering")) {
+        return init?.method === "POST"
+          ? Response.json({ steering: { id: "steering-1", status: "queued" } })
+          : Response.json({ steering: [] });
+      }
       if (path.endsWith("/previews")) return Response.json({ previews: [] });
       if (path.endsWith("/previews/cleanup")) return Response.json({ cleaned: 2 });
       if (path.includes("/previews/")) {
@@ -302,6 +307,16 @@ test("maps provider-neutral preview and integration operations onto the Web API"
     },
   });
 
+  await client.generations.steering("generation-1");
+  await client.generations.steer("generation-1", {
+    prompt: "Use the reference",
+    idempotencyKey: "composer-1",
+    attachments: [{
+      filename: "reference.txt",
+      mediaType: "text/plain",
+      bytes: new TextEncoder().encode("compact"),
+    }],
+  });
   await client.previews.list({ chatId: "chat-1", status: "ready" });
   await client.previews.get("preview-1");
   await client.previews.stop("preview-1");
@@ -346,7 +361,20 @@ test("maps provider-neutral preview and integration operations onto the Web API"
     { connectionId: "connection-2" },
   );
 
-  assert.equal(requests[0]?.url,
+  assert.deepEqual(requests[1], {
+    method: "POST",
+    url: "https://app.example/api/viby/generations/generation-1/steering",
+    body: {
+      prompt: "Use the reference",
+      idempotencyKey: "composer-1",
+      attachments: [{
+        filename: "reference.txt",
+        mediaType: "text/plain",
+        base64: "Y29tcGFjdA==",
+      }],
+    },
+  });
+  assert.equal(requests[2]?.url,
     "https://app.example/api/viby/previews?chatId=chat-1&status=ready");
   assert.deepEqual(requests.find((item) => item.url.includes("/branches?")), {
     method: "GET",

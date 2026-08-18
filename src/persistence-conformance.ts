@@ -17,6 +17,7 @@ export interface PersistenceConformanceReport {
     | "readiness"
     | "chat-metadata"
     | "durable-generation"
+    | "generation-steering"
     | "event-cursors"
     | "source-history"
     | "preview-sessions"
@@ -118,6 +119,51 @@ export async function verifyPersistenceAdapter(
     assertConformance((await chat.listMessages()).items.length === 2, "Messages were not durable.");
     assertConformance((await outcome.version.files())[0]?.content === source, "Version files changed.");
     checks.push("durable-generation");
+
+    const steeringGenerationId = crypto.randomUUID();
+    const steeringAttemptId = crypto.randomUUID();
+    await persistence.createGeneration(scope, {
+      id: steeringGenerationId,
+      attemptId: steeringAttemptId,
+      chatId: chat.id,
+      baseVersionId: outcome.version.id,
+      prompt: "Create a steerable iteration",
+      modelProvider: "conformance",
+      modelId: "fixture-v1",
+    });
+    const steering = await persistence.createGenerationSteering(scope, {
+      id: crypto.randomUUID(),
+      messageId: crypto.randomUUID(),
+      generationId: steeringGenerationId,
+      prompt: "Keep the final interface compact.",
+      idempotencyKey: `steering-${suffix}`,
+    });
+    const duplicateSteering = await persistence.createGenerationSteering(scope, {
+      id: crypto.randomUUID(),
+      messageId: crypto.randomUUID(),
+      generationId: steeringGenerationId,
+      prompt: "Duplicate submission",
+      idempotencyKey: `steering-${suffix}`,
+    });
+    assertConformance(duplicateSteering.id === steering.id, "Steering idempotency was not durable.");
+    const lease = await persistence.claimGenerationAttempt({
+      workerId: `conformance-${suffix}`,
+      leaseToken: crypto.randomUUID(),
+      leaseMs: 60_000,
+      framework: "persistence-conformance",
+      modelProvider: "conformance",
+      modelId: "fixture-v1",
+    });
+    assertConformance(lease?.generationId === steeringGenerationId, "Steering attempt was not claimable.");
+    const appliedSteering = await persistence.consumeGenerationSteering(scope, lease!);
+    assertConformance(
+      appliedSteering[0]?.id === steering.id
+      && appliedSteering[0]?.status === "applied"
+      && (await persistence.listGenerationSteering(scope, steeringGenerationId))[0]?.status === "applied",
+      "Steering was not durably consumed.",
+    );
+    checks.push("generation-steering");
+    await persistence.cancelGeneration(scope, steeringGenerationId, "Conformance check complete");
 
     const firstEvents = await generation.events({ limit: 2 });
     assertConformance(firstEvents.events.length === 2 && firstEvents.nextCursor !== null, "Event page is incomplete.");

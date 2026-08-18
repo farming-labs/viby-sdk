@@ -26,6 +26,8 @@ import type {
   GenerationStreamOptions,
   GenerationTaskData,
   GenerationTaskResolution,
+  GenerationSteeringData,
+  GenerationSteeringInput,
   GeneratedArtifactContent,
   GeneratedArtifactData,
   GeneratedArtifactKind,
@@ -83,6 +85,8 @@ import type {
   AgentToolCallInput,
   AgentToolCallWriter,
   GeneratorOutput,
+  GenerationSteeringChannel,
+  GenerationSteeringUpdate,
   ProjectGenerator,
 } from "./generator.js";
 import {
@@ -110,6 +114,7 @@ import {
   GenerationCancelledError,
   GenerationError,
   GenerationStateError,
+  GenerationSteeringPendingError,
   GenerationTaskRequiredError,
   NotFoundError,
   OutboundEventDeliveryError,
@@ -233,6 +238,7 @@ const DEFAULT_EVENT_LIMIT = 100;
 const DEFAULT_WORKER_LEASE_MS = 30_000;
 const DEFAULT_WORKER_HEARTBEAT_MS = 10_000;
 const DEFAULT_WORKER_POLL_INTERVAL_MS = 500;
+const MAX_STEERING_SETTLEMENT_RESTARTS = 20;
 const DEFAULT_DELETED_CHAT_RETENTION_MS = 30 * 24 * 60 * 60 * 1_000;
 const MAX_DELETED_CHAT_RETENTION_MS = 10 * 365 * 24 * 60 * 60 * 1_000;
 const DEFAULT_OUTBOUND_MAX_ATTEMPTS = 5;
@@ -1508,6 +1514,37 @@ export class Generation<Framework extends FrameworkId = FrameworkId> {
     );
   }
 
+  async steering(): Promise<GenerationSteeringData[]> {
+    await assertActiveChat(this.#dependencies, this.chatId);
+    return this.#dependencies.repository.listGenerationSteering(
+      this.#dependencies.scope,
+      this.id,
+    );
+  }
+
+  async steer(input: string | GenerationSteeringInput): Promise<GenerationSteeringData> {
+    await assertActiveChat(this.#dependencies, this.chatId);
+    const value = typeof input === "string" ? { prompt: input } : input;
+    if (!value || typeof value !== "object") {
+      throw new ConfigurationError("Generation steering must be a prompt or an input object.");
+    }
+    const prompt = assertPrompt(value.prompt);
+    const idempotencyKey = value.idempotencyKey === undefined
+      ? undefined
+      : normalizeSteeringIdempotencyKey(value.idempotencyKey);
+    return this.#dependencies.repository.createGenerationSteering(
+      this.#dependencies.scope,
+      {
+        id: createId(),
+        messageId: createId(),
+        generationId: this.id,
+        prompt,
+        ...(idempotencyKey ? { idempotencyKey } : {}),
+        attachments: normalizeAttachments(value.attachments),
+      },
+    );
+  }
+
   async toolCalls(): Promise<ToolCallData[]> {
     await assertActiveChat(this.#dependencies, this.chatId);
     return this.#dependencies.repository.listToolCalls(
@@ -2671,6 +2708,19 @@ function normalizeSkillGroups(value: SkillGroups | undefined): SkillGroups {
   return groups;
 }
 
+function normalizeSteeringIdempotencyKey(value: string): string {
+  if (typeof value !== "string") {
+    throw new ConfigurationError("Generation steering idempotencyKey must be a string.");
+  }
+  const normalized = value.trim();
+  if (normalized.length === 0 || normalized.length > 500) {
+    throw new ConfigurationError(
+      "Generation steering idempotencyKey must contain 1-500 characters.",
+    );
+  }
+  return normalized;
+}
+
 function normalizeAttachments(
   value: GenerateInput["attachments"],
 ): readonly CreateAttachmentRecord[] {
@@ -2966,6 +3016,7 @@ class GenerationRunner<Framework extends FrameworkId> {
     lease: GenerationWorkerLease,
     signal: AbortSignal,
     cancelOnAbort: boolean,
+    steeringRestarts = 0,
   ): Promise<void> {
     const { scope, generationId, attemptId, leaseToken } = lease;
     const telemetryStartedAt = performance.now();
@@ -2978,6 +3029,7 @@ class GenerationRunner<Framework extends FrameworkId> {
     };
     let telemetryOutcome = "failed";
     let sandbox: SandboxSession | undefined;
+    let restartForSteering = false;
     const trace = new DurableAgentTrace(async (type, data) => {
       signal.throwIfAborted();
       await this.#dependencies.repository.appendGenerationEvent(scope, {
@@ -3037,14 +3089,21 @@ class GenerationRunner<Framework extends FrameworkId> {
         );
       }
 
-      const [messages, previousEntries, tasks, attachments] = await Promise.all([
+      const [messages, previousEntries, tasks, attachments, steeringRecords] = await Promise.all([
         this.#dependencies.repository.listMessages(scope, generation.chatId),
         generation.baseVersionId
           ? this.#dependencies.repository.getVersionEntries(scope, generation.baseVersionId)
           : Promise.resolve([]),
         this.#dependencies.repository.listGenerationTasks(scope, generationId),
         this.#dependencies.repository.listGenerationAttachments(scope, generationId),
+        this.#dependencies.repository.listGenerationSteering(scope, generationId),
       ]);
+      const steeringMessageIds = new Set(
+        steeringRecords.filter((entry) => entry.status === "applied").map((entry) => entry.messageId),
+      );
+      const queuedSteeringMessageIds = new Set(
+        steeringRecords.filter((entry) => entry.status === "queued").map((entry) => entry.messageId),
+      );
       const previousFiles = previousEntries
         .filter((entry) => entry.type === "text")
         .map(({ type: _type, ...file }) => file);
@@ -3098,12 +3157,16 @@ class GenerationRunner<Framework extends FrameworkId> {
           prompt: generation.prompt,
           instructions: generation.configuration.instructions,
           metadata: generation.configuration.metadata,
-          messages: messages.filter((message) => message.generationId !== generationId),
+          messages: messages.filter((message) => (
+            message.generationId !== generationId || steeringMessageIds.has(message.id)
+          )),
           previousFiles,
           previousEntries,
           skills,
           tasks,
-          attachments,
+          attachments: attachments.filter((attachment) => (
+            !queuedSteeringMessageIds.has(attachment.messageId)
+          )),
           toolContext: {
             ...scope,
             chatId: chat.id,
@@ -3122,6 +3185,13 @@ class GenerationRunner<Framework extends FrameworkId> {
           signal,
           trace,
           toolCalls,
+          steering: new DurableGenerationSteering(
+            this.#dependencies.repository,
+            scope,
+            generationId,
+            attemptId,
+            leaseToken,
+          ),
           onDelta: async (delta) => {
             signal.throwIfAborted();
             await this.#dependencies.repository.appendGenerationEvent(scope, {
@@ -3281,31 +3351,47 @@ class GenerationRunner<Framework extends FrameworkId> {
       );
       safeSetSpanStatus(telemetrySpan, "ok");
     } catch (error) {
-      telemetryOutcome = signal.aborted || isAbortError(error) ? "cancelled" : "failed";
-      safeRecordException(telemetrySpan, error);
-      safeSetSpanStatus(telemetrySpan, "error", errorMessage(error));
-      await trace.failOpen({
-        message: errorMessage(error),
-        code: "generation_failed",
-        retryable: true,
-      }).catch(() => undefined);
-      if (signal.aborted || isAbortError(error)) {
-        if (!cancelOnAbort || signal.reason instanceof GenerationWorkerLeaseLostError) return;
-        await this.#dependencies.repository.cancelGeneration(
+      if (error instanceof GenerationSteeringPendingError) {
+        if (steeringRestarts >= MAX_STEERING_SETTLEMENT_RESTARTS) {
+          await this.#dependencies.repository.failGenerationAttempt(
+            scope,
+            generationId,
+            attemptId,
+            leaseToken,
+            `Generation exceeded ${MAX_STEERING_SETTLEMENT_RESTARTS} consecutive steering settlement restarts.`,
+          ).catch(() => undefined);
+          return;
+        }
+        telemetryOutcome = "steered";
+        safeSetSpanStatus(telemetrySpan, "ok");
+        restartForSteering = true;
+      } else {
+        telemetryOutcome = signal.aborted || isAbortError(error) ? "cancelled" : "failed";
+        safeRecordException(telemetrySpan, error);
+        safeSetSpanStatus(telemetrySpan, "error", errorMessage(error));
+        await trace.failOpen({
+          message: errorMessage(error),
+          code: "generation_failed",
+          retryable: true,
+        }).catch(() => undefined);
+        if (signal.aborted || isAbortError(error)) {
+          if (!cancelOnAbort || signal.reason instanceof GenerationWorkerLeaseLostError) return;
+          await this.#dependencies.repository.cancelGeneration(
+            scope,
+            generationId,
+            errorMessage(signal.reason ?? error),
+          ).catch(() => false);
+          return;
+        }
+        if (error instanceof GenerationStateError) return;
+        await this.#dependencies.repository.failGenerationAttempt(
           scope,
           generationId,
-          errorMessage(signal.reason ?? error),
-        ).catch(() => false);
-        return;
+          attemptId,
+          leaseToken,
+          errorMessage(error),
+        ).catch(() => undefined);
       }
-      if (error instanceof GenerationStateError) return;
-      await this.#dependencies.repository.failGenerationAttempt(
-        scope,
-        generationId,
-        attemptId,
-        leaseToken,
-        errorMessage(error),
-      ).catch(() => undefined);
     } finally {
       await sandbox?.stop().catch(() => undefined);
       safeRecordMetric(this.#dependencies.telemetry, {
@@ -3316,6 +3402,9 @@ class GenerationRunner<Framework extends FrameworkId> {
         attributes: metricAttributes(telemetryAttributes, telemetryOutcome),
       });
       safeEndSpan(telemetrySpan);
+    }
+    if (restartForSteering) {
+      await this.#execute(lease, signal, cancelOnAbort, steeringRestarts + 1);
     }
   }
 }
@@ -3332,6 +3421,49 @@ interface TraceEntry<Type extends MessagePartType = MessagePartType> {
   readonly type: Type;
   state: "active" | "completed" | "failed";
   data?: MessagePartDataMap[Type];
+}
+
+class DurableGenerationSteering implements GenerationSteeringChannel {
+  readonly #repository: Repository;
+  readonly #scope: UserScope;
+  readonly #generationId: string;
+  readonly #attemptId: string;
+  readonly #leaseToken: string;
+
+  constructor(
+    repository: Repository,
+    scope: UserScope,
+    generationId: string,
+    attemptId: string,
+    leaseToken: string,
+  ) {
+    this.#repository = repository;
+    this.#scope = scope;
+    this.#generationId = generationId;
+    this.#attemptId = attemptId;
+    this.#leaseToken = leaseToken;
+  }
+
+  consume(): Promise<readonly GenerationSteeringUpdate[]> {
+    return this.#consume();
+  }
+
+  async #consume() {
+    const steering = await this.#repository.consumeGenerationSteering(this.#scope, {
+      generationId: this.#generationId,
+      attemptId: this.#attemptId,
+      leaseToken: this.#leaseToken,
+    });
+    if (steering.length === 0) return [];
+    const attachments = await this.#repository.listGenerationAttachments(
+      this.#scope,
+      this.#generationId,
+    );
+    return steering.map((entry) => ({
+      ...entry,
+      attachments: attachments.filter((attachment) => attachment.messageId === entry.messageId),
+    }));
+  }
 }
 
 class DurableAgentTrace implements AgentTraceWriter {

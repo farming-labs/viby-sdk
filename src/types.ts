@@ -394,6 +394,29 @@ export interface AttachmentInput {
   readonly bytes: Uint8Array;
 }
 
+export interface GenerationSteeringInput {
+  readonly prompt: string;
+  /** Optional key that makes repeated host requests return the original steering record. */
+  readonly idempotencyKey?: string;
+  readonly attachments?: readonly AttachmentInput[];
+}
+
+export type GenerationSteeringStatus = "queued" | "applied";
+
+/** A durable instruction submitted while a generation is still active. */
+export interface GenerationSteeringData {
+  readonly id: string;
+  readonly generationId: string;
+  readonly messageId: string;
+  readonly submittedAttemptId: string;
+  readonly appliedAttemptId: string | null;
+  readonly prompt: string;
+  readonly status: GenerationSteeringStatus;
+  readonly idempotencyKey: string | null;
+  readonly createdAt: Date;
+  readonly appliedAt: Date | null;
+}
+
 export interface AttachmentData {
   readonly id: string;
   readonly chatId: string;
@@ -698,6 +721,8 @@ export type GenerationEventType =
   | "generation.created"
   | "attempt.queued"
   | "attempt.started"
+  | "steering.queued"
+  | "steering.applied"
   | "output.delta"
   | "part.started"
   | "part.delta"
@@ -726,6 +751,16 @@ export interface GenerationEventDataMap {
   readonly "attempt.started": {
     readonly number: number;
     readonly reason: GenerationAttemptReason;
+  };
+  readonly "steering.queued": {
+    readonly steeringId: string;
+    readonly messageId: string;
+    readonly prompt: string;
+  };
+  readonly "steering.applied": {
+    readonly steeringId: string;
+    readonly messageId: string;
+    readonly prompt: string;
   };
   readonly "output.delta": { readonly delta: string };
   readonly "part.started": {

@@ -27,6 +27,8 @@ import type {
   GenerationEvent,
   GenerationEventType,
   GenerationStatus,
+  GenerationSteeringData,
+  GenerationSteeringStatus,
   GenerationTaskData,
   GenerationTaskRequest,
   GenerationTaskResolution,
@@ -76,6 +78,8 @@ import type {
   CreateAttemptRecord,
   CreatedGeneration,
   CreateGenerationRecord,
+  CreateGenerationSteeringRecord,
+  ConsumeGenerationSteeringRecord,
   CreateGeneratedArtifactRecord,
   CreateProjectArtifactRecord,
   CreateVisualArtifactRecord,
@@ -152,6 +156,7 @@ import {
   ConfigurationError,
   DatabaseNotReadyError,
   GenerationStateError,
+  GenerationSteeringPendingError,
   NotFoundError,
 } from "./errors.js";
 
@@ -253,6 +258,19 @@ interface GenerationTaskRow {
   resolution: GenerationTaskResolution | null;
   created_at: Date;
   resolved_at: Date | null;
+}
+
+interface GenerationSteeringRow {
+  id: string;
+  generation_id: string;
+  message_id: string;
+  submitted_attempt_id: string;
+  applied_attempt_id: string | null;
+  prompt: string;
+  status: GenerationSteeringStatus;
+  idempotency_key: string | null;
+  created_at: Date;
+  applied_at: Date | null;
 }
 
 interface SkillSnapshotRow {
@@ -643,6 +661,7 @@ export class PostgresRepository implements Repository {
         AND to_regclass('viby.generation_attempts') IS NOT NULL
         AND to_regclass('viby.generation_events') IS NOT NULL
         AND to_regclass('viby.generation_tasks') IS NOT NULL
+        AND to_regclass('viby.generation_steering') IS NOT NULL
         AND to_regclass('viby.sandbox_leases') IS NOT NULL
         AND to_regclass('viby.preview_sessions') IS NOT NULL
         AND to_regclass('viby.tool_sources') IS NOT NULL
@@ -1311,6 +1330,163 @@ export class PostgresRepository implements Repository {
     };
   }
 
+  async createGenerationSteering(
+    scope: UserScope,
+    input: CreateGenerationSteeringRecord,
+  ): Promise<GenerationSteeringData> {
+    await this.assertReady();
+    if (input.idempotencyKey) {
+      const [existing] = await this.#sql<GenerationSteeringRow[]>`
+        SELECT * FROM viby.generation_steering
+        WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+          AND generation_id = ${input.generationId}
+          AND idempotency_key = ${input.idempotencyKey}
+      `;
+      if (existing) return mapGenerationSteering(existing);
+    }
+    const attachments = await this.#storeAttachments(scope, input);
+    try {
+      const result = await this.#sql.begin(async (sql) => {
+        const [generation] = await sql<GenerationRow[]>`
+          SELECT * FROM viby.generations
+          WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+            AND id = ${input.generationId}
+          FOR UPDATE
+        `;
+        if (!generation) throw new NotFoundError("Generation");
+        if (!(["queued", "running", "waiting"] as GenerationStatus[]).includes(generation.status)) {
+          throw new GenerationStateError(
+            input.generationId,
+            `Generation ${input.generationId} cannot be steered from ${generation.status}.`,
+          );
+        }
+        if (input.idempotencyKey) {
+          const [existing] = await sql<GenerationSteeringRow[]>`
+            SELECT * FROM viby.generation_steering
+            WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+              AND generation_id = ${input.generationId}
+              AND idempotency_key = ${input.idempotencyKey}
+          `;
+          if (existing) return { row: existing, created: false };
+        }
+        await insertMessage(sql, scope, {
+          id: input.messageId,
+          chatId: generation.chat_id,
+          generationId: input.generationId,
+          attemptId: generation.active_attempt_id,
+          role: "user",
+          content: input.prompt,
+          parts: [{ type: "text", data: { text: input.prompt } }],
+          attachments,
+        });
+        const [steering] = await sql<GenerationSteeringRow[]>`
+          INSERT INTO viby.generation_steering (
+            id, tenant_id, user_id, generation_id, message_id,
+            submitted_attempt_id, prompt, idempotency_key
+          ) VALUES (
+            ${input.id}, ${scope.tenantId}, ${scope.userId}, ${input.generationId},
+            ${input.messageId}, ${generation.active_attempt_id}, ${input.prompt},
+            ${input.idempotencyKey ?? null}
+          )
+          RETURNING *
+        `;
+        if (!steering) throw new Error("Postgres did not return the created steering record.");
+        await sql`
+          INSERT INTO viby.generation_events (
+            tenant_id, user_id, generation_id, attempt_id, type, data
+          ) VALUES (
+            ${scope.tenantId}, ${scope.userId}, ${input.generationId},
+            ${generation.active_attempt_id}, 'steering.queued',
+            ${sql.json({ steeringId: input.id, messageId: input.messageId, prompt: input.prompt })}
+          )
+        `;
+        await sql`
+          UPDATE viby.chats SET updated_at = now()
+          WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+            AND id = ${generation.chat_id}
+        `;
+        return { row: steering, created: true };
+      });
+      if (!result.created) {
+        await Promise.allSettled(attachments.map((attachment) => (
+          this.#artifactStore!.delete(
+            attachment.artifactKey,
+            attachmentContext(scope, attachment.id),
+          )
+        )));
+      }
+      return mapGenerationSteering(result.row);
+    } catch (error) {
+      await Promise.allSettled(attachments.map((attachment) => (
+        this.#artifactStore!.delete(
+          attachment.artifactKey,
+          attachmentContext(scope, attachment.id),
+        )
+      )));
+      throw error;
+    }
+  }
+
+  async listGenerationSteering(
+    scope: UserScope,
+    generationId: string,
+  ): Promise<GenerationSteeringData[]> {
+    await this.assertReady();
+    const rows = await this.#sql<GenerationSteeringRow[]>`
+      SELECT steering.* FROM viby.generation_steering AS steering
+      JOIN viby.generations AS generation ON generation.id = steering.generation_id
+      WHERE steering.tenant_id = ${scope.tenantId} AND steering.user_id = ${scope.userId}
+        AND steering.generation_id = ${generationId}
+        AND generation.tenant_id = steering.tenant_id AND generation.user_id = steering.user_id
+      ORDER BY steering.created_at, steering.id
+    `;
+    return rows.map(mapGenerationSteering);
+  }
+
+  async consumeGenerationSteering(
+    scope: UserScope,
+    input: ConsumeGenerationSteeringRecord,
+  ): Promise<GenerationSteeringData[]> {
+    await this.assertReady();
+    const rows = await this.#sql.begin(async (sql) => {
+      await assertActiveToolAttempt(sql, scope, input);
+      const queued = await sql<GenerationSteeringRow[]>`
+        SELECT * FROM viby.generation_steering
+        WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+          AND generation_id = ${input.generationId} AND status = 'queued'
+        ORDER BY created_at, id
+        FOR UPDATE
+      `;
+      const applied: GenerationSteeringRow[] = [];
+      for (const steering of queued) {
+        const [updated] = await sql<GenerationSteeringRow[]>`
+          UPDATE viby.generation_steering SET
+            status = 'applied', applied_attempt_id = ${input.attemptId}, applied_at = now()
+          WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+            AND id = ${steering.id} AND status = 'queued'
+          RETURNING *
+        `;
+        if (!updated) continue;
+        applied.push(updated);
+        await sql`
+          INSERT INTO viby.generation_events (
+            tenant_id, user_id, generation_id, attempt_id, type, data
+          ) VALUES (
+            ${scope.tenantId}, ${scope.userId}, ${input.generationId}, ${input.attemptId},
+            'steering.applied',
+            ${sql.json({
+              steeringId: updated.id,
+              messageId: updated.message_id,
+              prompt: updated.prompt,
+            })}
+          )
+        `;
+      }
+      return applied;
+    });
+    return rows.map(mapGenerationSteering);
+  }
+
   async startGenerationAttempt(
     scope: UserScope,
     generationId: string,
@@ -1818,6 +1994,7 @@ export class PostgresRepository implements Repository {
       if (!attempt || attempt.status !== "running") {
         throw new GenerationStateError(input.generationId, `Attempt ${input.attemptId} is not running.`);
       }
+      await assertNoQueuedSteering(sql, scope, input.generationId);
 
       await sql`
         SELECT id FROM viby.chats
@@ -1968,6 +2145,7 @@ export class PostgresRepository implements Repository {
       if (!attempt || attempt.status !== "running") {
         throw new GenerationStateError(generation.id, `Attempt ${input.attemptId} is not running.`);
       }
+      await assertNoQueuedSteering(sql, scope, input.generationId);
 
       const [task] = await sql<GenerationTaskRow[]>`
         INSERT INTO viby.generation_tasks (
@@ -3979,7 +4157,7 @@ export class PostgresRepository implements Repository {
 
   async #storeAttachments(
     scope: UserScope,
-    input: CreateGenerationRecord,
+    input: Pick<CreateGenerationRecord, "id" | "attachments">,
   ): Promise<StoredAttachmentInput[]> {
     if (!input.attachments || input.attachments.length === 0) return [];
     if (!this.#artifactStore) {
@@ -4325,6 +4503,21 @@ function mapTask(row: GenerationTaskRow): GenerationTaskData {
     createdAt: row.created_at,
     resolvedAt: row.resolved_at,
   } as GenerationTaskData;
+}
+
+function mapGenerationSteering(row: GenerationSteeringRow): GenerationSteeringData {
+  return {
+    id: row.id,
+    generationId: row.generation_id,
+    messageId: row.message_id,
+    submittedAttemptId: row.submitted_attempt_id,
+    appliedAttemptId: row.applied_attempt_id,
+    prompt: row.prompt,
+    status: row.status,
+    idempotencyKey: row.idempotency_key,
+    createdAt: row.created_at,
+    appliedAt: row.applied_at,
+  };
 }
 
 function mapVersion<Framework extends FrameworkId>(row: VersionRow): VersionData<Framework> {
@@ -4744,6 +4937,7 @@ async function insertMessage(
   sql: postgres.TransactionSql,
   scope: UserScope,
   input: {
+    readonly id?: string;
     readonly chatId: string;
     readonly generationId: string;
     readonly attemptId: string;
@@ -4754,7 +4948,7 @@ async function insertMessage(
     readonly attachments?: readonly StoredAttachmentInput[];
   },
 ): Promise<void> {
-  const messageId = createId();
+  const messageId = input.id ?? createId();
   await sql`
     INSERT INTO viby.messages (
       id, tenant_id, user_id, chat_id, generation_id, role, content, finish_reason
@@ -4818,6 +5012,20 @@ async function assertActiveToolAttempt(
   if (rows.length === 0) {
     throw new GenerationStateError(input.generationId, "The generation worker lease is no longer active.");
   }
+}
+
+async function assertNoQueuedSteering(
+  sql: postgres.TransactionSql,
+  scope: UserScope,
+  generationId: string,
+): Promise<void> {
+  const [pending] = await sql<{ id: string }[]>`
+    SELECT id FROM viby.generation_steering
+    WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+      AND generation_id = ${generationId} AND status = 'queued'
+    LIMIT 1
+  `;
+  if (pending) throw new GenerationSteeringPendingError(generationId);
 }
 
 function mapToolCall(row: ToolCallRow): ToolCallData {

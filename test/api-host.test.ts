@@ -52,10 +52,12 @@ class SnapshotMemoryRepository extends MemoryRepository {
 
 test("hosts chat, message, stream, task, preview, and download flows with Web APIs", async () => {
   const inputs: GeneratorInput<"farm">[] = [];
+  const steeringPrompts: string[] = [];
   let release = 0;
   const generator: ProjectGenerator<"farm"> = {
     async generate(input, options): Promise<GeneratorOutput> {
       inputs.push(input);
+      steeringPrompts.push(...(await options?.steering?.consume() ?? []).map((entry) => entry.prompt));
       if (input.prompt.includes("approval") && !input.tasks.some((task) => task.status === "resolved")) {
         return {
           kind: "task",
@@ -231,12 +233,25 @@ test("hosts chat, message, stream, task, preview, and download flows with Web AP
     assert.match(await (await api.fetch(request(`/generations/${waitingId}/events`, {}, true))).text(), /attempt\.waiting/);
     const waitingData = await requestJson(api, `/generations/${waitingId}`);
     const taskId = string(object(array(waitingData.tasks)[0]).id);
+    const steered = await requestJson(api, `/generations/${waitingId}/steering`, {
+      method: "POST",
+      body: JSON.stringify({
+        prompt: "Keep the approved change compact.",
+        idempotencyKey: "api-steering-1",
+      }),
+    }, 202);
+    assert.equal(object(steered.steering).status, "queued");
+    assert.equal(
+      array((await requestJson(api, `/generations/${waitingId}/steering`)).steering).length,
+      1,
+    );
     const resolved = await requestJson(api, `/generations/${waitingId}/tasks/${taskId}`, {
       method: "POST",
       body: JSON.stringify({ resolution: { kind: "permission", decision: "allow" } }),
     }, 202);
     assert.ok(["queued", "running", "succeeded"].includes(string(object(resolved.generation).status)));
     assert.match(await (await api.fetch(request(`/generations/${waitingId}/events`, {}, true))).text(), /generation\.succeeded/);
+    assert.deepEqual(steeringPrompts, ["Keep the approved change compact."]);
     const events = await requestJson(api, `/generations/${waitingId}/events/page?after=0&limit=100`);
     assert.ok(array(events.events).some((event) => object(event).type === "task.resolved"));
 
