@@ -102,6 +102,7 @@ import type {
   ChatReadSnapshot,
   CreateAttachmentRecord,
   CreateGeneratedArtifactRecord,
+  GenerationReadSnapshot,
   GenerationWorkerLease,
   Repository,
 } from "./repository.js";
@@ -113,6 +114,7 @@ import {
   ConfigurationError,
   GenerationCancelledError,
   GenerationError,
+  GenerationQualityError,
   GenerationStateError,
   GenerationSteeringPendingError,
   GenerationTaskRequiredError,
@@ -135,6 +137,7 @@ import {
 import {
   applyVersionEntryChanges,
   mergeGeneratedFilesWithArtifacts,
+  normalizeVersionEntries,
   normalizeSourceChanges,
 } from "./source-changes.js";
 import {
@@ -1235,6 +1238,54 @@ export class GenerationCollection<Framework extends FrameworkId = FrameworkId> {
     await assertActiveChat(this.#dependencies, generation.chatId);
     return new Generation(generation.id, generation.chatId, this.#dependencies);
   }
+
+  async snapshot(id: string): Promise<GenerationReadSnapshot<Framework>> {
+    const generationId = assertIdentifier(id, "Generation id");
+    if (this.#dependencies.repository.readGenerationSnapshot) {
+      const snapshot = await this.#dependencies.repository.readGenerationSnapshot<Framework>(
+        this.#dependencies.scope,
+        generationId,
+      );
+      if (!snapshot) throw new NotFoundError("Generation");
+      return snapshot;
+    }
+
+    const generation = await this.#dependencies.repository.getGeneration(
+      this.#dependencies.scope,
+      generationId,
+    );
+    if (!generation) throw new NotFoundError("Generation");
+    await assertActiveChat(this.#dependencies, generation.chatId);
+    const [attempts, tasks, steering, toolCalls, artifacts, version] = await Promise.all([
+      this.#dependencies.repository.listGenerationAttempts(
+        this.#dependencies.scope,
+        generationId,
+      ),
+      this.#dependencies.repository.listGenerationTasks(
+        this.#dependencies.scope,
+        generationId,
+      ),
+      this.#dependencies.repository.listGenerationSteering(
+        this.#dependencies.scope,
+        generationId,
+      ),
+      this.#dependencies.repository.listToolCalls(
+        this.#dependencies.scope,
+        generationId,
+      ),
+      this.#dependencies.repository.listGeneratedArtifacts(
+        this.#dependencies.scope,
+        generationId,
+      ),
+      generation.status === "succeeded"
+        ? this.#dependencies.repository.getVersionByGeneration<Framework>(
+            this.#dependencies.scope,
+            generationId,
+          )
+        : Promise.resolve(null),
+    ]);
+    return { generation, attempts, tasks, steering, toolCalls, artifacts, version };
+  }
 }
 
 export class Chat<Framework extends FrameworkId = FrameworkId> {
@@ -1293,7 +1344,7 @@ export class Chat<Framework extends FrameworkId = FrameworkId> {
       this.#dependencies.scope,
       this.id,
     );
-    return this.#startFrom(input, latest);
+    return startGenerationFrom(this.#dependencies, this.id, input, latest);
   }
 
   async generate(input: GenerateInput): Promise<Version<Framework>> {
@@ -1320,13 +1371,23 @@ export class Chat<Framework extends FrameworkId = FrameworkId> {
   }
 
   async getVersion(id: string): Promise<Version<Framework>> {
+    const data = this.#dependencies.repository.getVersionForChat
+      ? await this.#dependencies.repository.getVersionForChat<Framework>(
+          this.#dependencies.scope,
+          this.id,
+          id,
+        )
+      : await this.#getVersionFallback(id);
+    if (!data || data.chatId !== this.id) throw new NotFoundError("Version");
+    return new Version(data, this.#dependencies);
+  }
+
+  async #getVersionFallback(id: string): Promise<VersionData<Framework> | null> {
     await this.#assertActive();
-    const data = await this.#dependencies.repository.getVersion<Framework>(
+    return this.#dependencies.repository.getVersion<Framework>(
       this.#dependencies.scope,
       id,
     );
-    if (!data || data.chatId !== this.id) throw new NotFoundError("Version");
-    return new Version(data, this.#dependencies);
   }
 
   async listVersions(options: PageOptions = {}): Promise<CursorPage<Version<Framework>>> {
@@ -1422,52 +1483,57 @@ export class Chat<Framework extends FrameworkId = FrameworkId> {
     input: GenerateInput,
     version: VersionData<Framework>,
   ): Promise<Generation<Framework>> {
-    return this.#startFrom(input, version);
+    if (version.chatId !== this.id) throw new NotFoundError("Version");
+    return this.#assertActive().then(() => (
+      startGenerationFrom(this.#dependencies, this.id, input, version)
+    ));
   }
 
   async generateFromVersion(
     input: GenerateInput,
     version: VersionData<Framework>,
   ): Promise<Version<Framework>> {
-    return unwrapGenerationOutcome(await (await this.#startFrom(input, version)).wait());
-  }
-
-  async #startFrom(
-    input: GenerateInput,
-    baseVersion: VersionData<Framework> | null,
-  ): Promise<Generation<Framework>> {
-    await this.#assertActive();
-    const prompt = assertPrompt(input.prompt);
-    const selected = normalizeGenerationConfiguration(
-      input,
-      this.#dependencies.skills,
-      this.#dependencies.models,
-    );
-    const attachments = normalizeAttachments(input.attachments);
-    const toolSources = await this.#dependencies.toolSourceRegistry.snapshot(
-      this.#dependencies.scope,
-      this.id,
-    );
-    const generationId = createId();
-    const attemptId = createId();
-    await this.#dependencies.repository.createGeneration(this.#dependencies.scope, {
-      id: generationId,
-      attemptId,
-      chatId: this.id,
-      baseVersionId: baseVersion?.id ?? null,
-      prompt,
-      modelProvider: selected.model.provider,
-      modelId: selected.model.id,
-      configuration: { ...selected.configuration, toolSources },
-      attachments,
-    });
-    this.#dependencies.runner.schedule(this.#dependencies.scope, generationId, attemptId);
-    return new Generation(generationId, this.id, this.#dependencies);
+    return unwrapGenerationOutcome(await (await this.startFromVersion(input, version)).wait());
   }
 
   async #assertActive(): Promise<void> {
     await assertActiveChat(this.#dependencies, this.id);
   }
+}
+
+async function startGenerationFrom<Framework extends FrameworkId>(
+  dependencies: ScopedDependencies<Framework>,
+  chatId: string,
+  input: GenerateInput,
+  baseVersion: VersionData<Framework> | null,
+): Promise<Generation<Framework>> {
+  if (baseVersion && baseVersion.chatId !== chatId) throw new NotFoundError("Version");
+  const prompt = assertPrompt(input.prompt);
+  const selected = normalizeGenerationConfiguration(
+    input,
+    dependencies.skills,
+    dependencies.models,
+  );
+  const attachments = normalizeAttachments(input.attachments);
+  const toolSources = await dependencies.toolSourceRegistry.snapshot(
+    dependencies.scope,
+    chatId,
+  );
+  const generationId = createId();
+  const attemptId = createId();
+  await dependencies.repository.createGeneration(dependencies.scope, {
+    id: generationId,
+    attemptId,
+    chatId,
+    baseVersionId: baseVersion?.id ?? null,
+    prompt,
+    modelProvider: selected.model.provider,
+    modelId: selected.model.id,
+    configuration: { ...selected.configuration, toolSources },
+    attachments,
+  });
+  dependencies.runner.schedule(dependencies.scope, generationId, attemptId);
+  return new Generation(generationId, chatId, dependencies);
 }
 
 export class Generation<Framework extends FrameworkId = FrameworkId> {
@@ -1890,21 +1956,11 @@ export class Version<Framework extends FrameworkId = FrameworkId> {
   get createdAt(): Date { return this.#data.createdAt; }
 
   async startIteration(input: IterateInput): Promise<Generation<Framework>> {
-    const chatData = await this.#dependencies.repository.getChat<Framework>(
-      this.#dependencies.scope,
-      this.chatId,
-    );
-    if (!chatData) throw new NotFoundError("Chat");
-    return new Chat(chatData, this.#dependencies).startFromVersion(input, this.#data);
+    return startGenerationFrom(this.#dependencies, this.chatId, input, this.#data);
   }
 
   async iterate(input: IterateInput): Promise<Version<Framework>> {
-    const chatData = await this.#dependencies.repository.getChat<Framework>(
-      this.#dependencies.scope,
-      this.chatId,
-    );
-    if (!chatData) throw new NotFoundError("Chat");
-    return new Chat(chatData, this.#dependencies).generateFromVersion(input, this.#data);
+    return unwrapGenerationOutcome(await (await this.startIteration(input)).wait());
   }
 
   async apply(input: ApplySourceChangesInput): Promise<Version<Framework>> {
@@ -2882,6 +2938,28 @@ function normalizeGenerationConfiguration<Framework extends FrameworkId>(
   };
 }
 
+function generationInstructionsForAttempt(
+  configured: string | null,
+  attempts: readonly GenerationAttemptData[],
+  attemptId: string,
+): string | null {
+  const current = attempts.find((attempt) => attempt.id === attemptId);
+  if (current?.reason !== "retry") return configured;
+  const previousFailure = attempts
+    .filter((attempt) => attempt.number < current.number && attempt.error)
+    .sort((left, right) => right.number - left.number)[0];
+  if (!previousFailure?.error) return configured;
+  const diagnostic = previousFailure.error.trim().slice(0, 4_000);
+  if (!diagnostic) return configured;
+  const repairContext = [
+    "Retry repair context:",
+    `The previous attempt failed with: ${diagnostic}`,
+    "Correct that failure while preserving the user's request and valid existing workspace work.",
+    "Do not repeat an external effect that may already have completed.",
+  ].join("\n");
+  return configured ? `${configured}\n\n${repairContext}` : repairContext;
+}
+
 interface RunnerDependencies<Framework extends FrameworkId> {
   readonly framework: Framework;
   readonly repository: Repository;
@@ -3030,6 +3108,9 @@ class GenerationRunner<Framework extends FrameworkId> {
     let telemetryOutcome = "failed";
     let sandbox: SandboxSession | undefined;
     let restartForSteering = false;
+    let repairAttemptId: string | null = null;
+    let attemptNumber = 1;
+    let attemptStartedAt: Date | null = null;
     const trace = new DurableAgentTrace(async (type, data) => {
       signal.throwIfAborted();
       await this.#dependencies.repository.appendGenerationEvent(scope, {
@@ -3089,7 +3170,7 @@ class GenerationRunner<Framework extends FrameworkId> {
         );
       }
 
-      const [messages, previousEntries, tasks, attachments, steeringRecords] = await Promise.all([
+      const [messages, previousEntries, tasks, attachments, steeringRecords, attempts] = await Promise.all([
         this.#dependencies.repository.listMessages(scope, generation.chatId),
         generation.baseVersionId
           ? this.#dependencies.repository.getVersionEntries(scope, generation.baseVersionId)
@@ -3097,6 +3178,7 @@ class GenerationRunner<Framework extends FrameworkId> {
         this.#dependencies.repository.listGenerationTasks(scope, generationId),
         this.#dependencies.repository.listGenerationAttachments(scope, generationId),
         this.#dependencies.repository.listGenerationSteering(scope, generationId),
+        this.#dependencies.repository.listGenerationAttempts(scope, generationId),
       ]);
       const steeringMessageIds = new Set(
         steeringRecords.filter((entry) => entry.status === "applied").map((entry) => entry.messageId),
@@ -3107,6 +3189,8 @@ class GenerationRunner<Framework extends FrameworkId> {
       const previousFiles = previousEntries
         .filter((entry) => entry.type === "text")
         .map(({ type: _type, ...file }) => file);
+      attemptNumber = attempts.find((attempt) => attempt.id === attemptId)?.number ?? 1;
+      attemptStartedAt = attempts.find((attempt) => attempt.id === attemptId)?.startedAt ?? null;
       signal.throwIfAborted();
       if (generation.baseVersionId && this.#dependencies.sandbox) {
         sandbox = await this.#dependencies.sandboxes.open(
@@ -3155,7 +3239,11 @@ class GenerationRunner<Framework extends FrameworkId> {
         {
           framework: chat.framework,
           prompt: generation.prompt,
-          instructions: generation.configuration.instructions,
+          instructions: generationInstructionsForAttempt(
+            generation.configuration.instructions,
+            attempts,
+            attemptId,
+          ),
           metadata: generation.configuration.metadata,
           messages: messages.filter((message) => (
             message.generationId !== generationId || steeringMessageIds.has(message.id)
@@ -3233,7 +3321,13 @@ class GenerationRunner<Framework extends FrameworkId> {
             ...trace.completedParts(),
             { type: "status", data: { message: output.task.message, state: "waiting" } },
             { type: "text", data: { text: output.task.message } },
-            usageMessagePart(inputTokens, outputTokens, totalTokens, cost),
+            usageMessagePart(
+              inputTokens,
+              outputTokens,
+              totalTokens,
+              cost,
+              elapsedAttemptMs(attemptStartedAt),
+            ),
           ],
           inputTokens,
           outputTokens,
@@ -3257,11 +3351,11 @@ class GenerationRunner<Framework extends FrameworkId> {
         return;
       }
 
-      const entries = output.kind === "changes"
+      let entries = output.kind === "changes"
         ? applyVersionEntryChanges(previousEntries, output.changes)
         : mergeGeneratedFilesWithArtifacts(previousEntries, output.files);
       if (this.#dependencies.quality) {
-        await verifyGenerationQuality({
+        const quality = await verifyGenerationQuality({
           config: this.#dependencies.quality,
           adapter: this.#dependencies.sandbox!,
           ...(this.#dependencies.sandboxPolicy
@@ -3297,6 +3391,14 @@ class GenerationRunner<Framework extends FrameworkId> {
             });
           },
         });
+        const capturedText = new Map(quality.files.flatMap((file) => (
+          typeof file.content === "string" ? [[file.path, file.content] as const] : []
+        )));
+        entries = normalizeVersionEntries(entries.map((entry) => (
+          entry.type === "text" && !entry.locked && capturedText.has(entry.path)
+            ? { ...entry, content: capturedText.get(entry.path)! }
+            : entry
+        )), "Verified");
       }
       const { files, artifacts: projectArtifacts } = splitVersionEntries(entries);
       const changes = output.kind === "changes" ? output.changes : null;
@@ -3329,7 +3431,13 @@ class GenerationRunner<Framework extends FrameworkId> {
         assistantParts: [
           ...mergeTraceAndFileEditParts(trace.completedParts(), files, changes, previousEntries),
           { type: "text", data: { text: output.summary } },
-          usageMessagePart(inputTokens, outputTokens, totalTokens, cost),
+          usageMessagePart(
+            inputTokens,
+            outputTokens,
+            totalTokens,
+            cost,
+            elapsedAttemptMs(attemptStartedAt),
+          ),
         ],
         inputTokens,
         outputTokens,
@@ -3384,13 +3492,27 @@ class GenerationRunner<Framework extends FrameworkId> {
           return;
         }
         if (error instanceof GenerationStateError) return;
-        await this.#dependencies.repository.failGenerationAttempt(
-          scope,
-          generationId,
-          attemptId,
-          leaseToken,
-          errorMessage(error),
-        ).catch(() => undefined);
+        if (
+          error instanceof GenerationQualityError
+          && attemptNumber <= (this.#dependencies.quality?.repairAttempts ?? 0)
+        ) {
+          const repair = await this.#dependencies.repository.repairGenerationAttempt(scope, {
+            generationId,
+            attemptId,
+            leaseToken,
+            error: errorMessage(error),
+            repairAttemptId: createId(),
+          }).catch(() => null);
+          repairAttemptId = repair?.id ?? null;
+        } else {
+          await this.#dependencies.repository.failGenerationAttempt(
+            scope,
+            generationId,
+            attemptId,
+            leaseToken,
+            errorMessage(error),
+          ).catch(() => undefined);
+        }
       }
     } finally {
       await sandbox?.stop().catch(() => undefined);
@@ -3405,6 +3527,8 @@ class GenerationRunner<Framework extends FrameworkId> {
     }
     if (restartForSteering) {
       await this.#execute(lease, signal, cancelOnAbort, steeringRestarts + 1);
+    } else if (repairAttemptId && this.#dependencies.automatic) {
+      setTimeout(() => this.schedule(scope, generationId, repairAttemptId!), 0);
     }
   }
 }
@@ -3706,6 +3830,7 @@ function usageMessagePart(
   outputTokens: number | null,
   totalTokens: number | null,
   cost: GenerationCostData | null,
+  durationMs: number | null,
 ): MessagePartInput<"usage"> {
   return {
     type: "usage",
@@ -3713,9 +3838,14 @@ function usageMessagePart(
       inputTokens,
       outputTokens,
       totalTokens,
+      ...(durationMs === null ? {} : { durationMs }),
       ...(cost ? { cost } : {}),
     },
   };
+}
+
+function elapsedAttemptMs(startedAt: Date | null) {
+  return startedAt ? Math.max(0, Date.now() - startedAt.getTime()) : null;
 }
 
 async function calculateGenerationCost(

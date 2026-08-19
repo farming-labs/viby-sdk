@@ -152,6 +152,42 @@ test("uses workspace tools in the default bounded agent loop", async () => {
   assert.equal(model.doGenerateCalls.length, 2);
 });
 
+test("includes a bounded workspace inventory to avoid exploratory model turns", async () => {
+  const model = new MockLanguageModelV4({
+    doGenerate: [
+      toolCall("update-heading", "workspace_write_file", {
+        path: "src/app/dashboard.tsx",
+        content: "export default function Dashboard() { return 'Updated'; }\n",
+        mediaType: "text/typescript",
+      }),
+      completion("Focused iteration", "Used the supplied workspace inventory."),
+    ],
+  });
+  const generator = new AgentProjectGenerator<"farm">(model, {
+    maxSteps: 3,
+    maxDurationMs: 10_000,
+    maxTokens: 10_000,
+  });
+  await generator.generate({
+    framework: "farm",
+    prompt: "Change the dashboard heading",
+    messages: [],
+    previousFiles: [{
+      path: "src/app/dashboard.tsx",
+      content: "export default function Dashboard() { return null; }\n",
+      mediaType: "text/typescript",
+      size: 53,
+      checksum: "dashboard",
+      locked: false,
+    }],
+    skills: [],
+    tasks: [],
+  });
+
+  assert.match(JSON.stringify(model.doGenerateCalls[0]?.prompt), /src\/app\/dashboard\.tsx/);
+  assert.match(JSON.stringify(model.doGenerateCalls[0]?.prompt), /Read only files relevant/);
+});
+
 test("applies durable steering before the next default-agent step", async () => {
   const model = new MockLanguageModelV4({
     doGenerate: [
@@ -333,6 +369,7 @@ test("validates all agent execution limits", () => {
   assert.throws(() => normalizeAgentRunnerConfig({ maxSteps: 0 }), /agent.maxSteps/);
   assert.throws(() => normalizeAgentRunnerConfig({ maxDurationMs: 999 }), /maxDurationMs/);
   assert.throws(() => normalizeAgentRunnerConfig({ maxTokens: 999 }), /maxTokens/);
+  assert.throws(() => normalizeAgentRunnerConfig({ maxOutputTokens: 255 }), /maxOutputTokens/);
   assert.throws(() => normalizeAgentRunnerConfig({ maxCommands: -1 }), /maxCommands/);
   assert.throws(() => normalizeAgentRunnerConfig({ commandTimeoutMs: 99 }), /commandTimeoutMs/);
   assert.throws(() => normalizeAgentRunnerConfig({ sandboxPorts: [3000, 3000] }), /duplicates/);

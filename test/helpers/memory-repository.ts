@@ -64,6 +64,7 @@ import type {
   OutboundEventDeliveryClaim,
   Repository,
   RepositoryPage,
+  RepairGenerationAttemptRecord,
   ResolveGenerationTaskRecord,
   RestoreVersionRecord,
   UpdateChatRecord,
@@ -553,6 +554,12 @@ export class MemoryRepository implements Repository {
   ): Promise<CreatedGeneration> {
     const chat = await this.getChat(scope, input.chatId);
     if (!chat) throw new NotFoundError("Chat");
+    if (input.baseVersionId) {
+      const baseVersion = this.versions.get(input.baseVersionId);
+      if (!baseVersion || !inScope(baseVersion, scope) || baseVersion.chatId !== input.chatId) {
+        throw new NotFoundError("Chat");
+      }
+    }
     const now = new Date();
     const generation: GenerationData & ScopedRecord = {
       id: input.id,
@@ -1322,6 +1329,71 @@ export class MemoryRepository implements Repository {
       error,
     });
     this.#append(scope, generation.id, attempt.id, "generation.failed", { error });
+  }
+
+  async repairGenerationAttempt(
+    scope: UserScope,
+    input: RepairGenerationAttemptRecord,
+  ): Promise<GenerationAttemptData | null> {
+    const generation = this.#requireGeneration(scope, input.generationId);
+    const attempt = this.#requireAttempt(scope, input.attemptId);
+    if (
+      generation.status !== "running"
+      || generation.activeAttemptId !== attempt.id
+      || !this.#hasWorkerLease(attempt, input.leaseToken)
+    ) return null;
+
+    const completedAt = new Date();
+    this.attempts.set(attempt.id, {
+      ...attempt,
+      status: "failed",
+      error: input.error,
+      completedAt,
+    });
+    const number = generation.attemptCount + 1;
+    const repair: GenerationAttemptData & ScopedRecord = {
+      id: input.repairAttemptId,
+      generationId: generation.id,
+      number,
+      reason: "retry",
+      status: "queued",
+      modelProvider: generation.modelProvider,
+      modelId: generation.modelId,
+      inputTokens: null,
+      outputTokens: null,
+      totalTokens: null,
+      cost: null,
+      finishReason: null,
+      error: null,
+      createdAt: new Date(),
+      startedAt: null,
+      completedAt: null,
+      workerId: null,
+      heartbeatAt: null,
+      leaseExpiresAt: null,
+      ...scope,
+    };
+    this.attempts.set(repair.id, repair);
+    this.generations.set(generation.id, {
+      ...generation,
+      activeAttemptId: repair.id,
+      attemptCount: number,
+      status: "queued",
+      inputTokens: null,
+      outputTokens: null,
+      totalTokens: null,
+      error: null,
+      completedAt: null,
+    });
+    this.#append(scope, generation.id, attempt.id, "attempt.failed", {
+      number: attempt.number,
+      error: input.error,
+    });
+    this.#append(scope, generation.id, repair.id, "attempt.queued", {
+      number,
+      reason: "retry",
+    });
+    return repair;
   }
 
   async cancelGeneration(scope: UserScope, generationId: string, reason: string): Promise<boolean> {

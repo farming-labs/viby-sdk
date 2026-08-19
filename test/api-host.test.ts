@@ -12,7 +12,10 @@ import { sha256 } from "../src/utils.js";
 import { MemoryRepository } from "./helpers/memory-repository.js";
 import { MemoryEnvironmentVariableStore } from "./helpers/memory-environment-store.js";
 import { MemorySecretStore } from "./helpers/memory-integration-store.js";
-import type { ChatReadSnapshotOptions } from "../src/repository.js";
+import type {
+  ChatReadSnapshotOptions,
+  GenerationReadSnapshot,
+} from "../src/repository.js";
 
 const scope = { tenantId: "api-tenant", userId: "api-user" };
 const usage: LanguageModelUsage = {
@@ -25,6 +28,7 @@ const usage: LanguageModelUsage = {
 
 class SnapshotMemoryRepository extends MemoryRepository {
   snapshotReads = 0;
+  generationSnapshotReads = 0;
 
   async readChatSnapshot<Framework extends FrameworkId>(
     readScope: typeof scope,
@@ -47,6 +51,24 @@ class SnapshotMemoryRepository extends MemoryRepository {
       ),
     ]);
     return chat ? { chat, messages, versions } : null;
+  }
+
+  async readGenerationSnapshot<Framework extends FrameworkId>(
+    readScope: typeof scope,
+    generationId: string,
+  ): Promise<GenerationReadSnapshot<Framework> | null> {
+    this.generationSnapshotReads += 1;
+    const generation = await this.getGeneration(readScope, generationId);
+    if (!generation) return null;
+    const [attempts, tasks, steering, toolCalls, artifacts, version] = await Promise.all([
+      this.listGenerationAttempts(readScope, generationId),
+      this.listGenerationTasks(readScope, generationId),
+      this.listGenerationSteering(readScope, generationId),
+      this.listToolCalls(readScope, generationId),
+      this.listGeneratedArtifacts(readScope, generationId),
+      this.getVersionByGeneration<Framework>(readScope, generationId),
+    ]);
+    return { generation, attempts, tasks, steering, toolCalls, artifacts, version };
   }
 }
 
@@ -149,6 +171,7 @@ test("hosts chat, message, stream, task, preview, and download flows with Web AP
 
     const generation = await requestJson(api, `/generations/${generationId}`);
     assert.equal(object(generation.generation).status, "succeeded");
+    assert.equal(repository.generationSnapshotReads, 1);
     const chat = await requestJson(api, `/chats/${chatId}`);
     assert.equal(repository.snapshotReads, 1);
     const firstVersion = object(array(chat.versions)[0]);

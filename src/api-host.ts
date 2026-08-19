@@ -497,29 +497,19 @@ async function route<Framework extends FrameworkId>(
   }
 
   if (segments[0] === "generations" && segments[1]) {
-    const generation = await user.generations.get(segments[1]);
     if (segments.length === 2 && request.method === "GET") {
-      const [data, attempts, tasks, steering, toolCalls, artifacts] = await Promise.all([
-        generation.data(),
-        generation.attempts(),
-        generation.tasks(),
-        generation.steering(),
-        generation.toolCalls(),
-        generation.artifacts(),
-      ]);
-      const version = data.status === "succeeded"
-        ? await findGenerationVersion(user, generation.chatId, generation.id)
-        : null;
+      const snapshot = await user.generations.snapshot(segments[1]);
       return json({
-        generation: data,
-        attempts,
-        tasks,
-        steering,
-        toolCalls,
-        artifacts,
-        version: version ? versionValue(version) : null,
+        generation: snapshot.generation,
+        attempts: snapshot.attempts,
+        tasks: snapshot.tasks,
+        steering: snapshot.steering,
+        toolCalls: snapshot.toolCalls,
+        artifacts: snapshot.artifacts,
+        version: snapshot.version,
       });
     }
+    const generation = await user.generations.get(segments[1]);
     if (segments[2] === "artifacts" && segments[3] && segments.length === 4) {
       if (request.method !== "GET") return methodNotAllowed("GET");
       return binaryResponse(await generation.getArtifact(segments[3]));
@@ -749,22 +739,6 @@ async function toolSourceRoute<Framework extends FrameworkId>(
     return json({ result: await source.disconnect(request.signal) });
   }
   return notFound();
-}
-
-async function findGenerationVersion<Framework extends FrameworkId>(
-  user: ScopedViby<Framework>,
-  chatId: string,
-  generationId: string,
-): Promise<Version<Framework> | null> {
-  const chat = await user.chats.get(chatId);
-  let after: string | undefined;
-  do {
-    const page = await chat.listVersions({ limit: 100, ...(after ? { after } : {}) });
-    const version = page.items.find((candidate) => candidate.generationId === generationId);
-    if (version) return version;
-    after = page.nextCursor ?? undefined;
-  } while (after);
-  return null;
 }
 
 async function importChat<Framework extends FrameworkId>(

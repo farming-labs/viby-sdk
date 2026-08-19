@@ -385,11 +385,16 @@ test("persists typed ordered message parts with message, generation, and attempt
   const usagePart = assistant.parts[2]!;
   assert.equal(usagePart.type, "usage");
   if (usagePart.type !== "usage") throw new Error("Expected a usage part");
-  assert.deepEqual(usagePart.data, {
+  assert.deepEqual({
+    inputTokens: usagePart.data.inputTokens,
+    outputTokens: usagePart.data.outputTokens,
+    totalTokens: usagePart.data.totalTokens,
+  }, {
     inputTokens: 10,
     outputTokens: 20,
     totalTokens: 30,
   });
+  assert.equal(typeof usagePart.data.durationMs, "number");
   assert.deepEqual(await chat.getMessage(assistant.id), assistant);
   const otherChat = await viby
     .forUser({ tenantId: "tenant-a", userId: "user-a" })
