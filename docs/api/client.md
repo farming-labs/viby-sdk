@@ -116,6 +116,21 @@ The provider instance still owns authentication, requests, streaming, tools, and
 Viby receives ordinary AI SDK `LanguageModel` objects and stores only their provider/model identity
 on durable attempts. Pass `model: "terra"` when creating or retrying a generation to select an alias.
 
+The same helper accepts another provider instance without changing Viby configuration:
+
+```ts
+import { anthropic } from "@ai-sdk/anthropic";
+
+const claudeModels = modelsFrom(anthropic, {
+  default: "claude-sonnet-4-6",
+  opus: "claude-opus-4-6",
+});
+```
+
+Spreading `claudeModels` into `createViby()` makes Sonnet the default and exposes `opus` as a
+request alias. Viby invokes the returned AI SDK model objects internally; it does not call the
+provider instance through a separate private integration.
+
 ## `Viby`
 
 | Member | Returns | Behavior |
