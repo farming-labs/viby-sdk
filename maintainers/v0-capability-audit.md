@@ -1,8 +1,3 @@
----
-title: "v0 API v2 capability audit"
-description: "Map the hosted v0 Platform API v2 surface to Viby's provider-neutral contracts and explicit boundaries."
----
-
 # v0 API v2 capability audit
 
 This document maps the official v0 Platform API v2 beta surface to Viby as reviewed on 2026-08-12. It is a capability audit, not a wire-compatibility promise and not an instruction to copy v0's hosted architecture.

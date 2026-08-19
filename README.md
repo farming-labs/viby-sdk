@@ -1390,7 +1390,7 @@ npm run test:package
 
 Run the [persistent OpenAI example](./examples/basic) for the minimal durable flow, or the [complete reference application](./examples/reference) for chat → SSE → sandbox preview → iteration → source download.
 
-The CI workflow tests supported Node releases, the compiled package and CLI, both examples, API/export compatibility, immutable migrations, historical schema upgrades, the full reference flow, and a durable lifecycle against PostgreSQL. See [RELEASING.md](./RELEASING.md) for versioning commands and the [npm publishing guide](./docs/publishing.md) for trusted-publisher setup.
+The CI workflow tests supported Node releases, the compiled package and CLI, both examples, API/export compatibility, immutable migrations, historical schema upgrades, the full reference flow, and a durable lifecycle against PostgreSQL. See [RELEASING.md](./RELEASING.md) for versioning commands and the [npm publishing guide](./maintainers/publishing.md) for trusted-publisher setup.
 
 ## License
 
