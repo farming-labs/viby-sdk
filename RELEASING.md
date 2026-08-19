@@ -38,4 +38,4 @@ pnpm publish:latest
 # or: pnpm publish:canary
 ```
 
-See [docs/publishing.md](./docs/publishing.md) for npm access, two-factor authentication, and recovery details.
+See [maintainers/publishing.md](./maintainers/publishing.md) for npm access, two-factor authentication, and recovery details.

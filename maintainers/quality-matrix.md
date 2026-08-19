@@ -1,8 +1,3 @@
----
-title: "Quality and evaluation"
-description: "Validate generated projects, previews, source integrity, accessibility, and immutable evaluation evidence."
----
-
 # Quality and evaluation
 
 `npm run test:quality` is the deterministic generated-project gate. It complements unit, PostgreSQL, sandbox, and reference-application tests by exercising complete output folders instead of isolated records.

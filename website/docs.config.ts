@@ -84,19 +84,10 @@ export default {
           { label: "Tool sources", slug: "api/tool-sources" },
           { label: "Integrations", slug: "api/integrations" },
           { label: "Errors", slug: "api/errors" },
+          { label: "Runtime boundaries", slug: "runtime" },
           { label: "Package entry points", slug: "api/entry-points" },
           { label: "Complete v1 contract", slug: "api/v1" },
           { label: "Web API host", slug: "api-host" },
-        ],
-      },
-      {
-        label: "Guides",
-        children: [
-          { label: "Runtime boundaries", slug: "runtime" },
-          { label: "Quality and evaluation", slug: "quality-matrix" },
-          { label: "Live provider testing", slug: "live-provider-testing" },
-          { label: "Publishing", slug: "publishing" },
-          { label: "v0 capability reference", slug: "api/v0-core" },
         ],
       },
       {

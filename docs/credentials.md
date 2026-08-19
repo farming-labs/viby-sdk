@@ -339,8 +339,8 @@ Use a disposable provider account, repository, and project for the first end-to-
 6. Create a preview deployment, refresh its status, and reload deployment history.
 7. Delete the disposable provider resources and disconnect the Viby connection.
 
-The environment-gated [live provider verification](/docs/live-provider-testing) suites automate
-these workflows and clean up resources. They never run during ordinary package CI.
+Repository maintainers can also run the environment-gated live-provider suite against disposable
+resources. It is intentionally separate from ordinary package CI and the public integration flow.
 
 Before shipping, confirm that:
 
