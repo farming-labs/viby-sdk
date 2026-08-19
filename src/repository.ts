@@ -133,6 +133,21 @@ export interface ChatReadSnapshot<Framework extends FrameworkId = FrameworkId> {
   readonly versions: RepositoryPage<VersionData<Framework>>;
 }
 
+/**
+ * Aggregate state for a generation detail view. Persistence adapters may
+ * implement this as one provider-native read while custom adapters retain the
+ * SDK's parallel fallback.
+ */
+export interface GenerationReadSnapshot<Framework extends FrameworkId = FrameworkId> {
+  readonly generation: GenerationData;
+  readonly attempts: readonly GenerationAttemptData[];
+  readonly tasks: readonly GenerationTaskData[];
+  readonly steering: readonly GenerationSteeringData[];
+  readonly toolCalls: readonly ToolCallData[];
+  readonly artifacts: readonly GeneratedArtifactData[];
+  readonly version: VersionData<Framework> | null;
+}
+
 export interface ChatPageCursor {
   readonly updatedAt: Date;
   readonly id: string;
@@ -251,6 +266,14 @@ export interface CreateAttemptRecord {
   readonly id: string;
   readonly generationId: string;
   readonly reason: Exclude<GenerationAttemptReason, "initial" | "task_resolution">;
+}
+
+export interface RepairGenerationAttemptRecord {
+  readonly generationId: string;
+  readonly attemptId: string;
+  readonly leaseToken: string;
+  readonly error: string;
+  readonly repairAttemptId: string;
 }
 
 export interface CompleteGenerationRecord<Framework extends FrameworkId = FrameworkId> {
@@ -509,8 +532,21 @@ extends DeploymentHistoryStore, PreviewSessionStore, ToolSourceRegistryStore, To
     leaseToken: string,
     error: string,
   ): Promise<void>;
+  /** Atomically fail one attempt and queue its diagnostic-aware repair. */
+  repairGenerationAttempt(
+    scope: UserScope,
+    input: RepairGenerationAttemptRecord,
+  ): Promise<GenerationAttemptData | null>;
   cancelGeneration(scope: UserScope, generationId: string, reason: string): Promise<boolean>;
   getGeneration(scope: UserScope, id: string): Promise<GenerationData | null>;
+  /**
+   * Optional aggregate read used by generation detail views. Adapters that
+   * omit it retain full compatibility through the SDK's parallel fallback.
+   */
+  readGenerationSnapshot?<Framework extends FrameworkId>(
+    scope: UserScope,
+    generationId: string,
+  ): Promise<GenerationReadSnapshot<Framework> | null>;
   listGenerationAttempts(
     scope: UserScope,
     generationId: string,
@@ -560,6 +596,12 @@ extends DeploymentHistoryStore, PreviewSessionStore, ToolSourceRegistryStore, To
   ): Promise<VersionData<Framework> | null>;
   getVersion<Framework extends FrameworkId>(
     scope: UserScope,
+    id: string,
+  ): Promise<VersionData<Framework> | null>;
+  /** Optional scoped lookup that also verifies the owning chat is active. */
+  getVersionForChat?<Framework extends FrameworkId>(
+    scope: UserScope,
+    chatId: string,
     id: string,
   ): Promise<VersionData<Framework> | null>;
   getLatestVersion<Framework extends FrameworkId>(

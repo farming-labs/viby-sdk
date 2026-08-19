@@ -32,8 +32,15 @@ export interface NormalizedGenerationQualityCommand {
 export interface NormalizedGenerationQualityConfig {
   readonly prepare: readonly NormalizedGenerationQualityCommand[];
   readonly checks: readonly NormalizedGenerationQualityCommand[];
+  readonly captureSourceChanges: boolean;
+  readonly repairAttempts: number;
   readonly timeoutMs: number;
   readonly formatFailure?: GenerationQualityConfig["formatFailure"];
+}
+
+export interface GenerationQualityResult {
+  /** Candidate files after any explicitly enabled sandbox source capture. */
+  readonly files: readonly SandboxFile[];
 }
 
 export type GenerationQualityEvent =
@@ -69,6 +76,18 @@ export function normalizeGenerationQuality(
   if (value.prepare !== undefined && !Array.isArray(value.prepare)) {
     throw new ConfigurationError("generation.quality.prepare must be an array.");
   }
+  if (
+    value.captureSourceChanges !== undefined
+    && typeof value.captureSourceChanges !== "boolean"
+  ) {
+    throw new ConfigurationError("generation.quality.captureSourceChanges must be a boolean.");
+  }
+  const repairAttempts = value.repairAttempts ?? 0;
+  if (!Number.isInteger(repairAttempts) || repairAttempts < 0 || repairAttempts > 3) {
+    throw new ConfigurationError(
+      "generation.quality.repairAttempts must be an integer between 0 and 3.",
+    );
+  }
   const prepare = (value.prepare ?? []).map((command) => normalizeCommand(command, "prepare"));
   const checks = value.checks.map((command) => normalizeCommand(command, "check"));
   if (prepare.length + checks.length > MAX_COMMANDS) {
@@ -84,6 +103,8 @@ export function normalizeGenerationQuality(
   return Object.freeze({
     prepare: Object.freeze(prepare),
     checks: Object.freeze(checks),
+    captureSourceChanges: value.captureSourceChanges ?? false,
+    repairAttempts,
     timeoutMs: Math.min(
       3_600_000,
       [...prepare, ...checks].reduce((total, command) => total + command.timeoutMs, 0),
@@ -102,7 +123,7 @@ export async function verifyGenerationQuality<Framework extends FrameworkId>(inp
   readonly files: readonly SandboxFile[];
   readonly signal: AbortSignal;
   readonly onEvent: (event: GenerationQualityEvent) => void | Promise<void>;
-}): Promise<void> {
+}): Promise<GenerationQualityResult> {
   const capabilities = sandboxCapabilities(input.adapter.capabilities);
   if (!capabilities.files || !capabilities.commands) {
     throw new ConfigurationError(
@@ -204,6 +225,26 @@ export async function verifyGenerationQuality<Framework extends FrameworkId>(inp
           throw error;
         }
       }
+    }
+    if (!input.config.captureSourceChanges) {
+      return { files: input.files.map((file) => ({ ...file })) };
+    }
+    try {
+      const decoder = new TextDecoder("utf-8", { fatal: true });
+      return {
+        files: await Promise.all(input.files.map(async (file) => (
+          typeof file.content === "string"
+            ? {
+                path: file.path,
+                content: decoder.decode(await session!.readFile(file.path, {
+                  signal: input.signal,
+                })),
+              }
+            : { ...file }
+        ))),
+      };
+    } catch (error) {
+      throw new GenerationQualityError("capture-source", null, { cause: error });
     }
   } finally {
     await session?.stop().catch(() => undefined);

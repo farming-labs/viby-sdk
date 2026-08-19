@@ -82,6 +82,7 @@ import type {
   ConsumeGenerationSteeringRecord,
   CreateGeneratedArtifactRecord,
   CreateProjectArtifactRecord,
+  RepairGenerationAttemptRecord,
   CreateVisualArtifactRecord,
   CreateToolCallRecord,
   DeleteChatRecord,
@@ -92,6 +93,7 @@ import type {
   ForkVersionRecord,
   FailToolCallRecord,
   FailOutboundEventDeliveryRecord,
+  GenerationReadSnapshot,
   GenerationWorkerLease,
   OutboundEventDeliveryClaim,
   ImportedChat,
@@ -353,6 +355,16 @@ interface ChatSnapshotRow {
   readonly versions: VersionRow[];
   readonly parts: MessagePartRow[];
   readonly attachments: AttachmentRow[];
+}
+
+interface GenerationSnapshotRow {
+  readonly generation: GenerationRow;
+  readonly attempts: GenerationAttemptRow[];
+  readonly tasks: GenerationTaskRow[];
+  readonly steering: GenerationSteeringRow[];
+  readonly tool_calls: ToolCallRow[];
+  readonly artifacts: GeneratedArtifactRow[];
+  readonly version: VersionRow | null;
 }
 
 interface StoredAttachmentInput {
@@ -641,6 +653,7 @@ export class PostgresRepository implements Repository {
   readonly #sql: ReturnType<typeof postgres>;
   readonly #artifactStore: ArtifactStore | undefined;
   #ready = false;
+  #readyPromise: Promise<void> | undefined;
 
   constructor(databaseUrl: string, artifactStore?: ArtifactStore) {
     if (artifactStore) normalizeArtifactStoreId(artifactStore.id);
@@ -655,6 +668,16 @@ export class PostgresRepository implements Repository {
 
   async assertReady(): Promise<void> {
     if (this.#ready) return;
+    this.#readyPromise ??= this.#checkReady();
+    try {
+      await this.#readyPromise;
+    } catch (error) {
+      this.#readyPromise = undefined;
+      throw error;
+    }
+  }
+
+  async #checkReady(): Promise<void> {
     const [row] = await this.#sql<{ ready: boolean }[]>`
       SELECT
         to_regclass('viby.chats') IS NOT NULL
@@ -1272,6 +1295,16 @@ export class PostgresRepository implements Repository {
         FROM viby.chats
         WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId} AND id = ${input.chatId}
           AND deleted_at IS NULL
+          AND (
+            ${input.baseVersionId}::uuid IS NULL
+            OR EXISTS (
+              SELECT 1 FROM viby.versions AS base
+              WHERE base.tenant_id = ${scope.tenantId}
+                AND base.user_id = ${scope.userId}
+                AND base.chat_id = ${input.chatId}
+                AND base.id = ${input.baseVersionId}::uuid
+            )
+          )
         RETURNING *
       `;
       if (!generation) throw new NotFoundError("Chat");
@@ -2364,6 +2397,76 @@ export class PostgresRepository implements Repository {
     });
   }
 
+  async repairGenerationAttempt(
+    scope: UserScope,
+    input: RepairGenerationAttemptRecord,
+  ): Promise<GenerationAttemptData | null> {
+    await this.assertReady();
+    const message = input.error.slice(0, 10_000);
+    const row = await this.#sql.begin(async (sql) => {
+      const [generation] = await sql<GenerationRow[]>`
+        SELECT * FROM viby.generations
+        WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+          AND id = ${input.generationId}
+        FOR UPDATE
+      `;
+      if (!generation) throw new NotFoundError("Generation");
+      if (
+        generation.active_attempt_id !== input.attemptId
+        || generation.status !== "running"
+      ) return null;
+
+      const [failed] = await sql<GenerationAttemptRow[]>`
+        UPDATE viby.generation_attempts SET
+          status = 'failed', error = ${message}, completed_at = now()
+        WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+          AND generation_id = ${input.generationId} AND id = ${input.attemptId}
+          AND status = 'running' AND lease_token = ${input.leaseToken}
+          AND lease_expires_at > now()
+        RETURNING *
+      `;
+      if (!failed) return null;
+
+      const number = generation.attempt_count + 1;
+      const [repair] = await sql<GenerationAttemptRow[]>`
+        INSERT INTO viby.generation_attempts (
+          id, tenant_id, user_id, generation_id, number, reason, status,
+          model_provider, model_id
+        ) VALUES (
+          ${input.repairAttemptId}, ${scope.tenantId}, ${scope.userId},
+          ${input.generationId}, ${number}, 'retry', 'queued',
+          ${generation.model_provider}, ${generation.model_id}
+        )
+        RETURNING *
+      `;
+      if (!repair) throw new Error("Postgres did not return the repair attempt.");
+
+      await sql`
+        UPDATE viby.generations SET
+          status = 'queued', active_attempt_id = ${repair.id}, attempt_count = ${number},
+          input_tokens = NULL, output_tokens = NULL, total_tokens = NULL,
+          finish_reason = NULL, error = NULL, completed_at = NULL
+        WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+          AND id = ${input.generationId}
+      `;
+      await sql`
+        INSERT INTO viby.generation_events (
+          tenant_id, user_id, generation_id, attempt_id, type, data
+        ) VALUES
+          (
+            ${scope.tenantId}, ${scope.userId}, ${input.generationId}, ${failed.id},
+            'attempt.failed', ${sql.json({ number: failed.number, error: message })}
+          ),
+          (
+            ${scope.tenantId}, ${scope.userId}, ${input.generationId}, ${repair.id},
+            'attempt.queued', ${sql.json({ number, reason: "retry" })}
+          )
+      `;
+      return repair;
+    });
+    return row ? mapAttempt(row) : null;
+  }
+
   async cancelGeneration(scope: UserScope, generationId: string, reason: string): Promise<boolean> {
     await this.assertReady();
     return this.#sql.begin(async (sql) => {
@@ -2420,6 +2523,89 @@ export class PostgresRepository implements Repository {
       LIMIT 1
     `;
     return row ? mapGeneration(row) : null;
+  }
+
+  async readGenerationSnapshot<Framework extends FrameworkId>(
+    scope: UserScope,
+    generationId: string,
+  ): Promise<GenerationReadSnapshot<Framework> | null> {
+    await this.assertReady();
+    const [row] = await this.#sql<GenerationSnapshotRow[]>`
+      WITH selected_generation AS (
+        SELECT generation.*
+        FROM viby.generations AS generation
+        JOIN viby.chats AS chat
+          ON chat.id = generation.chat_id
+          AND chat.tenant_id = generation.tenant_id
+          AND chat.user_id = generation.user_id
+        WHERE generation.tenant_id = ${scope.tenantId}
+          AND generation.user_id = ${scope.userId}
+          AND generation.id = ${generationId}
+          AND chat.deleted_at IS NULL
+        LIMIT 1
+      )
+      SELECT
+        to_jsonb(generation) AS generation,
+        COALESCE((
+          SELECT jsonb_agg(to_jsonb(attempt) ORDER BY attempt.number)
+          FROM viby.generation_attempts AS attempt
+          WHERE attempt.tenant_id = ${scope.tenantId}
+            AND attempt.user_id = ${scope.userId}
+            AND attempt.generation_id = generation.id
+        ), '[]'::jsonb) AS attempts,
+        COALESCE((
+          SELECT jsonb_agg(to_jsonb(task) ORDER BY task.created_at, task.id)
+          FROM viby.generation_tasks AS task
+          WHERE task.tenant_id = ${scope.tenantId}
+            AND task.user_id = ${scope.userId}
+            AND task.generation_id = generation.id
+        ), '[]'::jsonb) AS tasks,
+        COALESCE((
+          SELECT jsonb_agg(to_jsonb(item) ORDER BY item.created_at, item.id)
+          FROM viby.generation_steering AS item
+          WHERE item.tenant_id = ${scope.tenantId}
+            AND item.user_id = ${scope.userId}
+            AND item.generation_id = generation.id
+        ), '[]'::jsonb) AS steering,
+        COALESCE((
+          SELECT jsonb_agg(to_jsonb(call) ORDER BY call.created_at, call.id)
+          FROM viby.tool_calls AS call
+          WHERE call.tenant_id = ${scope.tenantId}
+            AND call.user_id = ${scope.userId}
+            AND call.generation_id = generation.id
+        ), '[]'::jsonb) AS tool_calls,
+        COALESCE((
+          SELECT jsonb_agg(to_jsonb(artifact)
+            ORDER BY artifact.created_at, artifact.attempt_id, artifact.position, artifact.id)
+          FROM viby.generated_artifacts AS artifact
+          WHERE artifact.tenant_id = ${scope.tenantId}
+            AND artifact.user_id = ${scope.userId}
+            AND artifact.generation_id = generation.id
+        ), '[]'::jsonb) AS artifacts,
+        (
+          SELECT to_jsonb(version)
+          FROM viby.versions AS version
+          WHERE version.tenant_id = ${scope.tenantId}
+            AND version.user_id = ${scope.userId}
+            AND version.generation_id = generation.id
+          LIMIT 1
+        ) AS version
+      FROM selected_generation AS generation
+    `;
+    if (!row) return null;
+    return {
+      generation: mapGeneration(hydrateGenerationRow(row.generation)),
+      attempts: row.attempts.map((attempt) => mapAttempt(hydrateAttemptRow(attempt))),
+      tasks: row.tasks.map((task) => mapTask(hydrateTaskRow(task))),
+      steering: row.steering.map((item) => mapGenerationSteering(hydrateSteeringRow(item))),
+      toolCalls: row.tool_calls.map((call) => mapToolCall(hydrateToolCallRow(call))),
+      artifacts: row.artifacts.map((artifact) => mapGeneratedArtifact(
+        withCreatedAt(artifact),
+      )),
+      version: row.version
+        ? mapVersion<Framework>(withCreatedAt(row.version))
+        : null,
+    };
   }
 
   async listGenerationAttempts(
@@ -2653,6 +2839,29 @@ export class PostgresRepository implements Repository {
     const [row] = await this.#sql<VersionRow[]>`
       SELECT * FROM viby.versions
       WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId} AND id = ${id}
+      LIMIT 1
+    `;
+    return row ? mapVersion<Framework>(row) : null;
+  }
+
+  async getVersionForChat<Framework extends FrameworkId>(
+    scope: UserScope,
+    chatId: string,
+    id: string,
+  ): Promise<VersionData<Framework> | null> {
+    await this.assertReady();
+    const [row] = await this.#sql<VersionRow[]>`
+      SELECT version.*
+      FROM viby.versions AS version
+      JOIN viby.chats AS chat
+        ON chat.id = version.chat_id
+        AND chat.tenant_id = version.tenant_id
+        AND chat.user_id = version.user_id
+      WHERE version.tenant_id = ${scope.tenantId}
+        AND version.user_id = ${scope.userId}
+        AND version.chat_id = ${chatId}
+        AND version.id = ${id}
+        AND chat.deleted_at IS NULL
       LIMIT 1
     `;
     return row ? mapVersion<Framework>(row) : null;
@@ -4400,6 +4609,50 @@ function repositoryNullableDate(value: unknown): Date | null {
 
 function defaultGenerationConfiguration(): GenerationConfigurationData {
   return { model: "default", instructions: null, skills: {}, metadata: {} };
+}
+
+function hydrateGenerationRow(row: GenerationRow): GenerationRow {
+  return {
+    ...row,
+    created_at: repositoryDate(row.created_at),
+    started_at: repositoryNullableDate(row.started_at),
+    completed_at: repositoryNullableDate(row.completed_at),
+  };
+}
+
+function hydrateAttemptRow(row: GenerationAttemptRow): GenerationAttemptRow {
+  return {
+    ...row,
+    created_at: repositoryDate(row.created_at),
+    started_at: repositoryNullableDate(row.started_at),
+    completed_at: repositoryNullableDate(row.completed_at),
+    heartbeat_at: repositoryNullableDate(row.heartbeat_at),
+    lease_expires_at: repositoryNullableDate(row.lease_expires_at),
+  };
+}
+
+function hydrateTaskRow(row: GenerationTaskRow): GenerationTaskRow {
+  return {
+    ...row,
+    created_at: repositoryDate(row.created_at),
+    resolved_at: repositoryNullableDate(row.resolved_at),
+  };
+}
+
+function hydrateSteeringRow(row: GenerationSteeringRow): GenerationSteeringRow {
+  return {
+    ...row,
+    created_at: repositoryDate(row.created_at),
+    applied_at: repositoryNullableDate(row.applied_at),
+  };
+}
+
+function hydrateToolCallRow(row: ToolCallRow): ToolCallRow {
+  return {
+    ...row,
+    created_at: repositoryDate(row.created_at),
+    completed_at: repositoryNullableDate(row.completed_at),
+  };
 }
 
 function mapGeneration(row: GenerationRow): GenerationData {

@@ -167,6 +167,8 @@ export interface AgentRunnerConfig {
   readonly maxSteps?: number;
   readonly maxDurationMs?: number;
   readonly maxTokens?: number;
+  /** Maximum tokens emitted by one model step. Defaults to 16,384 or maxTokens when lower. */
+  readonly maxOutputTokens?: number;
   readonly maxCommands?: number;
   readonly commandTimeoutMs?: number;
   readonly maxCommandOutputBytes?: number;
@@ -199,6 +201,18 @@ export interface GenerationQualityConfig {
   readonly prepare?: readonly GenerationQualityCommand[];
   /** Required checks such as typecheck, test, and build. */
   readonly checks: readonly GenerationQualityCommand[];
+  /**
+   * Read candidate text files back from the sandbox after successful commands
+   * and commit those exact contents. This supports provider-neutral formatters
+   * and codemods without discovering command-created files implicitly.
+   */
+  readonly captureSourceChanges?: boolean;
+  /**
+   * Automatically create a diagnostic-aware retry after a quality command
+   * fails. Defaults to 0; keep this small because every repair calls the
+   * configured generation engine again.
+   */
+  readonly repairAttempts?: number;
   /**
    * Converts a failed command result into safe, user-facing diagnostics.
    * Raw output is never persisted unless the host explicitly returns it here.
@@ -565,6 +579,8 @@ export interface MessagePartDataMap {
     readonly inputTokens: number | null;
     readonly outputTokens: number | null;
     readonly totalTokens: number | null;
+    /** Wall-clock duration of the exact generation attempt that produced this usage. */
+    readonly durationMs?: number;
     readonly cost?: GenerationCostData;
   };
 }

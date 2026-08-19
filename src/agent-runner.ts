@@ -51,6 +51,7 @@ export interface NormalizedAgentRunnerConfig {
   readonly maxSteps: number;
   readonly maxDurationMs: number;
   readonly maxTokens: number;
+  readonly maxOutputTokens: number;
   readonly maxCommands: number;
   readonly commandTimeoutMs: number;
   readonly maxCommandOutputBytes: number;
@@ -80,6 +81,13 @@ export function normalizeAgentRunnerConfig(
   if (config !== undefined && (!config || typeof config !== "object" || Array.isArray(config))) {
     throw new ConfigurationError("agent must be an object.");
   }
+  const maxTokens = integerLimit(
+    config?.maxTokens,
+    DEFAULT_MAX_TOKENS,
+    1_000,
+    10_000_000,
+    "agent.maxTokens",
+  );
   return Object.freeze({
     maxSteps: integerLimit(config?.maxSteps, DEFAULT_MAX_STEPS, 1, 100, "agent.maxSteps"),
     maxDurationMs: integerLimit(
@@ -89,7 +97,14 @@ export function normalizeAgentRunnerConfig(
       3_600_000,
       "agent.maxDurationMs",
     ),
-    maxTokens: integerLimit(config?.maxTokens, DEFAULT_MAX_TOKENS, 1_000, 10_000_000, "agent.maxTokens"),
+    maxTokens,
+    maxOutputTokens: integerLimit(
+      config?.maxOutputTokens,
+      Math.min(maxTokens, 16_384),
+      256,
+      1_000_000,
+      "agent.maxOutputTokens",
+    ),
     maxCommands: integerLimit(config?.maxCommands, DEFAULT_MAX_COMMANDS, 0, 1_000, "agent.maxCommands"),
     commandTimeoutMs: integerLimit(
       config?.commandTimeoutMs,
@@ -151,7 +166,7 @@ implements ProjectGenerator<Framework> {
         description: "The completed workspace result or a typed blocking task.",
         schema: agentResponseSchema,
       }),
-      maxOutputTokens: Math.min(this.#config.maxTokens, 16_384),
+      maxOutputTokens: Math.min(this.#config.maxTokens, this.#config.maxOutputTokens),
       prepareStep: async ({ steps, messages }) => {
         const steering = await options.steering?.consume() ?? [];
         const exhausted = totalStepTokens(steps) >= this.#config.maxTokens;
@@ -761,6 +776,7 @@ function createAgentInstructions<Framework extends FrameworkId>(input: Generator
     "You are Viby, an expert product engineer operating a typed mutable source workspace.",
     `Build only a ${input.framework} project and follow its native conventions.`,
     "Inspect existing files before changing them. Use workspace tools for every source read, search, write, move, and delete.",
+    "Batch independent tool calls into the same step whenever possible, especially file reads. Do not inspect files serially when they can be read together.",
     "For a new project, create the entire runnable source tree with workspace_write_file. For an existing project, make the smallest complete set of workspace edits.",
     "Use sandbox tools only when available and useful for verification. Tool absence means the capability is unavailable; never invent it.",
     "Never put secrets, credentials, dependency folders, build output, or lockfiles in the workspace.",
@@ -776,6 +792,11 @@ function createAgentPrompt<Framework extends FrameworkId>(input: GeneratorInput<
   const history = input.messages.slice(-20).map((message) => (
     `${message.role.toUpperCase()}: ${message.content}`
   )).join("\n\n");
+  const workspaceEntries = input.previousEntries ?? input.previousFiles;
+  const workspaceInventory = workspaceEntries
+    .slice(0, 500)
+    .map((entry) => `- ${entry.path}`)
+    .join("\n");
   const tasks = input.tasks.map((task) => JSON.stringify({
     id: task.id,
     kind: task.kind,
@@ -787,8 +808,13 @@ function createAgentPrompt<Framework extends FrameworkId>(input: GeneratorInput<
   })).join("\n");
   return [
     history ? `Conversation so far:\n${history}` : "This is the first generation in the chat.",
-    (input.previousEntries ?? input.previousFiles).length > 0
-      ? `The workspace contains ${(input.previousEntries ?? input.previousFiles).length} entries. Inspect them with tools.`
+    workspaceEntries.length > 0
+      ? [
+          `The workspace contains ${workspaceEntries.length} entries:`,
+          workspaceInventory,
+          workspaceEntries.length > 500 ? "- [additional entries omitted]" : "",
+          "Read only files relevant to the current request. Do not inspect package or framework configuration unless the request changes dependencies, scripts, build behavior, or runtime behavior.",
+        ].filter(Boolean).join("\n")
       : "The workspace is empty. Create a complete project with tools.",
     tasks ? `Generation task history:\n${tasks}` : "There is no generation task history.",
     input.attachments?.length

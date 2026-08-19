@@ -328,10 +328,12 @@ test("cancels a running model call and durably records cancellation", async () =
 
 test("retries a failed generation as a new immutable attempt", async () => {
   let calls = 0;
+  let retryInstructions: string | null | undefined;
   const generator: ProjectGenerator<"farm"> = {
-    async generate() {
+    async generate(input) {
       calls += 1;
       if (calls === 1) throw new Error("temporary provider failure");
+      retryInstructions = input.instructions;
       return projectOutput(calls);
     },
   };
@@ -349,6 +351,7 @@ test("retries a failed generation as a new immutable attempt", async () => {
     (await generation.attempts()).map((attempt) => [attempt.number, attempt.reason, attempt.status]),
     [[1, "initial", "failed"], [2, "retry", "succeeded"]],
   );
+  assert.match(retryInstructions ?? "", /previous attempt failed with: temporary provider failure/i);
   await viby.close();
 });
 
