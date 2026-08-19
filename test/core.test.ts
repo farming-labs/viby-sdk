@@ -5,6 +5,7 @@ import {
   defineGenerationEngine,
   defineSkillResolver,
   generationEventCursor,
+  modelsFrom,
   normalizeArtifactKey,
   skillFrom,
   skillInline,
@@ -26,4 +27,10 @@ test("exposes Web-standard contracts and helpers through the portable core", () 
     identity: { provider: "custom", model: "agent" },
     async generate() { throw new Error("unused"); },
   }).identity.provider, "custom");
+  const portableModel = { provider: "fixture", modelId: "portable-model" } as never;
+  assert.equal(modelsFrom({
+    languageModel() {
+      return portableModel;
+    },
+  }, { default: "portable-model" }).model, portableModel);
 });

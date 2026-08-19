@@ -90,6 +90,32 @@ const viby = createViby({ framework: "farmjs", engine });
 Concrete provider and model identity are stored on each attempt. Model or engine objects and their
 credentials are never persisted.
 
+### Multiple models from one provider
+
+Use `modelsFrom()` when one AI SDK provider instance should expose several models. `default` becomes
+the top-level model and the remaining keys become stable aliases accepted by generation requests:
+
+```ts
+import { createViby, modelsFrom } from "@viby/sdk";
+import { createOpenAI } from "@ai-sdk/openai";
+
+const openai = createOpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+const viby = createViby({
+  framework: "farmjs",
+  ...modelsFrom(openai, {
+    default: "gpt-5.6-sol",
+    terra: "gpt-5.6-terra",
+    luna: "gpt-5.6-luna",
+    fast: "gpt-5.6-sol-fast",
+  }),
+});
+```
+
+The provider instance still owns authentication, requests, streaming, tools, and usage reporting.
+Viby receives ordinary AI SDK `LanguageModel` objects and stores only their provider/model identity
+on durable attempts. Pass `model: "terra"` when creating or retrying a generation to select an alias.
+
 ## `Viby`
 
 | Member | Returns | Behavior |
