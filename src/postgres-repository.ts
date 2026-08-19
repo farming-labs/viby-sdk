@@ -967,6 +967,7 @@ export class PostgresRepository implements Repository {
     scope: UserScope,
     id: string,
   ): Promise<ChatData<Framework> | null> {
+    if (!isUuid(id)) return null;
     await this.assertReady();
     const [row] = await this.#sql<ChatRow[]>`
       SELECT * FROM viby.chats
@@ -981,6 +982,7 @@ export class PostgresRepository implements Repository {
     scope: UserScope,
     options: ChatReadSnapshotOptions,
   ): Promise<ChatReadSnapshot<Framework> | null> {
+    if (!isUuid(options.chatId)) return null;
     await this.assertReady();
     const messageAfterAt = options.messages.after?.createdAt.toISOString() ?? null;
     const messageAfterId = options.messages.after?.id ?? null;
@@ -5405,4 +5407,8 @@ function mapToolSourceConnection(row: ToolSourceConnectionRow): StoredToolSource
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+}
+
+function isUuid(value: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
 }

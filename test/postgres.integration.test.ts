@@ -72,6 +72,15 @@ test("reads an aggregate chat snapshot with durable cursors in Postgres", {
     userId: `snapshot-${randomUUID()}`,
   };
   try {
+    assert.equal(await repository.getChat(scope, "legacy-short-id"), null);
+    assert.equal(
+      await repository.readChatSnapshot(scope, {
+        chatId: "legacy-short-id",
+        messages: { limit: 10, after: null },
+        versions: { limit: 10, after: null },
+      }),
+      null,
+    );
     const user = viby.forUser(scope);
     const chat = await user.chats.import({
       title: "Aggregate snapshot",
