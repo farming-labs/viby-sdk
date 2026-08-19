@@ -40,6 +40,12 @@ export {
   isBuiltInFramework,
 } from "./frameworks.js";
 export { frameworkSkill } from "./framework-skills.js";
+export { modelsFrom } from "./model-catalog.js";
+export type {
+  LanguageModelProvider,
+  ModelCatalog,
+  ModelsFromResult,
+} from "./model-catalog.js";
 export { defineDatabaseAdapter } from "./storage.js";
 export {
   EnvironmentManager,
