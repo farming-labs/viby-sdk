@@ -21,6 +21,8 @@ filesystem, process, PostgreSQL, Docker, browser-driver, or provider SDK depende
 
 The portable core uses Web `Request`, `Response`, `Headers`, `ReadableStream`, `AbortSignal`,
 `Uint8Array`, text encoding, structured cloning, and Web Crypto-compatible shapes.
+It also includes pure product helpers such as `titleFromPrompt()` that do not require a model or
+runtime-specific APIs.
 
 ## Storage and persistence
 

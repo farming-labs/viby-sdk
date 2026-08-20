@@ -41,6 +41,7 @@ export {
 } from "./frameworks.js";
 export { frameworkSkill } from "./framework-skills.js";
 export { modelsFrom } from "./model-catalog.js";
+export { titleFromPrompt } from "./chat-title.js";
 export type {
   LanguageModelProvider,
   ModelCatalog,

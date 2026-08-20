@@ -34,6 +34,7 @@ const core = await import(pathToFileURL(entry).href);
 assert.equal(typeof core.generationEventStreamResponse, "function");
 assert.equal(typeof core.defineSkillResolver, "function");
 assert.equal(typeof core.createVibyWebClient, "function");
+assert.equal(core.titleFromPrompt("Build a polished analytics dashboard with charts"), "Analytics dashboard");
 
 const source = {
   async *stream() {

@@ -7,6 +7,7 @@ const result = await new Promise<{
   cursor: string;
   hasToolCalls: boolean;
   skillSource: string;
+  title: string;
 }>((resolve, reject) => {
   const timeout = setTimeout(() => reject(new Error("Portable core Worker timed out.")), 5_000);
   worker.onmessage = (event) => {
@@ -20,7 +21,12 @@ const result = await new Promise<{
 });
 
 worker.terminate();
-if (result.cursor !== "21" || !result.hasToolCalls || result.skillSource !== "inline") {
+if (
+  result.cursor !== "21" ||
+  !result.hasToolCalls ||
+  result.skillSource !== "inline" ||
+  result.title !== "Analytics dashboard"
+) {
   throw new Error(`Unexpected portable Worker result: ${JSON.stringify(result)}`);
 }
 console.log("Verified the published portable core inside a Bun Worker.");
