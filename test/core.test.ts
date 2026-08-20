@@ -9,6 +9,7 @@ import {
   normalizeArtifactKey,
   skillFrom,
   skillInline,
+  titleFromPrompt,
 } from "../src/core.js";
 
 test("exposes Web-standard contracts and helpers through the portable core", () => {
@@ -33,4 +34,5 @@ test("exposes Web-standard contracts and helpers through the portable core", () 
       return portableModel;
     },
   }, { default: "portable-model" }).model, portableModel);
+  assert.equal(titleFromPrompt("Build a polished analytics dashboard with charts"), "Analytics dashboard");
 });

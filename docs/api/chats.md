@@ -40,6 +40,30 @@ const page = await user.chats.list({
 Metadata values are JSON. Filters match the requested nested structure and never bypass tenant/user
 scope. Cursor strings are opaque; do not parse or synthesize them.
 
+### Prompt-derived titles
+
+Use the portable `titleFromPrompt()` helper when a product should show a concise sidebar title as
+soon as the first prompt is submitted. It is deterministic and does not contact a model, so it adds
+no provider cost or latency to chat creation:
+
+```ts
+import { titleFromPrompt } from "@viby/sdk/core";
+
+const prompt = "Build a polished SaaS analytics dashboard with revenue charts";
+const chat = await user.chats.create({
+  title: titleFromPrompt(prompt),
+  metadata: { titleSource: "prompt" },
+});
+
+await chat.start({ prompt });
+```
+
+The default result contains at most seven words and 48 characters. The helper removes common request
+language and implementation detail clauses, preserves meaningful casing such as `SaaS` or `AI`, and
+returns `New project` when no usable prompt text remains. Automatic titles remain application-owned:
+products can later call `chat.update({ title })` after a user rename or an optional model-assisted
+refinement.
+
 `snapshot()` uses one aggregate PostgreSQL query when available. Custom persistence adapters can
 provide `readChatSnapshot`; adapters without it use the portable fallback with the same ownership
 checks and cursor semantics.

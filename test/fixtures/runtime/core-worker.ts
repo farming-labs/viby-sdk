@@ -2,6 +2,7 @@ import {
   MESSAGE_PART_TYPES,
   generationEventCursor,
   skillInline,
+  titleFromPrompt,
 } from "@viby/sdk/core";
 
 postMessage({
@@ -11,4 +12,5 @@ postMessage({
     name: "worker-rules",
     files: [{ path: "SKILL.md", content: "# Worker rules" }],
   }).source,
+  title: titleFromPrompt("Build a polished analytics dashboard with charts"),
 });

@@ -17,6 +17,7 @@ export * from "./http.js";
 export * from "./skill-resolver.js";
 export * from "./frameworks.js";
 export * from "./model-catalog.js";
+export * from "./chat-title.js";
 export * from "./source-import.js";
 export * from "./storage.js";
 export * from "./telemetry.js";
