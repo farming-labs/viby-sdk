@@ -673,6 +673,18 @@ const viby = createViby({
     path: "/",
     environment: "preview",
   },
+  generation: {
+    // Start the scaffold now; keep this sandbox through generation and validation.
+    workspace: { preview: "eager" },
+    quality: {
+      prepare: [{ id: "install", command: "pnpm", args: ["install", "--prefer-offline"] }],
+      checks: [
+        { id: "typecheck", command: "pnpm", args: ["typecheck"] },
+        { id: "build", command: "pnpm", args: ["build"] },
+      ],
+      checkConcurrency: 2,
+    },
+  },
 });
 
 const preview = await version.preview({

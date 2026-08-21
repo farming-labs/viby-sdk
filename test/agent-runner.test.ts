@@ -11,19 +11,16 @@ const usage = {
   outputTokens: { total: 20, text: 20, reasoning: undefined },
 };
 
-function toolCall(
-  toolCallId: string,
-  toolName: string,
-  input: unknown,
-  callUsage = usage,
-) {
+function toolCall(toolCallId: string, toolName: string, input: unknown, callUsage = usage) {
   return {
-    content: [{
-      type: "tool-call" as const,
-      toolCallId,
-      toolName,
-      input: JSON.stringify(input),
-    }],
+    content: [
+      {
+        type: "tool-call" as const,
+        toolCallId,
+        toolName,
+        input: JSON.stringify(input),
+      },
+    ],
     finishReason: { unified: "tool-calls" as const, raw: undefined },
     usage: callUsage,
     warnings: [],
@@ -48,26 +45,30 @@ test("preserves validated iteration edits when a provider ends on a tool call", 
     framework: "farm",
     prompt: "Update the project",
     messages: [],
-    previousFiles: [{
-      path: "src/index.ts",
-      content: "export const recovered = false;\n",
-      mediaType: "text/javascript",
-      size: 32,
-      checksum: "before",
-      locked: false,
-    }],
+    previousFiles: [
+      {
+        path: "src/index.ts",
+        content: "export const recovered = false;\n",
+        mediaType: "text/javascript",
+        size: 32,
+        checksum: "before",
+        locked: false,
+      },
+    ],
     skills: [],
     tasks: [],
   });
 
   assert.equal(output.kind, "changes");
   if (output.kind !== "changes") throw new Error("Expected recovered change output");
-  assert.deepEqual(output.changes, [{
-    type: "write",
-    path: "src/index.ts",
-    content: "export const recovered = true;\n",
-    mediaType: "text/javascript",
-  }]);
+  assert.deepEqual(output.changes, [
+    {
+      type: "write",
+      path: "src/index.ts",
+      content: "export const recovered = true;\n",
+      mediaType: "text/javascript",
+    },
+  ]);
   assert.match(output.summary, /1 validated workspace change/);
 });
 
@@ -78,11 +79,16 @@ test("reserves a completion turn after the token budget is reached", async () =>
   };
   const model = new MockLanguageModelV4({
     doGenerate: [
-      toolCall("write-budget", "workspace_write_file", {
-        path: "src/index.ts",
-        content: "export const finalized = true;\n",
-        mediaType: "text/javascript",
-      }, budgetUsage),
+      toolCall(
+        "write-budget",
+        "workspace_write_file",
+        {
+          path: "src/index.ts",
+          content: "export const finalized = true;\n",
+          mediaType: "text/javascript",
+        },
+        budgetUsage,
+      ),
       completion("Finalized project", "Completed after reaching the tool budget."),
     ],
   });
@@ -109,15 +115,87 @@ test("reserves a completion turn after the token budget is reached", async () =>
 
 function completion(title: string, summary: string) {
   return {
-    content: [{
-      type: "text" as const,
-      text: JSON.stringify({ outcome: "complete", title, summary, task: null }),
-    }],
+    content: [
+      {
+        type: "text" as const,
+        text: JSON.stringify({ outcome: "complete", title, summary, task: null }),
+      },
+    ],
     finishReason: { unified: "stop" as const, raw: undefined },
     usage,
     warnings: [],
   };
 }
+
+function taskCompletion() {
+  return {
+    content: [
+      {
+        type: "text" as const,
+        text: JSON.stringify({
+          outcome: "task",
+          title: null,
+          summary: null,
+          task: {
+            kind: "question",
+            title: "Choose a follow-up",
+            message: "A late question that must not discard completed edits.",
+            steps: [],
+            question: "Continue?",
+            choices: ["Yes", "No"],
+            allowFreeform: false,
+            action: null,
+            permissions: [],
+          },
+        }),
+      },
+    ],
+    finishReason: { unified: "stop" as const, raw: undefined },
+    usage,
+    warnings: [],
+  };
+}
+
+test("preserves staged edits when a provider returns an invalid late task", async () => {
+  const model = new MockLanguageModelV4({
+    doGenerate: [
+      toolCall("write-before-task", "workspace_write_file", {
+        path: "src/index.ts",
+        content: "export const complete = true;\n",
+        mediaType: "text/javascript",
+      }),
+      taskCompletion(),
+    ],
+  });
+  const generator = new AgentProjectGenerator<"farm">(model, {
+    maxSteps: 4,
+    maxDurationMs: 10_000,
+    maxTokens: 10_000,
+  });
+
+  const output = await generator.generate({
+    framework: "farm",
+    prompt: "Finish the project",
+    messages: [],
+    previousFiles: [
+      {
+        path: "src/index.ts",
+        content: "export const complete = false;\n",
+        mediaType: "text/javascript",
+        size: 31,
+        checksum: "before",
+        locked: false,
+      },
+    ],
+    skills: [],
+    tasks: [],
+  });
+
+  assert.equal(output.kind, "changes");
+  if (output.kind !== "changes") throw new Error("Expected recovered changes");
+  assert.equal(output.changes[0]?.type, "write");
+  assert.match(output.summary, /late task outcome/);
+});
 
 test("uses workspace tools in the default bounded agent loop", async () => {
   const model = new MockLanguageModelV4({
@@ -172,14 +250,16 @@ test("includes a bounded workspace inventory to avoid exploratory model turns", 
     framework: "farm",
     prompt: "Change the dashboard heading",
     messages: [],
-    previousFiles: [{
-      path: "src/app/dashboard.tsx",
-      content: "export default function Dashboard() { return null; }\n",
-      mediaType: "text/typescript",
-      size: 53,
-      checksum: "dashboard",
-      locked: false,
-    }],
+    previousFiles: [
+      {
+        path: "src/app/dashboard.tsx",
+        content: "export default function Dashboard() { return null; }\n",
+        mediaType: "text/typescript",
+        size: 53,
+        checksum: "dashboard",
+        locked: false,
+      },
+    ],
     skills: [],
     tasks: [],
   });
@@ -205,34 +285,39 @@ test("applies durable steering before the next default-agent step", async () => 
     maxTokens: 10_000,
   });
   let consumed = false;
-  await generator.generate({
-    framework: "farm",
-    prompt: "Build a project",
-    messages: [],
-    previousFiles: [],
-    skills: [],
-    tasks: [],
-  }, {
-    steering: {
-      async consume() {
-        if (consumed) return [];
-        consumed = true;
-        return [{
-          id: "steering-1",
-          generationId: "generation-1",
-          messageId: "message-1",
-          submittedAttemptId: "attempt-1",
-          appliedAttemptId: "attempt-1",
-          prompt: "Use a compact navigation.",
-          status: "applied",
-          idempotencyKey: null,
-          createdAt: new Date(),
-          appliedAt: new Date(),
-          attachments: [],
-        }];
+  await generator.generate(
+    {
+      framework: "farm",
+      prompt: "Build a project",
+      messages: [],
+      previousFiles: [],
+      skills: [],
+      tasks: [],
+    },
+    {
+      steering: {
+        async consume() {
+          if (consumed) return [];
+          consumed = true;
+          return [
+            {
+              id: "steering-1",
+              generationId: "generation-1",
+              messageId: "message-1",
+              submittedAttemptId: "attempt-1",
+              appliedAttemptId: "attempt-1",
+              prompt: "Use a compact navigation.",
+              status: "applied",
+              idempotencyKey: null,
+              createdAt: new Date(),
+              appliedAt: new Date(),
+              attachments: [],
+            },
+          ];
+        },
       },
     },
-  });
+  );
 
   assert.match(JSON.stringify(model.doGenerateCalls[0]?.prompt), /Use a compact navigation/);
 });
@@ -273,21 +358,26 @@ test("classifies workspace writes as created or updated in the agent trace", asy
     maxTokens: 10_000,
   });
 
-  await generator.generate({
-    framework: "farm",
-    prompt: "Update the project and add a module",
-    messages: [],
-    previousFiles: [{
-      path: "src/index.ts",
-      content: "export const app = 1;\n",
-      mediaType: "text/javascript",
-      size: 22,
-      checksum: "before",
-      locked: false,
-    }],
-    skills: [],
-    tasks: [],
-  }, { trace });
+  await generator.generate(
+    {
+      framework: "farm",
+      prompt: "Update the project and add a module",
+      messages: [],
+      previousFiles: [
+        {
+          path: "src/index.ts",
+          content: "export const app = 1;\n",
+          mediaType: "text/javascript",
+          size: 22,
+          checksum: "before",
+          locked: false,
+        },
+      ],
+      skills: [],
+      tasks: [],
+    },
+    { trace },
+  );
 
   assert.deepEqual(completed, [
     { operation: "update", path: "src/index.ts" },
@@ -344,14 +434,16 @@ test("gates sandbox tools by capabilities and enforces the command budget", asyn
     framework: "farm",
     prompt: "Verify and update the project",
     messages: [],
-    previousFiles: [{
-      path: "src/index.ts",
-      content: "export const app = 1;\n",
-      mediaType: "text/javascript",
-      size: 22,
-      checksum: "before",
-      locked: false,
-    }],
+    previousFiles: [
+      {
+        path: "src/index.ts",
+        content: "export const app = 1;\n",
+        mediaType: "text/javascript",
+        size: 22,
+        checksum: "before",
+        locked: false,
+      },
+    ],
     skills: [],
     tasks: [],
     sandbox,

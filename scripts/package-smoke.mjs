@@ -112,6 +112,7 @@ try {
     "migrations/0022_integration_connections.sql",
     "migrations/0032_generation_quality_events.sql",
     "migrations/0033_generation_steering.sql",
+    "migrations/0034_generation_workspace_events.sql",
   ]) {
     assert.ok(paths.has(path), `packed package is missing ${path}`);
   }
@@ -198,7 +199,7 @@ try {
       [
         'import { s3, s3ArtifactStore } from "@viby/sdk/storage/s3";',
         'import { s3 as artifactS3 } from "@viby/sdk/artifact/s3";',
-        'const client = { async send() { return {}; } };',
+        "const client = { async send() { return {}; } };",
         'if (s3({ bucket: "package-smoke", client }).id !== "s3") throw new Error("S3 storage adapter is invalid");',
         'if (s3ArtifactStore !== s3) throw new Error("S3 factory alias is invalid");',
         'if (artifactS3 !== s3) throw new Error("S3 artifact alias is invalid");',
@@ -444,11 +445,18 @@ try {
     ],
     { cwd: consumer },
   );
-  const executable = join(consumer, "node_modules", ".bin", process.platform === "win32" ? "viby.cmd" : "viby");
+  const executable = join(
+    consumer,
+    "node_modules",
+    ".bin",
+    process.platform === "win32" ? "viby.cmd" : "viby",
+  );
   const { stdout: cliOutput } = await execute(executable, ["--help"], { cwd: consumer });
   assert.match(cliOutput, /viby db migrate/);
 
-  console.log(`Verified ${manifest.name}@${manifest.version}: ${manifest.entryCount} files, import, and CLI.`);
+  console.log(
+    `Verified ${manifest.name}@${manifest.version}: ${manifest.entryCount} files, import, and CLI.`,
+  );
 } finally {
   await rm(scratch, { recursive: true, force: true });
 }

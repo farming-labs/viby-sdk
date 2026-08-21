@@ -4,10 +4,7 @@ import {
   type ArtifactStore,
   type ArtifactStoreContext,
 } from "./artifact-store.js";
-import type {
-  OutboundEventDeliveryData,
-  OutboundEventDeliveryStatus,
-} from "./outbound-events.js";
+import type { OutboundEventDeliveryData, OutboundEventDeliveryStatus } from "./outbound-events.js";
 import type {
   AttachmentContent,
   AttachmentData,
@@ -61,11 +58,7 @@ import type {
 } from "./integrations.js";
 import type { DeploymentEnvironment, DeploymentStatus } from "./integrations.js";
 import type { GenerationCostData } from "./telemetry.js";
-import type {
-  CreateSandboxLeaseRecord,
-  SandboxLeaseData,
-  SandboxLeaseStatus,
-} from "./sandbox.js";
+import type { CreateSandboxLeaseRecord, SandboxLeaseData, SandboxLeaseStatus } from "./sandbox.js";
 import type {
   AppendGenerationEventRecord,
   ChatReadSnapshot,
@@ -1062,11 +1055,7 @@ export class PostgresRepository implements Repository {
     }
     const messages = row.messages.map((message) => {
       const hydrated = withCreatedAt(message);
-      return mapMessage(
-        hydrated,
-        parts.get(hydrated.id) ?? [],
-        attachments.get(hydrated.id) ?? [],
-      );
+      return mapMessage(hydrated, parts.get(hydrated.id) ?? [], attachments.get(hydrated.id) ?? []);
     });
     return {
       chat: mapChat<Framework>({
@@ -1204,9 +1193,10 @@ export class PostgresRepository implements Repository {
           AND id = ANY(${sql.array(ids)}::uuid[])
         RETURNING id
       `;
-      const projectArtifacts = projectArtifactIds.length === 0
-        ? []
-        : await sql<StoredArtifactLocation[]>`
+      const projectArtifacts =
+        projectArtifactIds.length === 0
+          ? []
+          : await sql<StoredArtifactLocation[]>`
             DELETE FROM viby.project_artifacts AS artifact
             WHERE artifact.tenant_id = ${scope.tenantId} AND artifact.user_id = ${scope.userId}
               AND artifact.id = ANY(${sql.array(projectArtifactIds.map(({ id }) => id))}::uuid[])
@@ -1219,9 +1209,9 @@ export class PostgresRepository implements Repository {
           `;
       return { count: deleted.length, artifacts: [...artifacts, ...projectArtifacts] };
     });
-    await Promise.allSettled(result.artifacts.map((artifact) => (
-      this.#deleteStoredArtifact(scope, artifact)
-    )));
+    await Promise.allSettled(
+      result.artifacts.map((artifact) => this.#deleteStoredArtifact(scope, artifact)),
+    );
     return result.count;
   }
 
@@ -1284,16 +1274,16 @@ export class PostgresRepository implements Repository {
     let result: { generation: GenerationRow; attempt: GenerationAttemptRow };
     try {
       result = await this.#sql.begin(async (sql) => {
-      const [generation] = await sql<GenerationRow[]>`
+        const [generation] = await sql<GenerationRow[]>`
         INSERT INTO viby.generations (
           id, tenant_id, user_id, chat_id, base_version_id, active_attempt_id,
           attempt_count, prompt, status, model_provider, model_id, configuration
         )
         SELECT ${input.id}, ${scope.tenantId}, ${scope.userId}, id, ${input.baseVersionId},
           ${input.attemptId}, 1, ${input.prompt}, 'queued', ${input.modelProvider}, ${input.modelId},
-          ${sql.json(JSON.parse(JSON.stringify(
-            input.configuration ?? defaultGenerationConfiguration(),
-          )))}
+          ${sql.json(
+            JSON.parse(JSON.stringify(input.configuration ?? defaultGenerationConfiguration())),
+          )}
         FROM viby.chats
         WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId} AND id = ${input.chatId}
           AND deleted_at IS NULL
@@ -1309,9 +1299,9 @@ export class PostgresRepository implements Repository {
           )
         RETURNING *
       `;
-      if (!generation) throw new NotFoundError("Chat");
+        if (!generation) throw new NotFoundError("Chat");
 
-      const [attempt] = await sql<GenerationAttemptRow[]>`
+        const [attempt] = await sql<GenerationAttemptRow[]>`
         INSERT INTO viby.generation_attempts (
           id, tenant_id, user_id, generation_id, number, reason, status, model_provider, model_id
         ) VALUES (
@@ -1320,18 +1310,18 @@ export class PostgresRepository implements Repository {
         )
         RETURNING *
       `;
-      if (!attempt) throw new Error("Postgres did not return the created attempt.");
+        if (!attempt) throw new Error("Postgres did not return the created attempt.");
 
-      await insertMessage(sql, scope, {
-        chatId: input.chatId,
-        generationId: input.id,
-        attemptId: input.attemptId,
-        role: "user",
-        content: input.prompt,
-        parts: [{ type: "text", data: { text: input.prompt } }],
-        attachments,
-      });
-      await sql`
+        await insertMessage(sql, scope, {
+          chatId: input.chatId,
+          generationId: input.id,
+          attemptId: input.attemptId,
+          role: "user",
+          content: input.prompt,
+          parts: [{ type: "text", data: { text: input.prompt } }],
+          attachments,
+        });
+        await sql`
         INSERT INTO viby.generation_events (
           tenant_id, user_id, generation_id, attempt_id, type, data
         ) VALUES (
@@ -1339,7 +1329,7 @@ export class PostgresRepository implements Repository {
           'generation.created', ${sql.json({ prompt: input.prompt })}
         )
       `;
-      await sql`
+        await sql`
         INSERT INTO viby.generation_events (
           tenant_id, user_id, generation_id, attempt_id, type, data
         ) VALUES (
@@ -1350,12 +1340,14 @@ export class PostgresRepository implements Repository {
         return { generation, attempt };
       });
     } catch (error) {
-      await Promise.allSettled(attachments.map((attachment) => (
-        this.#artifactStore!.delete(
-          attachment.artifactKey,
-          attachmentContext(scope, attachment.id),
-        )
-      )));
+      await Promise.allSettled(
+        attachments.map((attachment) =>
+          this.#artifactStore!.delete(
+            attachment.artifactKey,
+            attachmentContext(scope, attachment.id),
+          ),
+        ),
+      );
       throw error;
     }
 
@@ -1443,21 +1435,25 @@ export class PostgresRepository implements Repository {
         return { row: steering, created: true };
       });
       if (!result.created) {
-        await Promise.allSettled(attachments.map((attachment) => (
-          this.#artifactStore!.delete(
-            attachment.artifactKey,
-            attachmentContext(scope, attachment.id),
-          )
-        )));
+        await Promise.allSettled(
+          attachments.map((attachment) =>
+            this.#artifactStore!.delete(
+              attachment.artifactKey,
+              attachmentContext(scope, attachment.id),
+            ),
+          ),
+        );
       }
       return mapGenerationSteering(result.row);
     } catch (error) {
-      await Promise.allSettled(attachments.map((attachment) => (
-        this.#artifactStore!.delete(
-          attachment.artifactKey,
-          attachmentContext(scope, attachment.id),
-        )
-      )));
+      await Promise.allSettled(
+        attachments.map((attachment) =>
+          this.#artifactStore!.delete(
+            attachment.artifactKey,
+            attachmentContext(scope, attachment.id),
+          ),
+        ),
+      );
       throw error;
     }
   }
@@ -1687,12 +1683,13 @@ export class PostgresRepository implements Repository {
       `;
       if (!generation) throw new NotFoundError("Generation");
 
-      const allowed = input.reason === "retry"
-        ? generation.status === "failed" || generation.status === "cancelled"
-        : generation.status === "failed"
-          || generation.status === "cancelled"
-          || generation.status === "queued"
-          || generation.status === "running";
+      const allowed =
+        input.reason === "retry"
+          ? generation.status === "failed" || generation.status === "cancelled"
+          : generation.status === "failed" ||
+            generation.status === "cancelled" ||
+            generation.status === "queued" ||
+            generation.status === "running";
       if (!allowed) {
         throw new GenerationStateError(
           generation.id,
@@ -1779,7 +1776,10 @@ export class PostgresRepository implements Repository {
         FOR UPDATE OF generation, attempt
       `;
       if (!generation) {
-        throw new GenerationStateError(generationId, "The generation worker lease is no longer active.");
+        throw new GenerationStateError(
+          generationId,
+          "The generation worker lease is no longer active.",
+        );
       }
 
       for (const [position, skill] of skills.entries()) {
@@ -1867,20 +1867,21 @@ export class PostgresRepository implements Repository {
       RETURNING cursor
     `;
     if (rows.length === 0) {
-      throw new GenerationStateError(input.generationId, "The generation worker lease is no longer active.");
+      throw new GenerationStateError(
+        input.generationId,
+        "The generation worker lease is no longer active.",
+      );
     }
   }
 
-  async createToolCall(
-    scope: UserScope,
-    input: CreateToolCallRecord,
-  ): Promise<CreatedToolCall> {
+  async createToolCall(scope: UserScope, input: CreateToolCallRecord): Promise<CreatedToolCall> {
     await this.assertReady();
     const providerCallId = normalizeToolCallText(input.providerCallId, "provider call id", 500);
     const name = normalizeToolCallText(input.name, "tool name", 200);
-    const idempotencyKey = input.idempotencyKey === undefined
-      ? null
-      : normalizeToolCallText(input.idempotencyKey, "idempotency key", 500);
+    const idempotencyKey =
+      input.idempotencyKey === undefined
+        ? null
+        : normalizeToolCallText(input.idempotencyKey, "idempotency key", 500);
     if (input.effect === "external" && idempotencyKey === null) {
       throw new ConfigurationError(`External tool ${name} requires an idempotency key.`);
     }
@@ -1888,14 +1889,15 @@ export class PostgresRepository implements Repository {
 
     return this.#sql.begin(async (sql) => {
       await assertActiveToolAttempt(sql, scope, input);
-      const existing = input.effect === "external"
-        ? await sql<ToolCallRow[]>`
+      const existing =
+        input.effect === "external"
+          ? await sql<ToolCallRow[]>`
             SELECT call.* FROM viby.tool_calls AS call
             WHERE call.tenant_id = ${scope.tenantId} AND call.user_id = ${scope.userId}
               AND call.name = ${name} AND call.idempotency_key = ${idempotencyKey}
             LIMIT 1
           `
-        : await sql<ToolCallRow[]>`
+          : await sql<ToolCallRow[]>`
             SELECT call.* FROM viby.tool_calls AS call
             WHERE call.tenant_id = ${scope.tenantId} AND call.user_id = ${scope.userId}
               AND call.generation_id = ${input.generationId}
@@ -1919,14 +1921,15 @@ export class PostgresRepository implements Repository {
       `;
       if (rows[0]) return { toolCall: mapToolCall(rows[0]), created: true };
 
-      const [raced] = input.effect === "external"
-        ? await sql<ToolCallRow[]>`
+      const [raced] =
+        input.effect === "external"
+          ? await sql<ToolCallRow[]>`
             SELECT call.* FROM viby.tool_calls AS call
             WHERE call.tenant_id = ${scope.tenantId} AND call.user_id = ${scope.userId}
               AND call.name = ${name} AND call.idempotency_key = ${idempotencyKey}
             LIMIT 1
           `
-        : await sql<ToolCallRow[]>`
+          : await sql<ToolCallRow[]>`
             SELECT call.* FROM viby.tool_calls AS call
             WHERE call.tenant_id = ${scope.tenantId} AND call.user_id = ${scope.userId}
               AND call.generation_id = ${input.generationId}
@@ -1939,17 +1942,11 @@ export class PostgresRepository implements Repository {
     });
   }
 
-  async completeToolCall(
-    scope: UserScope,
-    input: CompleteToolCallRecord,
-  ): Promise<ToolCallData> {
+  async completeToolCall(scope: UserScope, input: CompleteToolCallRecord): Promise<ToolCallData> {
     return this.#settleToolCall(scope, input, "succeeded");
   }
 
-  async failToolCall(
-    scope: UserScope,
-    input: FailToolCallRecord,
-  ): Promise<ToolCallData> {
+  async failToolCall(scope: UserScope, input: FailToolCallRecord): Promise<ToolCallData> {
     return this.#settleToolCall(scope, input, "failed");
   }
 
@@ -1959,12 +1956,14 @@ export class PostgresRepository implements Repository {
     status: "succeeded" | "failed",
   ): Promise<ToolCallData> {
     await this.assertReady();
-    const result = status === "succeeded"
-      ? normalizeAndRedactToolPayload((input as CompleteToolCallRecord).result)
-      : null;
-    const error = status === "failed"
-      ? normalizeToolCallText((input as FailToolCallRecord).error, "tool error", 10_000)
-      : null;
+    const result =
+      status === "succeeded"
+        ? normalizeAndRedactToolPayload((input as CompleteToolCallRecord).result)
+        : null;
+    const error =
+      status === "failed"
+        ? normalizeToolCallText((input as FailToolCallRecord).error, "tool error", 10_000)
+        : null;
     const rows = await this.#sql<ToolCallRow[]>`
       UPDATE viby.tool_calls AS call SET
         status = ${status}, result = ${result === null ? null : this.#sql.json(result)},
@@ -1989,7 +1988,10 @@ export class PostgresRepository implements Repository {
     `;
     if (!existing) throw new NotFoundError("Tool call");
     if (existing.status !== "pending") return mapToolCall(existing);
-    throw new GenerationStateError(input.generationId, "The generation worker lease is no longer active.");
+    throw new GenerationStateError(
+      input.generationId,
+      "The generation worker lease is no longer active.",
+    );
   }
 
   async completeGeneration<Framework extends FrameworkId>(
@@ -2005,46 +2007,49 @@ export class PostgresRepository implements Repository {
     let row: VersionRow;
     try {
       row = await this.#sql.begin(async (sql) => {
-      const [generation] = await sql<GenerationRow[]>`
+        const [generation] = await sql<GenerationRow[]>`
         SELECT * FROM viby.generations
         WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
           AND id = ${input.generationId}
         FOR UPDATE
       `;
-      if (!generation) throw new NotFoundError("Generation");
-      if (generation.status !== "running" || generation.active_attempt_id !== input.attemptId) {
-        throw new GenerationStateError(
-          input.generationId,
-          `Generation ${input.generationId} cannot complete from ${generation.status}.`,
-        );
-      }
+        if (!generation) throw new NotFoundError("Generation");
+        if (generation.status !== "running" || generation.active_attempt_id !== input.attemptId) {
+          throw new GenerationStateError(
+            input.generationId,
+            `Generation ${input.generationId} cannot complete from ${generation.status}.`,
+          );
+        }
 
-      const [attempt] = await sql<GenerationAttemptRow[]>`
+        const [attempt] = await sql<GenerationAttemptRow[]>`
         SELECT * FROM viby.generation_attempts
         WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
           AND generation_id = ${input.generationId} AND id = ${input.attemptId}
           AND lease_token = ${input.leaseToken} AND lease_expires_at > now()
         FOR UPDATE
       `;
-      if (!attempt || attempt.status !== "running") {
-        throw new GenerationStateError(input.generationId, `Attempt ${input.attemptId} is not running.`);
-      }
-      await assertNoQueuedSteering(sql, scope, input.generationId);
+        if (!attempt || attempt.status !== "running") {
+          throw new GenerationStateError(
+            input.generationId,
+            `Attempt ${input.attemptId} is not running.`,
+          );
+        }
+        await assertNoQueuedSteering(sql, scope, input.generationId);
 
-      await sql`
+        await sql`
         SELECT id FROM viby.chats
         WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
           AND id = ${generation.chat_id}
         FOR UPDATE
       `;
-      const [numberRow] = await sql<{ number: number }[]>`
+        const [numberRow] = await sql<{ number: number }[]>`
         SELECT COALESCE(MAX(number), 0)::integer + 1 AS number
         FROM viby.versions
         WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
           AND chat_id = ${generation.chat_id}
       `;
-      const versionId = createId();
-      const [version] = await sql<VersionRow[]>`
+        const versionId = createId();
+        const [version] = await sql<VersionRow[]>`
         INSERT INTO viby.versions (
           id, tenant_id, user_id, chat_id, generation_id, parent_version_id,
           number, framework, title, summary
@@ -2055,18 +2060,18 @@ export class PostgresRepository implements Repository {
         )
         RETURNING *
       `;
-      if (!version) throw new Error("Postgres did not return the created version.");
+        if (!version) throw new Error("Postgres did not return the created version.");
 
-      await insertVersionEntries(
-        sql,
-        scope,
-        versionId,
-        input.files,
-        input.projectArtifacts ?? [],
-      );
+        await insertVersionEntries(
+          sql,
+          scope,
+          versionId,
+          input.files,
+          input.projectArtifacts ?? [],
+        );
 
-      for (const [position, change] of (input.changes ?? []).entries()) {
-        await sql`
+        for (const [position, change] of (input.changes ?? []).entries()) {
+          await sql`
           INSERT INTO viby.version_changes (
             tenant_id, user_id, version_id, position, change
           ) VALUES (
@@ -2074,26 +2079,26 @@ export class PostgresRepository implements Repository {
             ${sql.json(JSON.parse(JSON.stringify(change)))}
           )
         `;
-      }
+        }
 
-      await insertGeneratedArtifacts(sql, scope, {
-        chatId: generation.chat_id,
-        generationId: input.generationId,
-        attemptId: input.attemptId,
-        versionId,
-        artifacts,
-      });
+        await insertGeneratedArtifacts(sql, scope, {
+          chatId: generation.chat_id,
+          generationId: input.generationId,
+          attemptId: input.attemptId,
+          versionId,
+          artifacts,
+        });
 
-      await insertMessage(sql, scope, {
-        chatId: generation.chat_id,
-        generationId: input.generationId,
-        attemptId: input.attemptId,
-        role: "assistant",
-        content: input.assistantMessage,
-        finishReason: input.finishReason,
-        parts: input.assistantParts,
-      });
-      await sql`
+        await insertMessage(sql, scope, {
+          chatId: generation.chat_id,
+          generationId: input.generationId,
+          attemptId: input.attemptId,
+          role: "assistant",
+          content: input.assistantMessage,
+          finishReason: input.finishReason,
+          parts: input.assistantParts,
+        });
+        await sql`
         UPDATE viby.generation_attempts SET
           status = 'succeeded', input_tokens = ${input.inputTokens},
           output_tokens = ${input.outputTokens}, total_tokens = ${input.totalTokens},
@@ -2102,7 +2107,7 @@ export class PostgresRepository implements Repository {
           finish_reason = ${input.finishReason}, completed_at = now()
         WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId} AND id = ${input.attemptId}
       `;
-      await sql`
+        await sql`
         UPDATE viby.generations SET
           status = 'succeeded', input_tokens = ${input.inputTokens},
           output_tokens = ${input.outputTokens}, total_tokens = ${input.totalTokens},
@@ -2114,12 +2119,12 @@ export class PostgresRepository implements Repository {
           finish_reason = ${input.finishReason}, error = NULL, completed_at = now()
         WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId} AND id = ${input.generationId}
       `;
-      await sql`
+        await sql`
         UPDATE viby.chats SET title = ${input.title}, updated_at = now()
         WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
           AND id = ${generation.chat_id}
       `;
-      await sql`
+        await sql`
         INSERT INTO viby.generation_events (
           tenant_id, user_id, generation_id, attempt_id, type, data
         ) VALUES (
@@ -2127,7 +2132,7 @@ export class PostgresRepository implements Repository {
           'attempt.succeeded', ${sql.json({ number: attempt.number, versionId })}
         )
       `;
-      await sql`
+        await sql`
         INSERT INTO viby.generation_events (
           tenant_id, user_id, generation_id, attempt_id, type, data
         ) VALUES (
@@ -2135,7 +2140,7 @@ export class PostgresRepository implements Repository {
           'generation.succeeded', ${sql.json({ versionId })}
         )
       `;
-      return version;
+        return version;
       });
     } catch (error) {
       await this.#cleanupGeneratedArtifacts(scope, artifacts);
@@ -2157,32 +2162,35 @@ export class PostgresRepository implements Repository {
     let row: GenerationTaskRow;
     try {
       row = await this.#sql.begin(async (sql) => {
-      const [generation] = await sql<GenerationRow[]>`
+        const [generation] = await sql<GenerationRow[]>`
         SELECT * FROM viby.generations
         WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
           AND id = ${input.generationId}
         FOR UPDATE
       `;
-      if (!generation) throw new NotFoundError("Generation");
-      if (generation.status !== "running" || generation.active_attempt_id !== input.attemptId) {
-        throw new GenerationStateError(
-          generation.id,
-          `Generation ${generation.id} cannot wait for a task from ${generation.status}.`,
-        );
-      }
-      const [attempt] = await sql<GenerationAttemptRow[]>`
+        if (!generation) throw new NotFoundError("Generation");
+        if (generation.status !== "running" || generation.active_attempt_id !== input.attemptId) {
+          throw new GenerationStateError(
+            generation.id,
+            `Generation ${generation.id} cannot wait for a task from ${generation.status}.`,
+          );
+        }
+        const [attempt] = await sql<GenerationAttemptRow[]>`
         SELECT * FROM viby.generation_attempts
         WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
           AND id = ${input.attemptId} AND generation_id = ${input.generationId}
           AND lease_token = ${input.leaseToken} AND lease_expires_at > now()
         FOR UPDATE
       `;
-      if (!attempt || attempt.status !== "running") {
-        throw new GenerationStateError(generation.id, `Attempt ${input.attemptId} is not running.`);
-      }
-      await assertNoQueuedSteering(sql, scope, input.generationId);
+        if (!attempt || attempt.status !== "running") {
+          throw new GenerationStateError(
+            generation.id,
+            `Attempt ${input.attemptId} is not running.`,
+          );
+        }
+        await assertNoQueuedSteering(sql, scope, input.generationId);
 
-      const [task] = await sql<GenerationTaskRow[]>`
+        const [task] = await sql<GenerationTaskRow[]>`
         INSERT INTO viby.generation_tasks (
           id, tenant_id, user_id, generation_id, attempt_id, kind, title, message, payload
         ) VALUES (
@@ -2192,26 +2200,26 @@ export class PostgresRepository implements Repository {
         )
         RETURNING id, generation_id, attempt_id, status, payload, resolution, created_at, resolved_at
       `;
-      if (!task) throw new Error("Postgres did not return the created task.");
+        if (!task) throw new Error("Postgres did not return the created task.");
 
-      await insertGeneratedArtifacts(sql, scope, {
-        chatId: generation.chat_id,
-        generationId: input.generationId,
-        attemptId: input.attemptId,
-        versionId: null,
-        artifacts,
-      });
+        await insertGeneratedArtifacts(sql, scope, {
+          chatId: generation.chat_id,
+          generationId: input.generationId,
+          attemptId: input.attemptId,
+          versionId: null,
+          artifacts,
+        });
 
-      await insertMessage(sql, scope, {
-        chatId: generation.chat_id,
-        generationId: input.generationId,
-        attemptId: input.attemptId,
-        role: "assistant",
-        content: input.task.message,
-        finishReason: input.finishReason,
-        parts: input.assistantParts,
-      });
-      await sql`
+        await insertMessage(sql, scope, {
+          chatId: generation.chat_id,
+          generationId: input.generationId,
+          attemptId: input.attemptId,
+          role: "assistant",
+          content: input.task.message,
+          finishReason: input.finishReason,
+          parts: input.assistantParts,
+        });
+        await sql`
         UPDATE viby.generation_attempts SET
           status = 'waiting', input_tokens = ${input.inputTokens},
           output_tokens = ${input.outputTokens}, total_tokens = ${input.totalTokens},
@@ -2220,7 +2228,7 @@ export class PostgresRepository implements Repository {
           finish_reason = ${input.finishReason}, completed_at = now()
         WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId} AND id = ${input.attemptId}
       `;
-      await sql`
+        await sql`
         UPDATE viby.generations SET
           status = 'waiting', input_tokens = ${input.inputTokens},
           output_tokens = ${input.outputTokens}, total_tokens = ${input.totalTokens},
@@ -2232,7 +2240,7 @@ export class PostgresRepository implements Repository {
           finish_reason = ${input.finishReason}, error = NULL
         WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId} AND id = ${input.generationId}
       `;
-      await sql`
+        await sql`
         INSERT INTO viby.generation_events (
           tenant_id, user_id, generation_id, attempt_id, type, data
         ) VALUES (
@@ -2240,17 +2248,21 @@ export class PostgresRepository implements Repository {
           'attempt.waiting', ${sql.json({ taskId: input.taskId })}
         )
       `;
-      await sql`
+        await sql`
         INSERT INTO viby.generation_events (
           tenant_id, user_id, generation_id, attempt_id, type, data
         ) VALUES (
           ${scope.tenantId}, ${scope.userId}, ${input.generationId}, ${input.attemptId},
-          'task.created', ${sql.json(JSON.parse(JSON.stringify({
-            task: { id: input.taskId, ...input.task },
-          })))}
+          'task.created', ${sql.json(
+            JSON.parse(
+              JSON.stringify({
+                task: { id: input.taskId, ...input.task },
+              }),
+            ),
+          )}
         )
       `;
-      return task;
+        return task;
       });
     } catch (error) {
       await this.#cleanupGeneratedArtifacts(scope, artifacts);
@@ -2330,10 +2342,14 @@ export class PostgresRepository implements Repository {
           tenant_id, user_id, generation_id, attempt_id, type, data
         ) VALUES (
           ${scope.tenantId}, ${scope.userId}, ${generation.id}, ${task.attempt_id},
-          'task.resolved', ${sql.json(JSON.parse(JSON.stringify({
-            taskId: input.taskId,
-            resolution: input.resolution,
-          })))}
+          'task.resolved', ${sql.json(
+            JSON.parse(
+              JSON.stringify({
+                taskId: input.taskId,
+                resolution: input.resolution,
+              }),
+            ),
+          )}
         )
       `;
       await sql`
@@ -2413,10 +2429,8 @@ export class PostgresRepository implements Repository {
         FOR UPDATE
       `;
       if (!generation) throw new NotFoundError("Generation");
-      if (
-        generation.active_attempt_id !== input.attemptId
-        || generation.status !== "running"
-      ) return null;
+      if (generation.active_attempt_id !== input.attemptId || generation.status !== "running")
+        return null;
 
       const [failed] = await sql<GenerationAttemptRow[]>`
         UPDATE viby.generation_attempts SET
@@ -2478,7 +2492,11 @@ export class PostgresRepository implements Repository {
         FOR UPDATE
       `;
       if (!generation) throw new NotFoundError("Generation");
-      if (generation.status === "succeeded" || generation.status === "failed" || generation.status === "cancelled") {
+      if (
+        generation.status === "succeeded" ||
+        generation.status === "failed" ||
+        generation.status === "cancelled"
+      ) {
         return false;
       }
 
@@ -2601,12 +2619,8 @@ export class PostgresRepository implements Repository {
       tasks: row.tasks.map((task) => mapTask(hydrateTaskRow(task))),
       steering: row.steering.map((item) => mapGenerationSteering(hydrateSteeringRow(item))),
       toolCalls: row.tool_calls.map((call) => mapToolCall(hydrateToolCallRow(call))),
-      artifacts: row.artifacts.map((artifact) => mapGeneratedArtifact(
-        withCreatedAt(artifact),
-      )),
-      version: row.version
-        ? mapVersion<Framework>(withCreatedAt(row.version))
-        : null,
+      artifacts: row.artifacts.map((artifact) => mapGeneratedArtifact(withCreatedAt(artifact))),
+      version: row.version ? mapVersion<Framework>(withCreatedAt(row.version)) : null,
     };
   }
 
@@ -2684,9 +2698,7 @@ export class PostgresRepository implements Repository {
       `;
       return claimed ?? null;
     });
-    return row
-      ? { delivery: mapOutboundEventDelivery(row), leaseToken: input.leaseToken }
-      : null;
+    return row ? { delivery: mapOutboundEventDelivery(row), leaseToken: input.leaseToken } : null;
   }
 
   async getOutboundEventDelivery(
@@ -2722,7 +2734,11 @@ export class PostgresRepository implements Repository {
         AND lease_token = ${claim.leaseToken}
       RETURNING *
     `;
-    if (!row) throw new GenerationStateError(claim.delivery.generationId, "Outbound event delivery lease is no longer active.");
+    if (!row)
+      throw new GenerationStateError(
+        claim.delivery.generationId,
+        "Outbound event delivery lease is no longer active.",
+      );
     return mapOutboundEventDelivery(row);
   }
 
@@ -2744,7 +2760,11 @@ export class PostgresRepository implements Repository {
         AND status = 'delivering' AND lease_token = ${input.leaseToken}
       RETURNING *
     `;
-    if (!row) throw new GenerationStateError(input.generationId, "Outbound event delivery lease is no longer active.");
+    if (!row)
+      throw new GenerationStateError(
+        input.generationId,
+        "Outbound event delivery lease is no longer active.",
+      );
     return mapOutboundEventDelivery(row);
   }
 
@@ -2801,10 +2821,7 @@ export class PostgresRepository implements Repository {
     return rows.map(mapToolCall);
   }
 
-  async listGenerationTasks(
-    scope: UserScope,
-    generationId: string,
-  ): Promise<GenerationTaskData[]> {
+  async listGenerationTasks(scope: UserScope, generationId: string): Promise<GenerationTaskData[]> {
     await this.assertReady();
     const rows = await this.#sql<GenerationTaskRow[]>`
       SELECT task.id, task.generation_id, task.attempt_id, task.status, task.payload,
@@ -3103,7 +3120,9 @@ export class PostgresRepository implements Repository {
     );
     if (!bytes) throw new NotFoundError("Generated artifact content");
     if (bytes.byteLength !== row.size || sha256(bytes) !== row.checksum) {
-      throw new Error(`Generated artifact ${row.id} failed its persisted size or checksum validation.`);
+      throw new Error(
+        `Generated artifact ${row.id} failed its persisted size or checksum validation.`,
+      );
     }
     return { ...mapGeneratedArtifact(row), bytes: Uint8Array.from(bytes) };
   }
@@ -3114,15 +3133,20 @@ export class PostgresRepository implements Repository {
   ): Promise<VisualArtifactData> {
     await this.assertReady();
     if (!this.#artifactStore) {
-      throw new ConfigurationError("artifactStore is required to persist visual evaluation captures.");
+      throw new ConfigurationError(
+        "artifactStore is required to persist visual evaluation captures.",
+      );
     }
     const artifactKey = `visual/${input.versionId}/${input.id}-${input.checksum}`;
-    await this.#artifactStore.put({
-      key: artifactKey,
-      bytes: Uint8Array.from(input.bytes),
-      mediaType: input.mediaType,
-      checksum: input.checksum,
-    }, visualArtifactContext(scope, input.id));
+    await this.#artifactStore.put(
+      {
+        key: artifactKey,
+        bytes: Uint8Array.from(input.bytes),
+        mediaType: input.mediaType,
+        checksum: input.checksum,
+      },
+      visualArtifactContext(scope, input.id),
+    );
     try {
       const [row] = await this.#sql<VisualArtifactRow[]>`
         INSERT INTO viby.visual_artifacts (
@@ -3144,7 +3168,8 @@ export class PostgresRepository implements Repository {
       if (!row) throw new NotFoundError("Version");
       return mapVisualArtifact(row);
     } catch (error) {
-      await this.#artifactStore.delete(artifactKey, visualArtifactContext(scope, input.id))
+      await this.#artifactStore
+        .delete(artifactKey, visualArtifactContext(scope, input.id))
         .catch(() => undefined);
       throw error;
     }
@@ -3190,10 +3215,15 @@ export class PostgresRepository implements Repository {
         `Artifact store ${row.artifact_store} is required to read visual artifact ${row.id}.`,
       );
     }
-    const bytes = await this.#artifactStore.get(row.artifact_key, visualArtifactContext(scope, row.id));
+    const bytes = await this.#artifactStore.get(
+      row.artifact_key,
+      visualArtifactContext(scope, row.id),
+    );
     if (!bytes) throw new NotFoundError("Visual artifact content");
     if (bytes.byteLength !== row.size || sha256(bytes) !== row.checksum) {
-      throw new Error(`Visual artifact ${row.id} failed its persisted size or checksum validation.`);
+      throw new Error(
+        `Visual artifact ${row.id} failed its persisted size or checksum validation.`,
+      );
     }
     return { ...mapVisualArtifact(row), bytes: Uint8Array.from(bytes) };
   }
@@ -3262,11 +3292,9 @@ export class PostgresRepository implements Repository {
       current.push(mapAttachment(row));
       attachments.set(row.message_id, current);
     }
-    return rows.map((row) => mapMessage(
-      row,
-      parts.get(row.id) ?? [],
-      attachments.get(row.id) ?? [],
-    ));
+    return rows.map((row) =>
+      mapMessage(row, parts.get(row.id) ?? [], attachments.get(row.id) ?? []),
+    );
   }
 
   async getVersionFiles(scope: UserScope, versionId: string): Promise<VersionFile[]> {
@@ -3279,7 +3307,8 @@ export class PostgresRepository implements Repository {
       ORDER BY path
     `;
     return rows.map(mapVersionEntry).map((entry) => {
-      if (entry.type === "artifact") throw new Error("Text source query returned an artifact entry.");
+      if (entry.type === "artifact")
+        throw new Error("Text source query returned an artifact entry.");
       const { type: _type, ...file } = entry;
       return file;
     });
@@ -3330,7 +3359,9 @@ export class PostgresRepository implements Repository {
     );
     if (!bytes) throw new NotFoundError("Project artifact content");
     if (bytes.byteLength !== row.size || sha256(bytes) !== row.checksum) {
-      throw new Error(`Project artifact ${row.id} failed its persisted size or checksum validation.`);
+      throw new Error(
+        `Project artifact ${row.id} failed its persisted size or checksum validation.`,
+      );
     }
     return { ...mapProjectArtifact(row), bytes: Uint8Array.from(bytes) };
   }
@@ -3424,13 +3455,13 @@ export class PostgresRepository implements Repository {
         UPDATE viby.repository_pushes SET
           repository_link_id = ${link.id},
           status = ${input.result.status},
-          commit = ${pushed
-            ? sql.json(JSON.parse(JSON.stringify(input.result.commit)))
-            : null},
+          commit = ${pushed ? sql.json(JSON.parse(JSON.stringify(input.result.commit))) : null},
           changed_files = ${pushed ? input.result.changedFiles : null},
-          pull_request = ${pushed && input.result.pullRequest
-            ? sql.json(JSON.parse(JSON.stringify(input.result.pullRequest)))
-            : null},
+          pull_request = ${
+            pushed && input.result.pullRequest
+              ? sql.json(JSON.parse(JSON.stringify(input.result.pullRequest)))
+              : null
+          },
           actual_head = ${pushed ? null : input.result.actualHead},
           error = NULL,
           updated_at = ${input.completedAt},
@@ -3587,8 +3618,8 @@ export class PostgresRepository implements Repository {
       `;
       if (!project) throw new Error("Postgres did not return the deployment project link.");
       const terminal = isTerminalDeploymentStatus(input.deployment.status);
-      const changed = deployment.status !== input.deployment.status
-        || deployment.url !== input.deployment.url;
+      const changed =
+        deployment.status !== input.deployment.status || deployment.url !== input.deployment.url;
       const [updated] = await sql<DeploymentRow[]>`
         UPDATE viby.deployments SET
           project_link_id = ${project.id},
@@ -3660,8 +3691,8 @@ export class PostgresRepository implements Repository {
         FOR UPDATE
       `;
       if (!deployment) return null;
-      const changed = deployment.status !== input.deployment.status
-        || deployment.url !== input.deployment.url;
+      const changed =
+        deployment.status !== input.deployment.status || deployment.url !== input.deployment.url;
       const terminal = isTerminalDeploymentStatus(input.deployment.status);
       const [updated] = await sql<DeploymentRow[]>`
         UPDATE viby.deployments SET
@@ -3752,12 +3783,15 @@ export class PostgresRepository implements Repository {
     if (existing) return mapDeploymentArtifact(existing);
 
     const artifactKey = `deployments/${input.deploymentId}/${input.id}-${input.checksum}.zip`;
-    await this.#artifactStore.put({
-      key: artifactKey,
-      bytes: Uint8Array.from(input.bytes),
-      mediaType: "application/zip",
-      checksum: input.checksum,
-    }, deploymentArtifactContext(scope, input.id));
+    await this.#artifactStore.put(
+      {
+        key: artifactKey,
+        bytes: Uint8Array.from(input.bytes),
+        mediaType: "application/zip",
+        checksum: input.checksum,
+      },
+      deploymentArtifactContext(scope, input.id),
+    );
     try {
       const result = await this.#sql.begin(async (sql) => {
         const [inserted] = await sql<DeploymentArtifactRow[]>`
@@ -3783,12 +3817,16 @@ export class PostgresRepository implements Repository {
           ON CONFLICT (tenant_id, user_id, deployment_id) DO NOTHING
           RETURNING *
         `;
-        const row = inserted ?? (await sql<DeploymentArtifactRow[]>`
+        const row =
+          inserted ??
+          (
+            await sql<DeploymentArtifactRow[]>`
           SELECT * FROM viby.deployment_artifacts
           WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
             AND deployment_id = ${input.deploymentId}
           LIMIT 1
-        `)[0];
+        `
+          )[0];
         if (!row) throw new NotFoundError("Deployment");
         await sql`
           UPDATE viby.deployments SET
@@ -3800,17 +3838,15 @@ export class PostgresRepository implements Repository {
         return { row, created: inserted !== undefined };
       });
       if (!result.created && result.row.artifact_key !== artifactKey) {
-        await this.#artifactStore.delete(
-          artifactKey,
-          deploymentArtifactContext(scope, input.id),
-        ).catch(() => undefined);
+        await this.#artifactStore
+          .delete(artifactKey, deploymentArtifactContext(scope, input.id))
+          .catch(() => undefined);
       }
       return mapDeploymentArtifact(result.row);
     } catch (error) {
-      await this.#artifactStore.delete(
-        artifactKey,
-        deploymentArtifactContext(scope, input.id),
-      ).catch(() => undefined);
+      await this.#artifactStore
+        .delete(artifactKey, deploymentArtifactContext(scope, input.id))
+        .catch(() => undefined);
       throw error;
     }
   }
@@ -3843,7 +3879,9 @@ export class PostgresRepository implements Repository {
     );
     if (!bytes) throw new NotFoundError("Deployment artifact content");
     if (bytes.byteLength !== row.size || sha256(bytes) !== row.checksum) {
-      throw new Error(`Deployment artifact ${row.id} failed its persisted size or checksum validation.`);
+      throw new Error(
+        `Deployment artifact ${row.id} failed its persisted size or checksum validation.`,
+      );
     }
     return { ...mapDeploymentArtifact(row), bytes: Uint8Array.from(bytes) };
   }
@@ -4006,6 +4044,32 @@ export class PostgresRepository implements Repository {
       LIMIT ${limit}
     `;
     return rows.map(mapPreviewSession<Framework>);
+  }
+
+  async retargetPreviewSession<Framework extends FrameworkId>(
+    scope: UserScope,
+    id: string,
+    versionId: string,
+    now: Date,
+  ): Promise<PreviewSessionData<Framework>> {
+    await this.assertReady();
+    const [row] = await this.#sql<PreviewSessionRow[]>`
+      UPDATE viby.preview_sessions AS preview SET
+        version_id = version.id, updated_at = ${now}
+      FROM viby.versions AS version
+      WHERE preview.tenant_id = ${scope.tenantId}
+        AND preview.user_id = ${scope.userId}
+        AND preview.id = ${id}
+        AND preview.status IN ('starting', 'ready')
+        AND version.tenant_id = ${scope.tenantId}
+        AND version.user_id = ${scope.userId}
+        AND version.id = ${versionId}
+        AND version.chat_id = preview.chat_id
+        AND version.framework = preview.framework
+      RETURNING preview.*
+    `;
+    if (!row) throw new NotFoundError("Active preview version");
+    return mapPreviewSession<Framework>(row);
   }
 
   async markPreviewReady<Framework extends FrameworkId>(
@@ -4183,7 +4247,10 @@ export class PostgresRepository implements Repository {
         LIMIT 1
       `;
       if (!chat) throw new NotFoundError("Chat");
-      const rows = sourceIds.length === 0 ? [] : await sql<ToolSourceRegistrationRow[]>`
+      const rows =
+        sourceIds.length === 0
+          ? []
+          : await sql<ToolSourceRegistrationRow[]>`
         SELECT id, type, name, description, configuration, status, created_at, updated_at
         FROM viby.tool_sources
         WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
@@ -4263,10 +4330,12 @@ export class PostgresRepository implements Repository {
       WHERE state_hash = ${stateHash} AND consumed_at IS NULL AND expires_at > ${now}
       LIMIT 1
     `;
-    return row ? {
-      scope: { tenantId: row.tenant_id, userId: row.user_id },
-      session: mapToolSourceAuthorizationSession(row),
-    } : null;
+    return row
+      ? {
+          scope: { tenantId: row.tenant_id, userId: row.user_id },
+          session: mapToolSourceAuthorizationSession(row),
+        }
+      : null;
   }
 
   async consumeToolSourceAuthorizationSession(
@@ -4280,10 +4349,12 @@ export class PostgresRepository implements Repository {
       WHERE state_hash = ${stateHash} AND consumed_at IS NULL AND expires_at > ${consumedAt}
       RETURNING *
     `;
-    return row ? {
-      scope: { tenantId: row.tenant_id, userId: row.user_id },
-      session: mapToolSourceAuthorizationSession(row),
-    } : null;
+    return row
+      ? {
+          scope: { tenantId: row.tenant_id, userId: row.user_id },
+          session: mapToolSourceAuthorizationSession(row),
+        }
+      : null;
   }
 
   async getToolSourceConnection(
@@ -4380,12 +4451,15 @@ export class PostgresRepository implements Repository {
     try {
       for (const attachment of input.attachments) {
         const artifactKey = `attachments/${input.id}/${attachment.id}-${attachment.checksum}`;
-        await this.#artifactStore.put({
-          key: artifactKey,
-          bytes: Uint8Array.from(attachment.bytes),
-          mediaType: attachment.mediaType,
-          checksum: attachment.checksum,
-        }, attachmentContext(scope, attachment.id));
+        await this.#artifactStore.put(
+          {
+            key: artifactKey,
+            bytes: Uint8Array.from(attachment.bytes),
+            mediaType: attachment.mediaType,
+            checksum: attachment.checksum,
+          },
+          attachmentContext(scope, attachment.id),
+        );
         stored.push({
           id: attachment.id,
           filename: attachment.filename,
@@ -4398,12 +4472,14 @@ export class PostgresRepository implements Repository {
       }
       return stored;
     } catch (error) {
-      await Promise.allSettled(stored.map((attachment) => (
-        this.#artifactStore!.delete(
-          attachment.artifactKey,
-          attachmentContext(scope, attachment.id),
-        )
-      )));
+      await Promise.allSettled(
+        stored.map((attachment) =>
+          this.#artifactStore!.delete(
+            attachment.artifactKey,
+            attachmentContext(scope, attachment.id),
+          ),
+        ),
+      );
       throw error;
     }
   }
@@ -4423,12 +4499,15 @@ export class PostgresRepository implements Repository {
     try {
       for (const artifact of artifacts) {
         const artifactKey = `generated/${generationId}/${artifact.id}-${artifact.checksum}`;
-        await this.#artifactStore.put({
-          key: artifactKey,
-          bytes: Uint8Array.from(artifact.bytes),
-          mediaType: artifact.mediaType,
-          checksum: artifact.checksum,
-        }, generatedArtifactContext(scope, artifact.id));
+        await this.#artifactStore.put(
+          {
+            key: artifactKey,
+            bytes: Uint8Array.from(artifact.bytes),
+            mediaType: artifact.mediaType,
+            checksum: artifact.checksum,
+          },
+          generatedArtifactContext(scope, artifact.id),
+        );
         stored.push({
           id: artifact.id,
           position: artifact.position,
@@ -4462,12 +4541,15 @@ export class PostgresRepository implements Repository {
     try {
       for (const artifact of artifacts) {
         const artifactKey = `project/${artifact.artifactId}-${artifact.checksum}`;
-        await this.#artifactStore.put({
-          key: artifactKey,
-          bytes: Uint8Array.from(artifact.bytes),
-          mediaType: artifact.mediaType,
-          checksum: artifact.checksum,
-        }, projectArtifactContext(scope, artifact.artifactId));
+        await this.#artifactStore.put(
+          {
+            key: artifactKey,
+            bytes: Uint8Array.from(artifact.bytes),
+            mediaType: artifact.mediaType,
+            checksum: artifact.checksum,
+          },
+          projectArtifactContext(scope, artifact.artifactId),
+        );
         stored.push({
           type: "artifact",
           path: artifact.path,
@@ -4492,12 +4574,14 @@ export class PostgresRepository implements Repository {
     artifacts: readonly StoredProjectArtifactInput[],
   ): Promise<void> {
     if (!this.#artifactStore) return;
-    await Promise.allSettled(artifacts.map((artifact) => (
-      this.#artifactStore!.delete(
-        artifact.artifactKey,
-        projectArtifactContext(scope, artifact.artifactId),
-      )
-    )));
+    await Promise.allSettled(
+      artifacts.map((artifact) =>
+        this.#artifactStore!.delete(
+          artifact.artifactKey,
+          projectArtifactContext(scope, artifact.artifactId),
+        ),
+      ),
+    );
   }
 
   async #cleanupGeneratedArtifacts(
@@ -4505,18 +4589,17 @@ export class PostgresRepository implements Repository {
     artifacts: readonly StoredGeneratedArtifactInput[],
   ): Promise<void> {
     if (!this.#artifactStore) return;
-    await Promise.allSettled(artifacts.map((artifact) => (
-      this.#artifactStore!.delete(
-        artifact.artifactKey,
-        generatedArtifactContext(scope, artifact.id),
-      )
-    )));
+    await Promise.allSettled(
+      artifacts.map((artifact) =>
+        this.#artifactStore!.delete(
+          artifact.artifactKey,
+          generatedArtifactContext(scope, artifact.id),
+        ),
+      ),
+    );
   }
 
-  async #loadAttachmentContent(
-    scope: UserScope,
-    row: AttachmentRow,
-  ): Promise<AttachmentContent> {
+  async #loadAttachmentContent(scope: UserScope, row: AttachmentRow): Promise<AttachmentContent> {
     if (row.artifact_store === "postgres-legacy") {
       if (!row.content) throw new Error(`Legacy attachment ${row.id} has no content.`);
       return { ...mapAttachment(row), bytes: Uint8Array.from(row.content) };
@@ -4526,10 +4609,7 @@ export class PostgresRepository implements Repository {
         `Artifact store ${row.artifact_store} is required to read attachment ${row.id}.`,
       );
     }
-    const bytes = await this.#artifactStore.get(
-      row.artifact_key,
-      attachmentContext(scope, row.id),
-    );
+    const bytes = await this.#artifactStore.get(row.artifact_key, attachmentContext(scope, row.id));
     if (!bytes) throw new NotFoundError("Attachment content");
     if (bytes.byteLength !== row.size || sha256(bytes) !== row.checksum) {
       throw new Error(`Attachment ${row.id} failed its persisted size or checksum validation.`);
@@ -4539,10 +4619,11 @@ export class PostgresRepository implements Repository {
 
   async #deleteStoredArtifact(scope: UserScope, row: StoredArtifactLocation): Promise<void> {
     if (
-      row.artifact_store === "postgres-legacy"
-      || !this.#artifactStore
-      || this.#artifactStore.id !== row.artifact_store
-    ) return;
+      row.artifact_store === "postgres-legacy" ||
+      !this.#artifactStore ||
+      this.#artifactStore.id !== row.artifact_store
+    )
+      return;
     await this.#artifactStore.delete(
       row.artifact_key,
       row.kind === "attachment"
@@ -5237,9 +5318,9 @@ async function insertMessage(
       )
     `;
   }
-  const toolCallIds = input.parts.flatMap((part) => (
-    part.type === "tool-call" ? [part.data.toolCallId] : []
-  ));
+  const toolCallIds = input.parts.flatMap((part) =>
+    part.type === "tool-call" ? [part.data.toolCallId] : [],
+  );
   if (toolCallIds.length > 0) {
     await sql`
       UPDATE viby.tool_calls SET message_id = ${messageId}
@@ -5265,7 +5346,10 @@ async function assertActiveToolAttempt(
       AND attempt.lease_token = ${input.leaseToken} AND attempt.lease_expires_at > now()
   `;
   if (rows.length === 0) {
-    throw new GenerationStateError(input.generationId, "The generation worker lease is no longer active.");
+    throw new GenerationStateError(
+      input.generationId,
+      "The generation worker lease is no longer active.",
+    );
   }
 }
 
@@ -5356,9 +5440,7 @@ function mapPreviewSession<Framework extends FrameworkId>(
   };
 }
 
-function mapToolSourceRegistration(
-  row: ToolSourceRegistrationRow,
-): ToolSourceRegistrationData {
+function mapToolSourceRegistration(row: ToolSourceRegistrationRow): ToolSourceRegistrationData {
   return {
     id: row.id,
     type: row.type,

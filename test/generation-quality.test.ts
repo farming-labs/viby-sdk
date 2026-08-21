@@ -32,7 +32,11 @@ class QualityGenerator implements ProjectGenerator<"farmjs"> {
       title: "Quality project",
       summary: "Generated source passed configured checks.",
       files: [
-        file("package.json", '{"scripts":{"typecheck":"tsc --noEmit","build":"farm build"}}\n', true),
+        file(
+          "package.json",
+          '{"scripts":{"typecheck":"tsc --noEmit","build":"farm build"}}\n',
+          true,
+        ),
         file("src/index.ts", "export  const ready=true;\n"),
       ],
       usage,
@@ -120,11 +124,14 @@ function setup(
       sandbox: adapter,
       generation: {
         quality: {
-          prepare: [{
-            id: "install",
-            command: "npm",
-            args: ["install", "--ignore-scripts"],
-          }, ...(captureSourceChanges ? [{ id: "format", command: "formatter" }] : [])],
+          prepare: [
+            {
+              id: "install",
+              command: "npm",
+              args: ["install", "--ignore-scripts"],
+            },
+            ...(captureSourceChanges ? [{ id: "format", command: "formatter" }] : []),
+          ],
           checks: [
             { id: "typecheck", command: "npm", args: ["run", "typecheck"] },
             { id: "build", command: "npm", args: ["run", "build"] },
@@ -164,9 +171,9 @@ test("commits an immutable version only after every sandbox quality command pass
     assert.equal(adapter.instances[0]?.files.has("src/index.ts"), true);
     assert.equal(adapter.instances[0]?.stopCalls, 1);
     assert.equal((await chat.listVersions()).items.length, 1);
-    const assistant = (await chat.listMessages()).items.find((message) => (
-      message.role === "assistant"
-    ));
+    const assistant = (await chat.listMessages()).items.find(
+      (message) => message.role === "assistant",
+    );
     const usagePart = assistant?.parts.find((part) => part.type === "usage");
     assert.equal(typeof usagePart?.data.durationMs, "number");
     assert.equal((usagePart?.data.durationMs ?? -1) >= 0, true);
@@ -175,9 +182,12 @@ test("commits an immutable version only after every sandbox quality command pass
         .filter((event) => event.type.startsWith("quality."))
         .map((event) => event.type),
       [
-        "quality.started", "quality.completed",
-        "quality.started", "quality.completed",
-        "quality.started", "quality.completed",
+        "quality.started",
+        "quality.completed",
+        "quality.started",
+        "quality.completed",
+        "quality.started",
+        "quality.completed",
       ],
     );
   } finally {
@@ -206,16 +216,20 @@ test("atomically repairs one failed quality attempt with its durable diagnostic"
       /previous attempt failed with: Generation quality check build failed with exit code 1/i,
     );
     assert.deepEqual(
-      (await generation.attempts()).map(({ number, reason, status }) => ({ number, reason, status })),
+      (await generation.attempts()).map(({ number, reason, status }) => ({
+        number,
+        reason,
+        status,
+      })),
       [
         { number: 1, reason: "initial", status: "failed" },
         { number: 2, reason: "retry", status: "succeeded" },
       ],
     );
     assert.equal(
-      (await generation.events({ limit: 100 })).events.some((event) => (
-        event.type === "generation.failed"
-      )),
+      (await generation.events({ limit: 100 })).events.some(
+        (event) => event.type === "generation.failed",
+      ),
       false,
     );
   } finally {
@@ -302,51 +316,85 @@ test("requires a sandbox and validates declarative quality commands at configura
     generator: new QualityGenerator(),
     skillResolver: new SkillResolver({}),
   };
-  assert.throws(() => createVibyWithDependencies(
-    {
-      framework: "farmjs",
-      model: "test/quality" as LanguageModel,
-      generation: { quality: { checks: [{ id: "build", command: "npm" }] } },
-    },
-    dependencies,
-  ), /requires a sandbox adapter/);
-  assert.throws(() => createVibyWithDependencies(
-    {
-      framework: "farmjs",
-      model: "test/quality" as LanguageModel,
-      sandbox: new QualitySandboxAdapter(),
-      generation: { quality: { checks: [] } },
-    },
-    dependencies,
-  ), /checks must contain at least one command/);
-  assert.throws(() => createVibyWithDependencies(
-    {
-      framework: "farmjs",
-      model: "test/quality" as LanguageModel,
-      sandbox: new QualitySandboxAdapter(),
-      generation: {
-        quality: {
-          checks: [{ id: "build", command: "npm" }],
-          captureSourceChanges: "yes" as unknown as boolean,
+  assert.throws(
+    () =>
+      createVibyWithDependencies(
+        {
+          framework: "farmjs",
+          model: "test/quality" as LanguageModel,
+          generation: { quality: { checks: [{ id: "build", command: "npm" }] } },
         },
-      },
-    },
-    dependencies,
-  ), /captureSourceChanges must be a boolean/);
-  assert.throws(() => createVibyWithDependencies(
-    {
-      framework: "farmjs",
-      model: "test/quality" as LanguageModel,
-      sandbox: new QualitySandboxAdapter(),
-      generation: {
-        quality: {
-          checks: [{ id: "build", command: "npm" }],
-          repairAttempts: 4,
+        dependencies,
+      ),
+    /requires a sandbox adapter/,
+  );
+  assert.throws(
+    () =>
+      createVibyWithDependencies(
+        {
+          framework: "farmjs",
+          model: "test/quality" as LanguageModel,
+          sandbox: new QualitySandboxAdapter(),
+          generation: { quality: { checks: [] } },
         },
-      },
-    },
-    dependencies,
-  ), /repairAttempts must be an integer between 0 and 3/);
+        dependencies,
+      ),
+    /checks must contain at least one command/,
+  );
+  assert.throws(
+    () =>
+      createVibyWithDependencies(
+        {
+          framework: "farmjs",
+          model: "test/quality" as LanguageModel,
+          sandbox: new QualitySandboxAdapter(),
+          generation: {
+            quality: {
+              checks: [{ id: "build", command: "npm" }],
+              captureSourceChanges: "yes" as unknown as boolean,
+            },
+          },
+        },
+        dependencies,
+      ),
+    /captureSourceChanges must be a boolean/,
+  );
+  assert.throws(
+    () =>
+      createVibyWithDependencies(
+        {
+          framework: "farmjs",
+          model: "test/quality" as LanguageModel,
+          sandbox: new QualitySandboxAdapter(),
+          generation: {
+            quality: {
+              checks: [{ id: "build", command: "npm" }],
+              repairAttempts: 4,
+            },
+          },
+        },
+        dependencies,
+      ),
+    /repairAttempts must be an integer between 0 and 3/,
+  );
+  assert.throws(
+    () =>
+      createVibyWithDependencies(
+        {
+          framework: "farmjs",
+          model: "test/quality" as LanguageModel,
+          sandbox: new QualitySandboxAdapter(),
+          generation: {
+            quality: {
+              checks: [{ id: "build", command: "npm" }],
+              checkConcurrency: 9,
+            },
+          },
+        },
+        dependencies,
+      ),
+    /checkConcurrency must be an integer between 1 and 8/,
+  );
 });
 
 function file(path: string, content: string, locked = false): VersionFile {

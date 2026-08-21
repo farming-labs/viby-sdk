@@ -11,11 +11,7 @@ import type {
   SandboxCommandPolicy,
   SandboxCommandProposedAction,
 } from "./sandbox.js";
-import type {
-  GenerationCostConfig,
-  GenerationCostData,
-  VibyTelemetry,
-} from "./telemetry.js";
+import type { GenerationCostConfig, GenerationCostData, VibyTelemetry } from "./telemetry.js";
 import type { DeploymentPreparationConfig } from "./deployment-preparation.js";
 import type { VibyStorage } from "./storage.js";
 import type { EnvironmentConfig } from "./environment.js";
@@ -134,6 +130,8 @@ interface VibyBaseConfig<Framework extends FrameworkId = FrameworkId> {
     readonly execution?: "embedded" | "worker";
     /** Optional sandbox checks that must pass before an immutable version is committed. */
     readonly quality?: GenerationQualityConfig;
+    /** Optional eager, reusable workspace lifecycle for generated projects. */
+    readonly workspace?: GenerationWorkspaceConfig;
   };
   readonly retention?: {
     readonly deletedChatsMs?: number | null;
@@ -145,8 +143,8 @@ interface VibyBaseConfig<Framework extends FrameworkId = FrameworkId> {
   readonly cost?: GenerationCostConfig;
 }
 
-export type VibyConfig<Framework extends FrameworkId = FrameworkId> =
-  VibyBaseConfig<Framework> & (
+export type VibyConfig<Framework extends FrameworkId = FrameworkId> = VibyBaseConfig<Framework> &
+  (
     | {
         /** Convenient AI SDK shortcut. */
         readonly model: LanguageModel;
@@ -201,6 +199,8 @@ export interface GenerationQualityConfig {
   readonly prepare?: readonly GenerationQualityCommand[];
   /** Required checks such as typecheck, test, and build. */
   readonly checks: readonly GenerationQualityCommand[];
+  /** Maximum final checks to run concurrently. Defaults to 1. */
+  readonly checkConcurrency?: number;
   /**
    * Read candidate text files back from the sandbox after successful commands
    * and commit those exact contents. This supports provider-neutral formatters
@@ -220,6 +220,14 @@ export interface GenerationQualityConfig {
   readonly formatFailure?: (failure: GenerationQualityFailure) => string | null | undefined;
 }
 
+export interface GenerationWorkspaceConfig {
+  /**
+   * Start the configured preview from the base version while generation runs,
+   * then keep the same sandbox and preview alive for the generated version.
+   */
+  readonly preview: "eager";
+}
+
 export interface UserScope {
   readonly tenantId: string;
   readonly userId: string;
@@ -230,9 +238,15 @@ export interface CreateChatInput {
   readonly metadata?: ChatMetadata;
 }
 
-export type JsonValue = string | number | boolean | null | JsonValue[] | {
-  readonly [key: string]: JsonValue;
-};
+export type JsonValue =
+  | string
+  | number
+  | boolean
+  | null
+  | JsonValue[]
+  | {
+      readonly [key: string]: JsonValue;
+    };
 
 export type ChatMetadata = Readonly<Record<string, JsonValue>>;
 
@@ -372,11 +386,7 @@ export type GenerationAttemptStatus =
   | "cancelled"
   | "interrupted";
 
-export type GenerationAttemptReason =
-  | "initial"
-  | "retry"
-  | "resume"
-  | "task_resolution";
+export type GenerationAttemptReason = "initial" | "retry" | "resume" | "task_resolution";
 
 export interface ChatData<Framework extends FrameworkId = FrameworkId> {
   readonly id: string;
@@ -448,12 +458,7 @@ export interface AttachmentContent extends AttachmentData {
   readonly bytes: Uint8Array;
 }
 
-export type GeneratedArtifactKind =
-  | "image"
-  | "audio"
-  | "video"
-  | "document"
-  | "binary";
+export type GeneratedArtifactKind = "image" | "audio" | "video" | "document" | "binary";
 
 export interface GeneratedArtifactData {
   readonly id: string;
@@ -696,10 +701,7 @@ export interface PermissionTaskRequest {
   readonly proposedToolAction?: ToolSourceProposedAction;
 }
 
-export type GenerationTaskRequest =
-  | PlanTaskRequest
-  | QuestionTaskRequest
-  | PermissionTaskRequest;
+export type GenerationTaskRequest = PlanTaskRequest | QuestionTaskRequest | PermissionTaskRequest;
 
 export interface PlanTaskResolution {
   readonly kind: "plan";
@@ -745,6 +747,10 @@ export type GenerationEventType =
   | "part.completed"
   | "part.failed"
   | "artifact.created"
+  | "workspace.started"
+  | "workspace.prepared"
+  | "preview.ready"
+  | "preview.failed"
   | "quality.started"
   | "quality.completed"
   | "attempt.waiting"
@@ -803,6 +809,22 @@ export interface GenerationEventDataMap {
     readonly size: number;
     readonly checksum: string;
   };
+  readonly "workspace.started": {
+    readonly previewId: string;
+    readonly sandboxProvider: string;
+  };
+  readonly "workspace.prepared": {
+    readonly previewId: string;
+    readonly filesWritten: number;
+  };
+  readonly "preview.ready": {
+    readonly previewId: string;
+    readonly url: string;
+  };
+  readonly "preview.failed": {
+    readonly previewId: string;
+    readonly error: string;
+  };
   readonly "quality.started": {
     readonly checkId: string;
     readonly phase: "prepare" | "check";
@@ -831,18 +853,17 @@ export interface GenerationEventDataMap {
   readonly "generation.cancelled": { readonly reason: string };
 }
 
-export type GenerationEvent<
-  Type extends GenerationEventType = GenerationEventType,
-> = Type extends GenerationEventType
-  ? {
-      readonly cursor: string;
-      readonly generationId: string;
-      readonly attemptId: string | null;
-      readonly type: Type;
-      readonly data: GenerationEventDataMap[Type];
-      readonly createdAt: Date;
-    }
-  : never;
+export type GenerationEvent<Type extends GenerationEventType = GenerationEventType> =
+  Type extends GenerationEventType
+    ? {
+        readonly cursor: string;
+        readonly generationId: string;
+        readonly attemptId: string | null;
+        readonly type: Type;
+        readonly data: GenerationEventDataMap[Type];
+        readonly createdAt: Date;
+      }
+    : never;
 
 export interface GenerationEventPage {
   readonly events: readonly GenerationEvent[];

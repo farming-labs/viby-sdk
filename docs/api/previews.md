@@ -20,16 +20,25 @@ const viby = createViby({
     maxTimeoutMs: 120_000,
   }),
   preview: {
-    start: { command: "npm", args: ["run", "dev", "--", "--host", "0.0.0.0"] },
+    prepare: [{ command: "pnpm", args: ["install", "--prefer-offline"] }],
+    start: { command: "pnpm", args: ["dev", "--host", "0.0.0.0"] },
     port: 3000,
     environment: "preview",
+    env: { CI: "1" },
     readiness: { path: "/", timeoutMs: 60_000 },
   },
 });
 ```
 
 The preview command is framework or product configuration. Viby does not infer package-manager or
-framework commands.
+framework commands. `env` supplies safe host defaults to every preview; values passed to
+`version.preview({ env })` override those defaults for that opening only.
+
+Set `generation.workspace: { preview: "eager" }` to open the base version while a generation runs.
+The generation stream emits the preview URL as soon as preparation and readiness finish. Source
+edits, final dependency reconciliation, and quality checks continue in that same sandbox. After the
+new immutable version commits, Viby retargets the durable preview record without restarting the
+process or creating a second lease.
 
 ## Capability discovery
 

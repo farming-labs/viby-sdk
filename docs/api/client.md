@@ -58,6 +58,7 @@ Configuration failures throw `ConfigurationError` before work begins.
 | `deployment.preparation` | `DeploymentPreparationConfig` | Install/build/output contract for providers that require prebuilt files. |
 | `generation.execution` | `"embedded" \| "worker"` | Defaults to `embedded`; `worker` leaves new attempts queued. |
 | `generation.quality` | `GenerationQualityConfig` | Optional provider-neutral preparation and quality commands that must pass before generated source becomes an immutable version. |
+| `generation.workspace` | `{ preview: "eager" }` | Opens the base version in one reusable sandbox while generation runs, emits the preview as soon as it is ready, and hands that workspace to final quality checks. |
 | `retention.deletedChatsMs` | `number \| null` | Default soft-delete retention. `null` keeps tombstones indefinitely; `0` allows immediate purge. |
 | `events.sinks` | `OutboundEventSink[]` | Named outbound delivery targets. Delivery is explicit and durable. |
 | `telemetry` | `VibyTelemetry` | Provider-neutral spans and metrics. Telemetry failures are fail-open. |

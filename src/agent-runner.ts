@@ -245,8 +245,18 @@ implements ProjectGenerator<Framework> {
       if (!output.task || output.title || output.summary) {
         throw new ConfigurationError("The agent returned an inconsistent task outcome.");
       }
-      if (workspace.changes().length > 0) {
-        throw new ConfigurationError("The agent cannot pause after staging uncommitted workspace changes.");
+      const changes = workspace.changes();
+      if (changes.length > 0) {
+        return completedWorkspaceOutput({
+          input,
+          workspace,
+          changes,
+          title: previousEntries.length > 0 ? "Updated project" : "Generated project",
+          summary: `Applied ${changes.length} validated workspace ${changes.length === 1 ? "change" : "changes"} before the model returned a late task outcome.`,
+          usage: result.totalUsage,
+          finishReason: result.finishReason,
+          artifacts,
+        });
       }
       return {
         kind: "task",

@@ -148,6 +148,12 @@ export interface PreviewSessionStore {
     now: Date,
     limit: number,
   ): Promise<PreviewSessionData<Framework>[]>;
+  retargetPreviewSession<Framework extends FrameworkId>(
+    scope: UserScope,
+    id: string,
+    versionId: string,
+    now: Date,
+  ): Promise<PreviewSessionData<Framework>>;
   markPreviewReady<Framework extends FrameworkId>(
     scope: UserScope,
     id: string,
@@ -178,6 +184,8 @@ export interface PreviewConfig {
   readonly port: number;
   readonly path?: string;
   readonly environment?: EnvironmentName;
+  /** Environment values injected into every preview sandbox. */
+  readonly env?: Readonly<Record<string, string>>;
   /** Lifetime of the underlying sandbox lease. Defaults to 30 minutes. */
   readonly sandboxTimeoutMs?: number;
   readonly readiness?: Omit<SandboxReadinessOptions, "path" | "signal">;
@@ -202,6 +210,8 @@ export interface ResolvedPreviewOpenOptions {
   readonly readiness: Omit<SandboxReadinessOptions, "path" | "signal">;
   readonly onEvent?: PreviewEventListener;
   readonly signal?: AbortSignal;
+  /** Internal ownership override for a generation workspace that outlives preview startup. */
+  readonly retainSandboxOnFailure?: boolean;
 }
 
 export class PreviewError extends VibyError {
@@ -220,13 +230,19 @@ export class PreviewRegistry<Framework extends FrameworkId = FrameworkId> {
   readonly #sandboxes: SandboxRegistry;
   readonly #sandbox: SandboxAdapter | undefined;
   readonly #config: PreviewConfig | undefined;
-  readonly #sessions = new Map<string, { readonly session: SandboxSession; readonly scope: UserScope }>();
+  readonly #sessions = new Map<
+    string,
+    { readonly session: SandboxSession; readonly scope: UserScope }
+  >();
   readonly #stops = new Map<string, Promise<PreviewSessionData<Framework>>>();
-  readonly #opening = new Map<string, {
-    readonly events: PreviewEvent[];
-    readonly listeners: Set<PreviewEventListener>;
-    readonly promise: Promise<PreviewSessionData<Framework>>;
-  }>();
+  readonly #opening = new Map<
+    string,
+    {
+      readonly events: PreviewEvent[];
+      readonly listeners: Set<PreviewEventListener>;
+      readonly promise: Promise<PreviewSessionData<Framework>>;
+    }
+  >();
 
   constructor(
     store: PreviewSessionStore,
@@ -261,7 +277,7 @@ export class PreviewRegistry<Framework extends FrameworkId = FrameworkId> {
         ...((options.environment ?? this.#config.environment) === undefined
           ? {}
           : { environment: options.environment ?? this.#config.environment }),
-        env: options.env ?? {},
+        env: { ...(this.#config.env ?? {}), ...(options.env ?? {}) },
         ports: [this.#config.port],
         ...(options.signal ? { signal: options.signal } : {}),
       },
@@ -319,7 +335,7 @@ export class PreviewRegistry<Framework extends FrameworkId = FrameworkId> {
       lease = await this.#sandboxes.get<Framework>(scope, sandbox.leaseId);
       if (!lease) throw new PreviewError(null, "The preview sandbox lease was not persisted.");
     } catch (error) {
-      await sandbox.stop().catch(() => undefined);
+      if (!options.retainSandboxOnFailure) await sandbox.stop().catch(() => undefined);
       throw error;
     }
     const id = createId();
@@ -338,7 +354,7 @@ export class PreviewRegistry<Framework extends FrameworkId = FrameworkId> {
         now: new Date(),
       });
     } catch (error) {
-      await sandbox.stop().catch(() => undefined);
+      if (!options.retainSandboxOnFailure) await sandbox.stop().catch(() => undefined);
       throw error;
     }
     this.#sessions.set(preview.id, { session: sandbox, scope: { ...scope } });
@@ -384,8 +400,8 @@ export class PreviewRegistry<Framework extends FrameworkId = FrameworkId> {
         if (result.exitCode !== 0) {
           const detail = (result.stderr || result.stdout).trim().slice(0, 2_000);
           throw new Error(
-            `Preview preparation command ${command.command} exited with ${result.exitCode}`
-              + (detail ? `: ${detail}` : "."),
+            `Preview preparation command ${command.command} exited with ${result.exitCode}` +
+              (detail ? `: ${detail}` : "."),
           );
         }
       }
@@ -448,16 +464,21 @@ export class PreviewRegistry<Framework extends FrameworkId = FrameworkId> {
       } catch (historyError) {
         failures.push(historyError);
       }
-      try {
-        await sandbox.stop();
-      } catch (stopError) {
-        failures.push(stopError);
+      if (!options.retainSandboxOnFailure) {
+        try {
+          await sandbox.stop();
+        } catch (stopError) {
+          failures.push(stopError);
+        }
       }
       this.#sessions.delete(preview.id);
-      const cause = failures.length === 1
-        ? failures[0]
-        : new AggregateError(failures, "Preview start and cleanup failed.");
-      throw new PreviewError(preview.id, `Preview ${preview.id} could not become ready.`, { cause });
+      const cause =
+        failures.length === 1
+          ? failures[0]
+          : new AggregateError(failures, "Preview start and cleanup failed.");
+      throw new PreviewError(preview.id, `Preview ${preview.id} could not become ready.`, {
+        cause,
+      });
     }
   }
 
@@ -470,6 +491,25 @@ export class PreviewRegistry<Framework extends FrameworkId = FrameworkId> {
     return preview;
   }
 
+  /** Moves an active preview to a newly committed version without replacing its sandbox. */
+  async retarget(
+    scope: UserScope,
+    id: string,
+    version: VersionData<Framework>,
+  ): Promise<PreviewSessionData<Framework>> {
+    const preview = await this.get(scope, id);
+    if (!isActivePreview(preview.status)) {
+      throw new PreviewError(preview.id, `Preview ${preview.id} is ${preview.status}.`);
+    }
+    if (preview.chatId !== version.chatId || preview.framework !== version.framework) {
+      throw new PreviewError(
+        preview.id,
+        `Preview ${preview.id} cannot move to a different chat or framework.`,
+      );
+    }
+    return this.#store.retargetPreviewSession<Framework>(scope, preview.id, version.id, new Date());
+  }
+
   list(
     scope: UserScope,
     options: PreviewSessionListOptions = {},
@@ -477,7 +517,11 @@ export class PreviewRegistry<Framework extends FrameworkId = FrameworkId> {
     return this.#store.listPreviewSessions<Framework>(scope, options);
   }
 
-  async reconnect(scope: UserScope, id: string, signal?: AbortSignal): Promise<PreviewSessionData<Framework>> {
+  async reconnect(
+    scope: UserScope,
+    id: string,
+    signal?: AbortSignal,
+  ): Promise<PreviewSessionData<Framework>> {
     const preview = await this.get(scope, id);
     if (!isActivePreview(preview.status)) {
       throw new PreviewError(preview.id, `Preview ${preview.id} is ${preview.status}.`);
@@ -494,12 +538,9 @@ export class PreviewRegistry<Framework extends FrameworkId = FrameworkId> {
       if (!signal?.aborted) {
         await sandbox.stop().catch(() => undefined);
         this.#sessions.delete(preview.id);
-        await this.#store.failPreviewSession(
-          scope,
-          preview.id,
-          errorMessage(error),
-          new Date(),
-        ).catch(() => undefined);
+        await this.#store
+          .failPreviewSession(scope, preview.id, errorMessage(error), new Date())
+          .catch(() => undefined);
       }
       throw new PreviewError(preview.id, `Preview ${preview.id} could not be reconnected.`, {
         cause: error,
@@ -521,22 +562,28 @@ export class PreviewRegistry<Framework extends FrameworkId = FrameworkId> {
     }
     const now = new Date();
     const previews = await this.#store.listExpiredPreviewSessions<Framework>(scope, now, limit);
-    await Promise.allSettled(previews.map(async (preview) => {
-      const active = this.#sessions.get(preview.id);
-      if (active) await active.session.stop().catch(() => undefined);
-      this.#sessions.delete(preview.id);
-      await this.#store.closePreviewSession(scope, preview.id, "expired", now);
-    }));
+    await Promise.allSettled(
+      previews.map(async (preview) => {
+        const active = this.#sessions.get(preview.id);
+        if (active) await active.session.stop().catch(() => undefined);
+        this.#sessions.delete(preview.id);
+        await this.#store.closePreviewSession(scope, preview.id, "expired", now);
+      }),
+    );
     return previews.length;
   }
 
   async stopAll(): Promise<void> {
     const active = [...this.#sessions.entries()];
-    const results = await Promise.allSettled(active.map(async ([id, tracked]) => {
-      const preview = await this.#store.getPreviewSession<Framework>(tracked.scope, id);
-      if (preview) await this.stop(tracked.scope, id);
-    }));
-    const failure = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
+    const results = await Promise.allSettled(
+      active.map(async ([id, tracked]) => {
+        const preview = await this.#store.getPreviewSession<Framework>(tracked.scope, id);
+        if (preview) await this.stop(tracked.scope, id);
+      }),
+    );
+    const failure = results.find(
+      (result): result is PromiseRejectedResult => result.status === "rejected",
+    );
     if (failure) throw failure.reason;
   }
 
@@ -596,24 +643,24 @@ function previewOpenKey<Framework extends FrameworkId>(
   version: VersionData<Framework>,
   options: ResolvedPreviewOpenOptions,
 ): string {
-  const environment = Object.entries(options.sandbox.env ?? {}).sort(([left], [right]) => (
-    left.localeCompare(right)
-  ));
+  const environment = Object.entries(options.sandbox.env ?? {}).sort(([left], [right]) =>
+    left.localeCompare(right),
+  );
   const files = options.files.map((file) => ({
     path: file.path,
-    content: typeof file.content === "string"
-      ? file.content
-      : Array.from(file.content),
+    content: typeof file.content === "string" ? file.content : Array.from(file.content),
   }));
-  return sha256(JSON.stringify({
-    tenantId: scope.tenantId,
-    userId: scope.userId,
-    versionId: version.id,
-    path: options.path,
-    environment: options.sandbox.environment ?? null,
-    env: environment,
-    files,
-  }));
+  return sha256(
+    JSON.stringify({
+      tenantId: scope.tenantId,
+      userId: scope.userId,
+      versionId: version.id,
+      path: options.path,
+      environment: options.sandbox.environment ?? null,
+      env: environment,
+      files,
+    }),
+  );
 }
 
 function withPreviewOutput(
@@ -656,34 +703,48 @@ function normalizePreviewConfig(config: PreviewConfig): PreviewConfig {
   if (!config.start || typeof config.start !== "object") {
     throw new ConfigurationError("preview.start must be a sandbox command.");
   }
-  if (config.prepare !== undefined && (!Array.isArray(config.prepare)
-    || config.prepare.some((command) => !command || typeof command !== "object"))) {
+  if (
+    config.prepare !== undefined &&
+    (!Array.isArray(config.prepare) ||
+      config.prepare.some((command) => !command || typeof command !== "object"))
+  ) {
     throw new ConfigurationError("preview.prepare must be an array of sandbox commands.");
   }
-  if (config.files !== undefined && (!Array.isArray(config.files)
-    || config.files.some((file) => !file || typeof file !== "object"))) {
+  if (
+    config.files !== undefined &&
+    (!Array.isArray(config.files) || config.files.some((file) => !file || typeof file !== "object"))
+  ) {
     throw new ConfigurationError("preview.files must be an array of sandbox files.");
   }
   if (!Number.isInteger(config.port) || config.port < 1 || config.port > 65_535) {
     throw new ConfigurationError("preview.port must be an integer between 1 and 65535.");
   }
-  if (config.sandboxTimeoutMs !== undefined && (
-    !Number.isInteger(config.sandboxTimeoutMs)
-    || config.sandboxTimeoutMs < 1
-    || config.sandboxTimeoutMs > 86_400_000
-  )) {
-    throw new ConfigurationError("preview.sandboxTimeoutMs must be an integer between 1 and 86400000.");
+  if (
+    config.sandboxTimeoutMs !== undefined &&
+    (!Number.isInteger(config.sandboxTimeoutMs) ||
+      config.sandboxTimeoutMs < 1 ||
+      config.sandboxTimeoutMs > 86_400_000)
+  ) {
+    throw new ConfigurationError(
+      "preview.sandboxTimeoutMs must be an integer between 1 and 86400000.",
+    );
   }
-  if (config.readiness !== undefined && (!config.readiness || typeof config.readiness !== "object")) {
+  if (
+    config.readiness !== undefined &&
+    (!config.readiness || typeof config.readiness !== "object")
+  ) {
     throw new ConfigurationError("preview.readiness must be an object.");
   }
   return Object.freeze({
     ...config,
-    files: Object.freeze((config.files ?? []).map((file) => ({
-      path: file.path,
-      content: typeof file.content === "string" ? file.content : new Uint8Array(file.content),
-    }))),
+    files: Object.freeze(
+      (config.files ?? []).map((file) => ({
+        path: file.path,
+        content: typeof file.content === "string" ? file.content : new Uint8Array(file.content),
+      })),
+    ),
     prepare: Object.freeze((config.prepare ?? []).map((command) => ({ ...command }))),
+    env: Object.freeze({ ...(config.env ?? {}) }),
     path: normalizePreviewPath(config.path),
     readiness: config.readiness ? { ...config.readiness } : {},
   });
@@ -691,9 +752,16 @@ function normalizePreviewConfig(config: PreviewConfig): PreviewConfig {
 
 function normalizePreviewPath(value: string | undefined): string {
   const path = value ?? "/";
-  if (!path.startsWith("/") || path.startsWith("//") || path.includes("\\")
-    || path.includes("\0") || path.length > 2_000) {
-    throw new ConfigurationError("Preview path must be an absolute URL path up to 2000 characters.");
+  if (
+    !path.startsWith("/") ||
+    path.startsWith("//") ||
+    path.includes("\\") ||
+    path.includes("\0") ||
+    path.length > 2_000
+  ) {
+    throw new ConfigurationError(
+      "Preview path must be an absolute URL path up to 2000 characters.",
+    );
   }
   return path;
 }

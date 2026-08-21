@@ -120,6 +120,7 @@ const defaultPreviewConfig: PreviewConfig = {
   start: { command: "pnpm", args: ["dev", "--host", "0.0.0.0"] },
   port: 3000,
   path: "/health",
+  env: { CONFIGURED_PREVIEW: "true" },
   readiness: {
     timeoutMs: 1_000,
     intervalMs: 10,
@@ -132,17 +133,20 @@ function createPreviewViby(
   sandbox: SandboxAdapter,
   preview: PreviewConfig = defaultPreviewConfig,
 ) {
-  return createVibyWithDependencies({
-    framework: "farm",
-    model: "test/mock" as LanguageModel,
-    skills: {},
-    sandbox,
-    preview,
-  }, {
-    repository,
-    generator: new UnusedGenerator<"farm">(),
-    skillResolver: new SkillResolver({}),
-  });
+  return createVibyWithDependencies(
+    {
+      framework: "farm",
+      model: "test/mock" as LanguageModel,
+      skills: {},
+      sandbox,
+      preview,
+    },
+    {
+      repository,
+      generator: new UnusedGenerator<"farm">(),
+      skillResolver: new SkillResolver({}),
+    },
+  );
 }
 
 async function importVersion(repository: MemoryRepository, sandbox: SandboxAdapter) {
@@ -171,7 +175,10 @@ test("starts, persists, reconnects, and stops a durable version preview", async 
   assert.equal(preview.status, "ready");
   assert.equal(preview.url, "https://preview-1.preview.example.test:3000/health");
   assert.deepEqual(adapter.creates[0]?.ports, [3000]);
-  assert.deepEqual(adapter.creates[0]?.env, { PREVIEW_FIXTURE: "true" });
+  assert.deepEqual(adapter.creates[0]?.env, {
+    CONFIGURED_PREVIEW: "true",
+    PREVIEW_FIXTURE: "true",
+  });
   const { onOutput: _startOutput, ...started } = adapter.instances.get("preview-1")!.starts[0]!;
   assert.deepEqual(started, {
     command: "pnpm",
@@ -207,7 +214,10 @@ test("starts, persists, reconnects, and stops a durable version preview", async 
   await restored.stop();
   assert.equal(restored.status, "stopped");
   assert.ok(restored.data().stoppedAt);
-  assert.equal((await second.forUser(scope).sandboxes.get(restored.data().sandboxLeaseId)).status, "stopped");
+  assert.equal(
+    (await second.forUser(scope).sandboxes.get(restored.data().sandboxLeaseId)).status,
+    "stopped",
+  );
 
   await second.close();
   await first.close();
@@ -255,21 +265,27 @@ test("streams provider-neutral preview phases and terminal output", async () => 
   });
 
   assert.equal(preview.status, "ready");
-  assert.deepEqual(events.map((event) => event.type), [
-    "preview.created",
-    "workspace.prepared",
-    "command.started",
-    "command.output",
-    "command.completed",
-    "command.started",
-    "command.output",
-    "readiness.started",
-    "preview.ready",
-  ]);
-  assert.deepEqual(events.filter((event) => event.type === "command.output"), [
-    { type: "command.output", data: "dependencies installed\n" },
-    { type: "command.output", data: "development server started\n" },
-  ]);
+  assert.deepEqual(
+    events.map((event) => event.type),
+    [
+      "preview.created",
+      "workspace.prepared",
+      "command.started",
+      "command.output",
+      "command.completed",
+      "command.started",
+      "command.output",
+      "readiness.started",
+      "preview.ready",
+    ],
+  );
+  assert.deepEqual(
+    events.filter((event) => event.type === "command.output"),
+    [
+      { type: "command.output", data: "dependencies installed\n" },
+      { type: "command.output", data: "development server started\n" },
+    ],
+  );
   await viby.close();
 });
 
@@ -282,8 +298,16 @@ test("coalesces concurrent preview starts for the same immutable version", async
   const secondEvents: string[] = [];
 
   const [first, second] = await Promise.all([
-    version.preview({ onEvent: (event) => { firstEvents.push(event.type); } }),
-    version.preview({ onEvent: (event) => { secondEvents.push(event.type); } }),
+    version.preview({
+      onEvent: (event) => {
+        firstEvents.push(event.type);
+      },
+    }),
+    version.preview({
+      onEvent: (event) => {
+        secondEvents.push(event.type);
+      },
+    }),
   ]);
 
   assert.equal(first.id, second.id);
@@ -306,52 +330,61 @@ test("hosts configured durable previews without a product lifecycle callback", a
 
   const firstResponse = await api.fetch(new Request(url, { method: "POST" }));
   assert.equal(firstResponse.status, 201);
-  const first = await firstResponse.json() as Record<string, unknown>;
+  const first = (await firstResponse.json()) as Record<string, unknown>;
   assert.equal(first.url, "https://preview-1.preview.example.test:3000/health");
   assert.equal(first.cached, false);
 
   const secondResponse = await api.fetch(new Request(url, { method: "POST" }));
   assert.equal(secondResponse.status, 201);
-  const second = await secondResponse.json() as Record<string, unknown>;
+  const second = (await secondResponse.json()) as Record<string, unknown>;
   assert.equal(second.url, first.url);
   assert.equal(second.cached, true);
   assert.equal(adapter.creates.length, 1);
 
   const previewId = String(first.id);
-  const listResponse = await api.fetch(new Request(
-    `https://app.example/api/viby/previews?versionId=${version.id}&status=ready`,
-  ));
+  const listResponse = await api.fetch(
+    new Request(`https://app.example/api/viby/previews?versionId=${version.id}&status=ready`),
+  );
   assert.equal(listResponse.status, 200);
-  const list = await listResponse.json() as { previews: Array<{ id: string }> };
-  assert.deepEqual(list.previews.map((item) => item.id), [previewId]);
+  const list = (await listResponse.json()) as { previews: Array<{ id: string }> };
+  assert.deepEqual(
+    list.previews.map((item) => item.id),
+    [previewId],
+  );
 
-  const detailResponse = await api.fetch(new Request(
-    `https://app.example/api/viby/previews/${previewId}`,
-  ));
-  assert.equal((await detailResponse.json() as { preview: { status: string } }).preview.status, "ready");
-
-  const reconnectResponse = await api.fetch(new Request(
-    `https://app.example/api/viby/previews/${previewId}/reconnect`,
-    { method: "POST" },
-  ));
-  assert.equal(reconnectResponse.status, 200);
+  const detailResponse = await api.fetch(
+    new Request(`https://app.example/api/viby/previews/${previewId}`),
+  );
   assert.equal(
-    (await reconnectResponse.json() as { preview: { status: string } }).preview.status,
+    ((await detailResponse.json()) as { preview: { status: string } }).preview.status,
     "ready",
   );
 
-  const stopResponse = await api.fetch(new Request(
-    `https://app.example/api/viby/previews/${previewId}`,
-    { method: "DELETE" },
-  ));
-  assert.equal((await stopResponse.json() as { preview: { status: string } }).preview.status, "stopped");
+  const reconnectResponse = await api.fetch(
+    new Request(`https://app.example/api/viby/previews/${previewId}/reconnect`, { method: "POST" }),
+  );
+  assert.equal(reconnectResponse.status, 200);
+  assert.equal(
+    ((await reconnectResponse.json()) as { preview: { status: string } }).preview.status,
+    "ready",
+  );
 
-  const cleanupResponse = await api.fetch(new Request(
-    "https://app.example/api/viby/previews/cleanup",
-    { method: "POST", body: JSON.stringify({ limit: 10 }) },
-  ));
+  const stopResponse = await api.fetch(
+    new Request(`https://app.example/api/viby/previews/${previewId}`, { method: "DELETE" }),
+  );
+  assert.equal(
+    ((await stopResponse.json()) as { preview: { status: string } }).preview.status,
+    "stopped",
+  );
+
+  const cleanupResponse = await api.fetch(
+    new Request("https://app.example/api/viby/previews/cleanup", {
+      method: "POST",
+      body: JSON.stringify({ limit: 10 }),
+    }),
+  );
   assert.equal(cleanupResponse.status, 200);
-  assert.equal((await cleanupResponse.json() as { cleaned: number }).cleaned, 0);
+  assert.equal(((await cleanupResponse.json()) as { cleaned: number }).cleaned, 0);
 
   await viby.close();
 });
@@ -365,10 +398,12 @@ test("streams configured preview progress through the standard Web API", async (
     authenticate: () => scope,
     preview: true,
   });
-  const response = await api.fetch(new Request(
-    `https://app.example/api/viby/chats/${version.chatId}/versions/${version.id}/preview`,
-    { method: "POST", headers: { Accept: "text/event-stream" } },
-  ));
+  const response = await api.fetch(
+    new Request(
+      `https://app.example/api/viby/chats/${version.chatId}/versions/${version.id}/preview`,
+      { method: "POST", headers: { Accept: "text/event-stream" } },
+    ),
+  );
 
   assert.equal(response.headers.get("content-type"), "text/event-stream; charset=utf-8");
   const body = await response.text();
@@ -434,7 +469,9 @@ test("records a failed preview and releases its sandbox", async () => {
       check: async () => false,
     },
   });
-  const restoredVersion = await viby.forUser(scope).chats.get(version.chatId)
+  const restoredVersion = await viby
+    .forUser(scope)
+    .chats.get(version.chatId)
     .then((chat) => chat.getVersion(version.id));
 
   await assert.rejects(() => restoredVersion.preview(), /could not become ready/);

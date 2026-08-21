@@ -32,6 +32,7 @@ export interface NormalizedGenerationQualityCommand {
 export interface NormalizedGenerationQualityConfig {
   readonly prepare: readonly NormalizedGenerationQualityCommand[];
   readonly checks: readonly NormalizedGenerationQualityCommand[];
+  readonly checkConcurrency: number;
   readonly captureSourceChanges: boolean;
   readonly repairAttempts: number;
   readonly timeoutMs: number;
@@ -76,10 +77,7 @@ export function normalizeGenerationQuality(
   if (value.prepare !== undefined && !Array.isArray(value.prepare)) {
     throw new ConfigurationError("generation.quality.prepare must be an array.");
   }
-  if (
-    value.captureSourceChanges !== undefined
-    && typeof value.captureSourceChanges !== "boolean"
-  ) {
+  if (value.captureSourceChanges !== undefined && typeof value.captureSourceChanges !== "boolean") {
     throw new ConfigurationError("generation.quality.captureSourceChanges must be a boolean.");
   }
   const repairAttempts = value.repairAttempts ?? 0;
@@ -88,10 +86,18 @@ export function normalizeGenerationQuality(
       "generation.quality.repairAttempts must be an integer between 0 and 3.",
     );
   }
+  const checkConcurrency = value.checkConcurrency ?? 1;
+  if (!Number.isInteger(checkConcurrency) || checkConcurrency < 1 || checkConcurrency > 8) {
+    throw new ConfigurationError(
+      "generation.quality.checkConcurrency must be an integer between 1 and 8.",
+    );
+  }
   const prepare = (value.prepare ?? []).map((command) => normalizeCommand(command, "prepare"));
   const checks = value.checks.map((command) => normalizeCommand(command, "check"));
   if (prepare.length + checks.length > MAX_COMMANDS) {
-    throw new ConfigurationError(`generation.quality cannot contain more than ${MAX_COMMANDS} commands.`);
+    throw new ConfigurationError(
+      `generation.quality cannot contain more than ${MAX_COMMANDS} commands.`,
+    );
   }
   const ids = new Set<string>();
   for (const command of [...prepare, ...checks]) {
@@ -103,6 +109,7 @@ export function normalizeGenerationQuality(
   return Object.freeze({
     prepare: Object.freeze(prepare),
     checks: Object.freeze(checks),
+    checkConcurrency,
     captureSourceChanges: value.captureSourceChanges ?? false,
     repairAttempts,
     timeoutMs: Math.min(
@@ -123,8 +130,11 @@ export async function verifyGenerationQuality<Framework extends FrameworkId>(inp
   readonly files: readonly SandboxFile[];
   readonly signal: AbortSignal;
   readonly onEvent: (event: GenerationQualityEvent) => void | Promise<void>;
+  /** Reuse an already materialized generation workspace instead of creating another sandbox. */
+  readonly session?: SandboxSession;
 }): Promise<GenerationQualityResult> {
-  const capabilities = sandboxCapabilities(input.adapter.capabilities);
+  const capabilities =
+    input.session?.capabilities ?? sandboxCapabilities(input.adapter.capabilities);
   if (!capabilities.files || !capabilities.commands) {
     throw new ConfigurationError(
       "Generation quality requires a sandbox adapter with files and commands capabilities.",
@@ -136,119 +146,163 @@ export async function verifyGenerationQuality<Framework extends FrameworkId>(inp
     versionId: createId(),
     framework: input.framework,
   };
-  let session: SandboxSession | null = null;
+  let session: SandboxSession | null = input.session ?? null;
+  const ownsSession = !input.session;
   try {
-    let instance;
-    try {
-      instance = await input.adapter.create({
-        context,
-        timeoutMs: input.config.timeoutMs,
-        env: {},
-        ports: [],
-        signal: input.signal,
-      });
-    } catch (error) {
-      throw new GenerationQualityError("sandbox", null, { cause: error });
-    }
-    session = new SandboxSession(
-      input.adapter.provider,
-      capabilities,
-      instance,
-      () => {},
-      null,
-      input.policy ? { policy: input.policy, context } : null,
-    );
-    await session.writeFiles(input.files, { signal: input.signal });
-    for (const [phase, commands] of [
-      ["prepare", input.config.prepare],
-      ["check", input.config.checks],
-    ] as const) {
-      for (const command of commands) {
-        await input.onEvent({
-          type: "quality.started",
-          data: {
-            checkId: command.id,
-            phase,
-          },
+    if (!session) {
+      let instance;
+      try {
+        instance = await input.adapter.create({
+          context,
+          timeoutMs: input.config.timeoutMs,
+          env: {},
+          ports: [],
+          signal: input.signal,
         });
-        try {
-          const result = await session.run({
-            command: command.command,
-            args: command.args,
-            cwd: command.cwd,
-            env: command.env,
-            timeoutMs: command.timeoutMs,
-            signal: input.signal,
-          });
-          const detail =
-            result.exitCode === 0 || !input.config.formatFailure
-              ? null
-              : normalizeFailureDetail(
-                  await input.config.formatFailure({
-                    checkId: command.id,
-                    phase,
-                    exitCode: result.exitCode,
-                    durationMs: result.durationMs,
-                    stdout: result.stdout,
-                    stderr: result.stderr,
-                  } satisfies GenerationQualityFailure),
-                );
-          await input.onEvent({
-            type: "quality.completed",
-            data: {
-              checkId: command.id,
-              phase,
-              status: result.exitCode === 0 ? "passed" : "failed",
-              exitCode: result.exitCode,
-              durationMs: result.durationMs,
-              detail,
-            },
-          });
-          if (result.exitCode !== 0) {
-            throw new GenerationQualityError(command.id, result.exitCode, { detail });
-          }
-        } catch (error) {
-          if (!(error instanceof GenerationQualityError)) {
-            await input.onEvent({
-              type: "quality.completed",
-              data: {
-                checkId: command.id,
-                phase,
-                status: "failed",
-                exitCode: null,
-                durationMs: null,
-                detail: null,
-              },
-            });
-            throw new GenerationQualityError(command.id, null, { cause: error });
-          }
-          throw error;
-        }
+      } catch (error) {
+        throw new GenerationQualityError("sandbox", null, { cause: error });
       }
+      session = new SandboxSession(
+        input.adapter.provider,
+        capabilities,
+        instance,
+        () => {},
+        null,
+        input.policy ? { policy: input.policy, context } : null,
+      );
     }
+    await session.writeFiles(input.files, { signal: input.signal });
+    for (const command of input.config.prepare) {
+      await runQualityCommand(session, command, "prepare", input);
+    }
+    const failures = await mapConcurrent(
+      input.config.checks,
+      input.config.checkConcurrency,
+      async (command) => {
+        try {
+          await runQualityCommand(session!, command, "check", input);
+          return null;
+        } catch (error) {
+          return error;
+        }
+      },
+    );
+    const failure = failures.find((error) => error !== null);
+    if (failure) throw failure;
     if (!input.config.captureSourceChanges) {
       return { files: input.files.map((file) => ({ ...file })) };
     }
     try {
       const decoder = new TextDecoder("utf-8", { fatal: true });
       return {
-        files: await Promise.all(input.files.map(async (file) => (
-          typeof file.content === "string"
-            ? {
-                path: file.path,
-                content: decoder.decode(await session!.readFile(file.path, {
-                  signal: input.signal,
-                })),
-              }
-            : { ...file }
-        ))),
+        files: await Promise.all(
+          input.files.map(async (file) =>
+            typeof file.content === "string"
+              ? {
+                  path: file.path,
+                  content: decoder.decode(
+                    await session!.readFile(file.path, {
+                      signal: input.signal,
+                    }),
+                  ),
+                }
+              : { ...file },
+          ),
+        ),
       };
     } catch (error) {
       throw new GenerationQualityError("capture-source", null, { cause: error });
     }
   } finally {
-    await session?.stop().catch(() => undefined);
+    if (ownsSession) await session?.stop().catch(() => undefined);
   }
+}
+
+async function runQualityCommand<Framework extends FrameworkId>(
+  session: SandboxSession,
+  command: NormalizedGenerationQualityCommand,
+  phase: "prepare" | "check",
+  input: {
+    readonly config: NormalizedGenerationQualityConfig;
+    readonly signal: AbortSignal;
+    readonly onEvent: (event: GenerationQualityEvent) => void | Promise<void>;
+  },
+): Promise<void> {
+  await input.onEvent({
+    type: "quality.started",
+    data: { checkId: command.id, phase },
+  });
+  try {
+    const result = await session.run({
+      command: command.command,
+      args: command.args,
+      cwd: command.cwd,
+      env: command.env,
+      timeoutMs: command.timeoutMs,
+      signal: input.signal,
+    });
+    const detail =
+      result.exitCode === 0 || !input.config.formatFailure
+        ? null
+        : normalizeFailureDetail(
+            await input.config.formatFailure({
+              checkId: command.id,
+              phase,
+              exitCode: result.exitCode,
+              durationMs: result.durationMs,
+              stdout: result.stdout,
+              stderr: result.stderr,
+            } satisfies GenerationQualityFailure),
+          );
+    await input.onEvent({
+      type: "quality.completed",
+      data: {
+        checkId: command.id,
+        phase,
+        status: result.exitCode === 0 ? "passed" : "failed",
+        exitCode: result.exitCode,
+        durationMs: result.durationMs,
+        detail,
+      },
+    });
+    if (result.exitCode !== 0) {
+      throw new GenerationQualityError(command.id, result.exitCode, { detail });
+    }
+  } catch (error) {
+    if (!(error instanceof GenerationQualityError)) {
+      await input.onEvent({
+        type: "quality.completed",
+        data: {
+          checkId: command.id,
+          phase,
+          status: "failed",
+          exitCode: null,
+          durationMs: null,
+          detail: null,
+        },
+      });
+      throw new GenerationQualityError(command.id, null, { cause: error });
+    }
+    throw error;
+  }
+}
+
+async function mapConcurrent<Input, Output>(
+  values: readonly Input[],
+  concurrency: number,
+  operation: (value: Input) => Promise<Output>,
+): Promise<Output[]> {
+  const results = new Array<Output>(values.length);
+  let next = 0;
+  await Promise.all(
+    Array.from({ length: Math.min(concurrency, values.length) }, async () => {
+      while (next < values.length) {
+        const index = next++;
+        results[index] = await operation(values[index]!);
+      }
+    }),
+  );
+  return results;
 }
 
 function normalizeFailureDetail(value: string | null | undefined): string | null {
