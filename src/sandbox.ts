@@ -1153,7 +1153,7 @@ async function defaultReadinessCheck(
     signal: options.signal,
   });
   await response.body?.cancel().catch(() => undefined);
-  return response.status >= 200 && response.status < 500;
+  return response.status >= 200 && response.status < 400;
 }
 
 function waitForReadiness(milliseconds: number, signal: AbortSignal): Promise<void> {

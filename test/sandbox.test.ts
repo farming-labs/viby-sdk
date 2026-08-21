@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createServer } from "node:http";
 import { test } from "node:test";
 import type { LanguageModel } from "ai";
 import { MockLanguageModelV4 } from "ai/test";
@@ -286,6 +287,43 @@ test("materializes an immutable version through a provider-agnostic sandbox adap
   assert.equal(adapter.instances[0]!.stopCalls, 1);
   await assert.rejects(() => session.run({ command: "npm" }), SandboxError);
   await viby.close();
+});
+
+test("does not treat failed HTTP preview responses as ready", async () => {
+  let status = 410;
+  const server = createServer((_request, response) => {
+    response.writeHead(status, status === 302 ? { location: "/ready" } : undefined);
+    response.end();
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("Fixture server has no port.");
+
+  const instance = new FakeSandboxInstance();
+  instance.getUrl = () => `http://127.0.0.1:${address.port}/`;
+  const session = new SandboxSession(
+    "fake",
+    sandboxCapabilities({ files: true, commands: true, portUrls: true }),
+    instance,
+  );
+
+  try {
+    await assert.rejects(
+      () => session.waitForPort(3000, { timeoutMs: 30, intervalMs: 10 }),
+      (error: unknown) => error instanceof DOMException && error.name === "TimeoutError",
+    );
+
+    status = 302;
+    assert.equal(
+      await session.waitForPort(3000, { timeoutMs: 100, intervalMs: 10 }),
+      `http://127.0.0.1:${address.port}/`,
+    );
+  } finally {
+    await session.stop();
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => error ? reject(error) : resolve());
+    });
+  }
 });
 
 test("connects a capability-discovered sandbox to a generation agent and cleans it up", async () => {
