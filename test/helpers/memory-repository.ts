@@ -146,10 +146,11 @@ interface MemoryMessageInput {
   readonly attachments?: CreateGenerationRecord["attachments"];
 }
 
-type MemoryOutboundEventDelivery = OutboundEventDeliveryData & ScopedRecord & {
-  leaseToken: string | null;
-  leaseExpiresAt: Date | null;
-};
+type MemoryOutboundEventDelivery = OutboundEventDeliveryData &
+  ScopedRecord & {
+    leaseToken: string | null;
+    leaseExpiresAt: Date | null;
+  };
 
 export class MemoryRepository implements Repository {
   readonly chats = new Map<string, MemoryChatRecord>();
@@ -199,10 +200,11 @@ export class MemoryRepository implements Repository {
     input: { id: string; title: string; metadata: ChatData["metadata"]; framework: Framework },
   ): Promise<ChatData<Framework>> {
     const now = new Date();
-    const chat: ChatData<Framework> & ScopedRecord & {
-      deletedAt: Date | null;
-      purgeAfter: Date | null;
-    } = {
+    const chat: ChatData<Framework> &
+      ScopedRecord & {
+        deletedAt: Date | null;
+        purgeAfter: Date | null;
+      } = {
       ...input,
       ...scope,
       createdAt: now,
@@ -266,9 +268,10 @@ export class MemoryRepository implements Repository {
     if (!chat) throw new NotFoundError("Chat");
     const parent = await this.getVersion(scope, input.parentVersionId);
     if (!parent || parent.chatId !== input.chatId) throw new NotFoundError("Parent version");
-    const number = [...this.versions.values()]
-      .filter((version) => version.chatId === input.chatId && inScope(version, scope))
-      .reduce((highest, version) => Math.max(highest, version.number), 0) + 1;
+    const number =
+      [...this.versions.values()]
+        .filter((version) => version.chatId === input.chatId && inScope(version, scope))
+        .reduce((highest, version) => Math.max(highest, version.number), 0) + 1;
     const version: VersionData<Framework> & ScopedRecord = {
       id: input.id,
       chatId: input.chatId,
@@ -287,7 +290,10 @@ export class MemoryRepository implements Repository {
       ...input.files.map((file) => ({ ...file, type: "text" as const })),
       ...(input.artifacts ?? []),
     ]);
-    this.changes.set(version.id, input.changes.map((change) => ({ ...change })));
+    this.changes.set(
+      version.id,
+      input.changes.map((change) => ({ ...change })),
+    );
     this.chats.set(chat.id, {
       ...chat,
       updatedAt: new Date(),
@@ -335,9 +341,10 @@ export class MemoryRepository implements Repository {
     if (!chat) throw new NotFoundError("Chat");
     const source = await this.getVersion(scope, input.sourceVersionId);
     if (!source || source.chatId !== input.chatId) throw new NotFoundError("Source version");
-    const number = [...this.versions.values()]
-      .filter((version) => version.chatId === input.chatId && inScope(version, scope))
-      .reduce((highest, version) => Math.max(highest, version.number), 0) + 1;
+    const number =
+      [...this.versions.values()]
+        .filter((version) => version.chatId === input.chatId && inScope(version, scope))
+        .reduce((highest, version) => Math.max(highest, version.number), 0) + 1;
     const version: VersionData<Framework> & ScopedRecord = {
       id: input.id,
       chatId: input.chatId,
@@ -368,7 +375,7 @@ export class MemoryRepository implements Repository {
   ): Promise<ChatData<Framework> | null> {
     const chat = this.chats.get(id);
     return chat && inScope(chat, scope) && chat.deletedAt === null
-      ? chat as unknown as ChatData<Framework>
+      ? (chat as unknown as ChatData<Framework>)
       : null;
   }
 
@@ -397,11 +404,12 @@ export class MemoryRepository implements Repository {
   ): Promise<ChatDeletionData> {
     const chat = this.chats.get(id);
     if (!chat || !inScope(chat, scope) || chat.deletedAt) throw new NotFoundError("Chat");
-    const active = [...this.generations.values()].some((generation) => (
-      inScope(generation, scope)
-      && generation.chatId === id
-      && ["queued", "running", "waiting"].includes(generation.status)
-    ));
+    const active = [...this.generations.values()].some(
+      (generation) =>
+        inScope(generation, scope) &&
+        generation.chatId === id &&
+        ["queued", "running", "waiting"].includes(generation.status),
+    );
     if (active) throw new GenerationStateError(id, "Chat has an active generation.");
     chat.deletedAt = new Date(input.deletedAt);
     chat.purgeAfter = input.purgeAfter ? new Date(input.purgeAfter) : null;
@@ -415,11 +423,12 @@ export class MemoryRepository implements Repository {
   ): Promise<ChatData<Framework>> {
     const chat = this.chats.get(id);
     if (
-      !chat
-      || !inScope(chat, scope)
-      || !chat.deletedAt
-      || (chat.purgeAfter !== null && chat.purgeAfter <= now)
-    ) throw new NotFoundError("Deleted chat");
+      !chat ||
+      !inScope(chat, scope) ||
+      !chat.deletedAt ||
+      (chat.purgeAfter !== null && chat.purgeAfter <= now)
+    )
+      throw new NotFoundError("Deleted chat");
     const restored: MemoryChatRecord = {
       ...chat,
       deletedAt: null,
@@ -432,13 +441,14 @@ export class MemoryRepository implements Repository {
 
   async purgeDeletedChats(scope: UserScope, now: Date, limit: number): Promise<number> {
     const ids = [...this.chats.values()]
-      .filter((chat) => (
-        inScope(chat, scope)
-        && chat.deletedAt !== null
-        && chat.purgeAfter !== null
-        && chat.purgeAfter <= now
-      ))
-      .sort((left, right) => (left.purgeAfter!.getTime() - right.purgeAfter!.getTime()))
+      .filter(
+        (chat) =>
+          inScope(chat, scope) &&
+          chat.deletedAt !== null &&
+          chat.purgeAfter !== null &&
+          chat.purgeAfter <= now,
+      )
+      .sort((left, right) => left.purgeAfter!.getTime() - right.purgeAfter!.getTime())
       .slice(0, limit)
       .map((chat) => chat.id);
     for (const id of ids) {
@@ -475,9 +485,9 @@ export class MemoryRepository implements Repository {
       }
       for (const [artifactId, artifact] of this.projectArtifacts) {
         if (!inScope(artifact, scope)) continue;
-        const referenced = [...this.files.values()].some((entries) => entries.some((entry) => (
-          entry.type === "artifact" && entry.artifactId === artifactId
-        )));
+        const referenced = [...this.files.values()].some((entries) =>
+          entries.some((entry) => entry.type === "artifact" && entry.artifactId === artifactId),
+        );
         if (!referenced) this.projectArtifacts.delete(artifactId);
       }
       for (const [evaluationId, evaluation] of this.designEvaluations) {
@@ -510,10 +520,12 @@ export class MemoryRepository implements Repository {
         if (generationIds.includes(this.events[index]!.generationId)) this.events.splice(index, 1);
       }
       for (const [leaseId, lease] of this.sandboxLeases) {
-        if (lease.context.chatId === id && inScope(lease, scope)) this.sandboxLeases.delete(leaseId);
+        if (lease.context.chatId === id && inScope(lease, scope))
+          this.sandboxLeases.delete(leaseId);
       }
       for (const [previewId, preview] of this.previewSessions) {
-        if (preview.chatId === id && inScope(preview, scope)) this.previewSessions.delete(previewId);
+        if (preview.chatId === id && inScope(preview, scope))
+          this.previewSessions.delete(previewId);
       }
       this.chatToolSources.delete(scopedChatKey(scope, id));
     }
@@ -524,10 +536,9 @@ export class MemoryRepository implements Repository {
     scope: UserScope,
     limit: number,
   ): Promise<Array<ChatData<Framework>>> {
-    return sortChats([...this.chats.values()].filter((chat) => (
-      inScope(chat, scope) && chat.deletedAt === null
-    )))
-      .slice(0, limit) as unknown as Array<ChatData<Framework>>;
+    return sortChats(
+      [...this.chats.values()].filter((chat) => inScope(chat, scope) && chat.deletedAt === null),
+    ).slice(0, limit) as unknown as Array<ChatData<Framework>>;
   }
 
   async listChatPage<Framework extends FrameworkId>(
@@ -536,14 +547,18 @@ export class MemoryRepository implements Repository {
     after: ChatPageCursor | null,
     metadata: ChatMetadata,
   ): Promise<RepositoryPage<ChatData<Framework>>> {
-    let records = sortChats([...this.chats.values()].filter((chat) => (
-      inScope(chat, scope) && chat.deletedAt === null && containsJson(chat.metadata, metadata)
-    )));
+    let records = sortChats(
+      [...this.chats.values()].filter(
+        (chat) =>
+          inScope(chat, scope) && chat.deletedAt === null && containsJson(chat.metadata, metadata),
+      ),
+    );
     if (after) {
-      records = records.filter((chat) => (
-        chat.updatedAt < after.updatedAt
-        || (chat.updatedAt.getTime() === after.updatedAt.getTime() && chat.id < after.id)
-      ));
+      records = records.filter(
+        (chat) =>
+          chat.updatedAt < after.updatedAt ||
+          (chat.updatedAt.getTime() === after.updatedAt.getTime() && chat.id < after.id),
+      );
     }
     return createPage(records as unknown as Array<ChatData<Framework>>, limit);
   }
@@ -636,15 +651,20 @@ export class MemoryRepository implements Repository {
     input: CreateGenerationSteeringRecord,
   ): Promise<GenerationSteeringData> {
     if (input.idempotencyKey) {
-      const existing = [...this.steering.values()].find((steering) => (
-        inScope(steering, scope)
-        && steering.generationId === input.generationId
-        && steering.idempotencyKey === input.idempotencyKey
-      ));
+      const existing = [...this.steering.values()].find(
+        (steering) =>
+          inScope(steering, scope) &&
+          steering.generationId === input.generationId &&
+          steering.idempotencyKey === input.idempotencyKey,
+      );
       if (existing) return existing;
     }
     const generation = this.#requireGeneration(scope, input.generationId);
-    if (generation.status !== "queued" && generation.status !== "running" && generation.status !== "waiting") {
+    if (
+      generation.status !== "queued" &&
+      generation.status !== "running" &&
+      generation.status !== "waiting"
+    ) {
       throw new GenerationStateError(
         generation.id,
         `Generation ${generation.id} cannot be steered from ${generation.status}.`,
@@ -691,9 +711,10 @@ export class MemoryRepository implements Repository {
     this.#requireGeneration(scope, generationId);
     return [...this.steering.values()]
       .filter((steering) => inScope(steering, scope) && steering.generationId === generationId)
-      .sort((left, right) => (
-        left.createdAt.getTime() - right.createdAt.getTime() || left.id.localeCompare(right.id)
-      ));
+      .sort(
+        (left, right) =>
+          left.createdAt.getTime() - right.createdAt.getTime() || left.id.localeCompare(right.id),
+      );
   }
 
   async consumeGenerationSteering(
@@ -703,14 +724,18 @@ export class MemoryRepository implements Repository {
     const generation = this.#requireGeneration(scope, input.generationId);
     const attempt = this.#requireAttempt(scope, input.attemptId);
     if (
-      generation.status !== "running"
-      || generation.activeAttemptId !== attempt.id
-      || !this.#hasWorkerLease(attempt, input.leaseToken)
+      generation.status !== "running" ||
+      generation.activeAttemptId !== attempt.id ||
+      !this.#hasWorkerLease(attempt, input.leaseToken)
     ) {
-      throw new GenerationStateError(generation.id, "The generation worker lease is no longer active.");
+      throw new GenerationStateError(
+        generation.id,
+        "The generation worker lease is no longer active.",
+      );
     }
-    const queued = (await this.listGenerationSteering(scope, generation.id))
-      .filter((steering) => steering.status === "queued");
+    const queued = (await this.listGenerationSteering(scope, generation.id)).filter(
+      (steering) => steering.status === "queued",
+    );
     const now = new Date();
     return queued.map((steering) => {
       const applied = {
@@ -736,7 +761,11 @@ export class MemoryRepository implements Repository {
   ): Promise<GenerationAttemptData> {
     const generation = this.#requireGeneration(scope, generationId);
     const attempt = this.#requireAttempt(scope, attemptId);
-    if (generation.status !== "queued" || generation.activeAttemptId !== attemptId || attempt.status !== "queued") {
+    if (
+      generation.status !== "queued" ||
+      generation.activeAttemptId !== attemptId ||
+      attempt.status !== "queued"
+    ) {
       throw new GenerationStateError(generationId, `Attempt ${attemptId} is not queued.`);
     }
     const now = new Date();
@@ -770,9 +799,12 @@ export class MemoryRepository implements Repository {
         if (!generation || generation.activeAttemptId !== attempt.id) return false;
         if (generation.status !== "queued" && generation.status !== "running") return false;
         const models = input.models ?? [{ provider: input.modelProvider, id: input.modelId }];
-        if (!models.some((model) => (
-          generation.modelProvider === model.provider && generation.modelId === model.id
-        ))) {
+        if (
+          !models.some(
+            (model) =>
+              generation.modelProvider === model.provider && generation.modelId === model.id,
+          )
+        ) {
           return false;
         }
         const chat = this.chats.get(generation.chatId);
@@ -825,14 +857,15 @@ export class MemoryRepository implements Repository {
     const attempt = this.attempts.get(lease.attemptId);
     const now = new Date();
     if (
-      !attempt
-      || !inScope(attempt, lease.scope)
-      || attempt.status !== "running"
-      || attempt.workerId !== lease.workerId
-      || this.workerLeaseTokens.get(attempt.id) !== lease.leaseToken
-      || !attempt.leaseExpiresAt
-      || attempt.leaseExpiresAt <= now
-    ) return null;
+      !attempt ||
+      !inScope(attempt, lease.scope) ||
+      attempt.status !== "running" ||
+      attempt.workerId !== lease.workerId ||
+      this.workerLeaseTokens.get(attempt.id) !== lease.leaseToken ||
+      !attempt.leaseExpiresAt ||
+      attempt.leaseExpiresAt <= now
+    )
+      return null;
     const expiresAt = new Date(now.getTime() + leaseMs);
     this.attempts.set(attempt.id, {
       ...attempt,
@@ -847,12 +880,13 @@ export class MemoryRepository implements Repository {
     input: CreateAttemptRecord,
   ): Promise<GenerationAttemptData> {
     const generation = this.#requireGeneration(scope, input.generationId);
-    const allowed = input.reason === "retry"
-      ? generation.status === "failed" || generation.status === "cancelled"
-      : generation.status === "failed"
-        || generation.status === "cancelled"
-        || generation.status === "queued"
-        || generation.status === "running";
+    const allowed =
+      input.reason === "retry"
+        ? generation.status === "failed" || generation.status === "cancelled"
+        : generation.status === "failed" ||
+          generation.status === "cancelled" ||
+          generation.status === "queued" ||
+          generation.status === "running";
     if (!allowed) {
       throw new GenerationStateError(
         generation.id,
@@ -862,7 +896,10 @@ export class MemoryRepository implements Repository {
     if (generation.status === "queued" || generation.status === "running") {
       const current = this.#requireAttempt(scope, generation.activeAttemptId);
       if (current.leaseExpiresAt && current.leaseExpiresAt.getTime() > Date.now()) {
-        throw new GenerationStateError(generation.id, `Generation ${generation.id} has an active worker lease.`);
+        throw new GenerationStateError(
+          generation.id,
+          `Generation ${generation.id} has an active worker lease.`,
+        );
       }
       const interrupted = { ...current, status: "interrupted" as const, completedAt: new Date() };
       this.attempts.set(current.id, interrupted);
@@ -923,7 +960,10 @@ export class MemoryRepository implements Repository {
     const generation = this.#requireGeneration(scope, generationId);
     const attempt = this.#requireAttempt(scope, attemptId);
     if (generation.activeAttemptId !== attemptId || !this.#hasWorkerLease(attempt, leaseToken)) {
-      throw new GenerationStateError(generationId, "The generation worker lease is no longer active.");
+      throw new GenerationStateError(
+        generationId,
+        "The generation worker lease is no longer active.",
+      );
     }
     if (!this.skills.has(generationId)) this.skills.set(generationId, [...skills]);
   }
@@ -944,47 +984,52 @@ export class MemoryRepository implements Repository {
     const generation = this.#requireGeneration(scope, input.generationId);
     const attempt = input.attemptId ? this.#requireAttempt(scope, input.attemptId) : null;
     if (
-      generation.status !== "running"
-      || !attempt
-      || generation.activeAttemptId !== attempt.id
-      || !this.#hasWorkerLease(attempt, input.leaseToken)
+      generation.status !== "running" ||
+      !attempt ||
+      generation.activeAttemptId !== attempt.id ||
+      !this.#hasWorkerLease(attempt, input.leaseToken)
     ) {
-      throw new GenerationStateError(input.generationId, "The generation worker lease is no longer active.");
+      throw new GenerationStateError(
+        input.generationId,
+        "The generation worker lease is no longer active.",
+      );
     }
     this.#append(scope, input.generationId, input.attemptId, input.type, input.data);
   }
 
-  async createToolCall(
-    scope: UserScope,
-    input: CreateToolCallRecord,
-  ): Promise<CreatedToolCall> {
+  async createToolCall(scope: UserScope, input: CreateToolCallRecord): Promise<CreatedToolCall> {
     const generation = this.#requireGeneration(scope, input.generationId);
     const attempt = this.#requireAttempt(scope, input.attemptId);
     if (
-      generation.status !== "running"
-      || generation.activeAttemptId !== attempt.id
-      || !this.#hasWorkerLease(attempt, input.leaseToken)
+      generation.status !== "running" ||
+      generation.activeAttemptId !== attempt.id ||
+      !this.#hasWorkerLease(attempt, input.leaseToken)
     ) {
-      throw new GenerationStateError(input.generationId, "The generation worker lease is no longer active.");
+      throw new GenerationStateError(
+        input.generationId,
+        "The generation worker lease is no longer active.",
+      );
     }
     const providerCallId = normalizeMemoryToolText(input.providerCallId, "provider call id", 500);
     const name = normalizeMemoryToolText(input.name, "tool name", 200);
-    const idempotencyKey = input.idempotencyKey === undefined
-      ? null
-      : normalizeMemoryToolText(input.idempotencyKey, "idempotency key", 500);
+    const idempotencyKey =
+      input.idempotencyKey === undefined
+        ? null
+        : normalizeMemoryToolText(input.idempotencyKey, "idempotency key", 500);
     if (input.effect === "external" && idempotencyKey === null) {
       throw new ConfigurationError(`External tool ${name} requires an idempotency key.`);
     }
-    const existing = [...this.toolCalls.values()].find((toolCall) => (
-      inScope(toolCall, scope)
-      && (input.effect === "external"
-        ? toolCall.effect === "external"
-          && toolCall.name === name
-          && toolCall.idempotencyKey === idempotencyKey
-        : toolCall.generationId === input.generationId
-          && toolCall.attemptId === input.attemptId
-          && toolCall.providerCallId === providerCallId)
-    ));
+    const existing = [...this.toolCalls.values()].find(
+      (toolCall) =>
+        inScope(toolCall, scope) &&
+        (input.effect === "external"
+          ? toolCall.effect === "external" &&
+            toolCall.name === name &&
+            toolCall.idempotencyKey === idempotencyKey
+          : toolCall.generationId === input.generationId &&
+            toolCall.attemptId === input.attemptId &&
+            toolCall.providerCallId === providerCallId),
+    );
     if (existing) return { toolCall: existing, created: false };
     const toolCall: ToolCallData & ScopedRecord = {
       id: input.id,
@@ -1007,17 +1052,11 @@ export class MemoryRepository implements Repository {
     return { toolCall, created: true };
   }
 
-  async completeToolCall(
-    scope: UserScope,
-    input: CompleteToolCallRecord,
-  ): Promise<ToolCallData> {
+  async completeToolCall(scope: UserScope, input: CompleteToolCallRecord): Promise<ToolCallData> {
     return this.#settleToolCall(scope, input, "succeeded");
   }
 
-  async failToolCall(
-    scope: UserScope,
-    input: FailToolCallRecord,
-  ): Promise<ToolCallData> {
+  async failToolCall(scope: UserScope, input: FailToolCallRecord): Promise<ToolCallData> {
     return this.#settleToolCall(scope, input, "failed");
   }
 
@@ -1028,26 +1067,35 @@ export class MemoryRepository implements Repository {
   ): Promise<ToolCallData> {
     const toolCall = this.toolCalls.get(input.id);
     if (
-      !toolCall
-      || !inScope(toolCall, scope)
-      || toolCall.generationId !== input.generationId
-      || toolCall.attemptId !== input.attemptId
-    ) throw new NotFoundError("Tool call");
+      !toolCall ||
+      !inScope(toolCall, scope) ||
+      toolCall.generationId !== input.generationId ||
+      toolCall.attemptId !== input.attemptId
+    )
+      throw new NotFoundError("Tool call");
     if (toolCall.status !== "pending") return toolCall;
     const generation = this.#requireGeneration(scope, input.generationId);
     const attempt = this.#requireAttempt(scope, input.attemptId);
-    if (generation.activeAttemptId !== attempt.id || !this.#hasWorkerLease(attempt, input.leaseToken)) {
-      throw new GenerationStateError(input.generationId, "The generation worker lease is no longer active.");
+    if (
+      generation.activeAttemptId !== attempt.id ||
+      !this.#hasWorkerLease(attempt, input.leaseToken)
+    ) {
+      throw new GenerationStateError(
+        input.generationId,
+        "The generation worker lease is no longer active.",
+      );
     }
     const updated: ToolCallData & ScopedRecord = {
       ...toolCall,
       status,
-      result: status === "succeeded"
-        ? normalizeAndRedactToolPayload((input as CompleteToolCallRecord).result)
-        : null,
-      error: status === "failed"
-        ? normalizeMemoryToolText((input as FailToolCallRecord).error, "tool error", 10_000)
-        : null,
+      result:
+        status === "succeeded"
+          ? normalizeAndRedactToolPayload((input as CompleteToolCallRecord).result)
+          : null,
+      error:
+        status === "failed"
+          ? normalizeMemoryToolText((input as FailToolCallRecord).error, "tool error", 10_000)
+          : null,
       completedAt: new Date(),
     };
     this.toolCalls.set(updated.id, updated);
@@ -1058,9 +1106,10 @@ export class MemoryRepository implements Repository {
     this.#requireGeneration(scope, generationId);
     return [...this.toolCalls.values()]
       .filter((toolCall) => inScope(toolCall, scope) && toolCall.generationId === generationId)
-      .sort((left, right) => (
-        left.createdAt.getTime() - right.createdAt.getTime() || left.id.localeCompare(right.id)
-      ));
+      .sort(
+        (left, right) =>
+          left.createdAt.getTime() - right.createdAt.getTime() || left.id.localeCompare(right.id),
+      );
   }
 
   async completeGeneration<Framework extends FrameworkId>(
@@ -1070,15 +1119,21 @@ export class MemoryRepository implements Repository {
     const generation = this.#requireGeneration(scope, input.generationId);
     const attempt = this.#requireAttempt(scope, input.attemptId);
     if (
-      generation.status !== "running"
-      || generation.activeAttemptId !== input.attemptId
-      || !this.#hasWorkerLease(attempt, input.leaseToken)
+      generation.status !== "running" ||
+      generation.activeAttemptId !== input.attemptId ||
+      !this.#hasWorkerLease(attempt, input.leaseToken)
     ) {
       throw new GenerationStateError(generation.id, `Generation ${generation.id} is not running.`);
     }
-    if ([...this.steering.values()].some((entry) => (
-      inScope(entry, scope) && entry.generationId === generation.id && entry.status === "queued"
-    ))) throw new GenerationSteeringPendingError(generation.id);
+    if (
+      [...this.steering.values()].some(
+        (entry) =>
+          inScope(entry, scope) &&
+          entry.generationId === generation.id &&
+          entry.status === "queued",
+      )
+    )
+      throw new GenerationSteeringPendingError(generation.id);
     const existing = [...this.versions.values()].filter(
       (version) => version.chatId === generation.chatId && inScope(version, scope),
     );
@@ -1102,7 +1157,10 @@ export class MemoryRepository implements Repository {
       ...(input.projectArtifacts ?? []),
     ]);
     if (input.changes) {
-      this.changes.set(version.id, input.changes.map((change) => ({ ...change })));
+      this.changes.set(
+        version.id,
+        input.changes.map((change) => ({ ...change })),
+      );
     }
     this.attempts.set(attempt.id, {
       ...attempt,
@@ -1160,15 +1218,21 @@ export class MemoryRepository implements Repository {
     const generation = this.#requireGeneration(scope, input.generationId);
     const attempt = this.#requireAttempt(scope, input.attemptId);
     if (
-      generation.status !== "running"
-      || generation.activeAttemptId !== input.attemptId
-      || !this.#hasWorkerLease(attempt, input.leaseToken)
+      generation.status !== "running" ||
+      generation.activeAttemptId !== input.attemptId ||
+      !this.#hasWorkerLease(attempt, input.leaseToken)
     ) {
       throw new GenerationStateError(generation.id, `Generation ${generation.id} is not running.`);
     }
-    if ([...this.steering.values()].some((entry) => (
-      inScope(entry, scope) && entry.generationId === generation.id && entry.status === "queued"
-    ))) throw new GenerationSteeringPendingError(generation.id);
+    if (
+      [...this.steering.values()].some(
+        (entry) =>
+          inScope(entry, scope) &&
+          entry.generationId === generation.id &&
+          entry.status === "queued",
+      )
+    )
+      throw new GenerationSteeringPendingError(generation.id);
     const now = new Date();
     const task = {
       ...input.task,
@@ -1312,10 +1376,11 @@ export class MemoryRepository implements Repository {
     const generation = this.#requireGeneration(scope, generationId);
     const attempt = this.#requireAttempt(scope, attemptId);
     if (
-      generation.status !== "running"
-      || generation.activeAttemptId !== attemptId
-      || !this.#hasWorkerLease(attempt, leaseToken)
-    ) return;
+      generation.status !== "running" ||
+      generation.activeAttemptId !== attemptId ||
+      !this.#hasWorkerLease(attempt, leaseToken)
+    )
+      return;
     const completedAt = new Date();
     this.attempts.set(attempt.id, { ...attempt, status: "failed", error, completedAt });
     this.generations.set(generation.id, {
@@ -1338,10 +1403,11 @@ export class MemoryRepository implements Repository {
     const generation = this.#requireGeneration(scope, input.generationId);
     const attempt = this.#requireAttempt(scope, input.attemptId);
     if (
-      generation.status !== "running"
-      || generation.activeAttemptId !== attempt.id
-      || !this.#hasWorkerLease(attempt, input.leaseToken)
-    ) return null;
+      generation.status !== "running" ||
+      generation.activeAttemptId !== attempt.id ||
+      !this.#hasWorkerLease(attempt, input.leaseToken)
+    )
+      return null;
 
     const completedAt = new Date();
     this.attempts.set(attempt.id, {
@@ -1450,11 +1516,12 @@ export class MemoryRepository implements Repository {
     input: ClaimOutboundEventDeliveryRecord,
   ): Promise<OutboundEventDeliveryClaim | null> {
     this.#requireGeneration(scope, input.generationId);
-    const event = this.events.find((candidate) => (
-      inScope(candidate, scope)
-      && candidate.generationId === input.generationId
-      && candidate.cursor === input.eventCursor
-    ));
+    const event = this.events.find(
+      (candidate) =>
+        inScope(candidate, scope) &&
+        candidate.generationId === input.generationId &&
+        candidate.cursor === input.eventCursor,
+    );
     if (!event) return null;
     const key = outboundDeliveryKey(input.generationId, input.eventCursor, input.sinkId);
     const now = new Date();
@@ -1477,11 +1544,12 @@ export class MemoryRepository implements Repository {
       leaseToken: null,
       ...scope,
     };
-    const claimable = delivery.attemptCount < delivery.maxAttempts && (
-      (delivery.status === "pending" && delivery.nextAttemptAt <= now)
-      || (delivery.status === "delivering" && delivery.leaseExpiresAt !== null
-        && delivery.leaseExpiresAt <= now)
-    );
+    const claimable =
+      delivery.attemptCount < delivery.maxAttempts &&
+      ((delivery.status === "pending" && delivery.nextAttemptAt <= now) ||
+        (delivery.status === "delivering" &&
+          delivery.leaseExpiresAt !== null &&
+          delivery.leaseExpiresAt <= now));
     if (!claimable) {
       if (!existing) this.outboundDeliveries.set(key, delivery);
       return null;
@@ -1522,11 +1590,15 @@ export class MemoryRepository implements Repository {
     );
     const delivery = this.outboundDeliveries.get(key);
     if (
-      !delivery
-      || !inScope(delivery, scope)
-      || delivery.status !== "delivering"
-      || delivery.leaseToken !== claim.leaseToken
-    ) throw new GenerationStateError(claim.delivery.generationId, "Outbound event delivery lease is no longer active.");
+      !delivery ||
+      !inScope(delivery, scope) ||
+      delivery.status !== "delivering" ||
+      delivery.leaseToken !== claim.leaseToken
+    )
+      throw new GenerationStateError(
+        claim.delivery.generationId,
+        "Outbound event delivery lease is no longer active.",
+      );
     const completed: MemoryOutboundEventDelivery = {
       ...delivery,
       status: "delivered",
@@ -1547,11 +1619,15 @@ export class MemoryRepository implements Repository {
     const key = outboundDeliveryKey(input.generationId, input.eventCursor, input.sinkId);
     const delivery = this.outboundDeliveries.get(key);
     if (
-      !delivery
-      || !inScope(delivery, scope)
-      || delivery.status !== "delivering"
-      || delivery.leaseToken !== input.leaseToken
-    ) throw new GenerationStateError(input.generationId, "Outbound event delivery lease is no longer active.");
+      !delivery ||
+      !inScope(delivery, scope) ||
+      delivery.status !== "delivering" ||
+      delivery.leaseToken !== input.leaseToken
+    )
+      throw new GenerationStateError(
+        input.generationId,
+        "Outbound event delivery lease is no longer active.",
+      );
     const now = new Date();
     const deadLettered = delivery.attemptCount >= delivery.maxAttempts;
     const failed: MemoryOutboundEventDelivery = {
@@ -1576,12 +1652,13 @@ export class MemoryRepository implements Repository {
   ): Promise<OutboundEventDeliveryData[]> {
     this.#requireGeneration(scope, generationId);
     return [...this.outboundDeliveries.values()]
-      .filter((delivery) => (
-        inScope(delivery, scope)
-        && delivery.generationId === generationId
-        && delivery.sinkId === sinkId
-        && (status === undefined || delivery.status === status)
-      ))
+      .filter(
+        (delivery) =>
+          inScope(delivery, scope) &&
+          delivery.generationId === generationId &&
+          delivery.sinkId === sinkId &&
+          (status === undefined || delivery.status === status),
+      )
       .sort((left, right) => Number(left.eventCursor) - Number(right.eventCursor))
       .map(publicOutboundDelivery);
   }
@@ -1613,22 +1690,22 @@ export class MemoryRepository implements Repository {
     return publicOutboundDelivery(pending);
   }
 
-  async listGenerationTasks(
-    scope: UserScope,
-    generationId: string,
-  ): Promise<GenerationTaskData[]> {
+  async listGenerationTasks(scope: UserScope, generationId: string): Promise<GenerationTaskData[]> {
     this.#requireGeneration(scope, generationId);
-    return [...this.tasks.values()]
-      .filter((task) => task.generationId === generationId && inScope(task, scope));
+    return [...this.tasks.values()].filter(
+      (task) => task.generationId === generationId && inScope(task, scope),
+    );
   }
 
   async getVersionByGeneration<Framework extends FrameworkId>(
     scope: UserScope,
     generationId: string,
   ): Promise<VersionData<Framework> | null> {
-    return ([...this.versions.values()].find(
-      (version) => version.generationId === generationId && inScope(version, scope),
-    ) as VersionData<Framework> | undefined) ?? null;
+    return (
+      ([...this.versions.values()].find(
+        (version) => version.generationId === generationId && inScope(version, scope),
+      ) as VersionData<Framework> | undefined) ?? null
+    );
   }
 
   async getVersion<Framework extends FrameworkId>(
@@ -1637,7 +1714,7 @@ export class MemoryRepository implements Repository {
   ): Promise<VersionData<Framework> | null> {
     const version = this.versions.get(id);
     return version && inScope(version, scope)
-      ? version as unknown as VersionData<Framework>
+      ? (version as unknown as VersionData<Framework>)
       : null;
   }
 
@@ -1645,9 +1722,11 @@ export class MemoryRepository implements Repository {
     scope: UserScope,
     chatId: string,
   ): Promise<VersionData<Framework> | null> {
-    return ([...this.versions.values()]
-      .filter((version) => version.chatId === chatId && inScope(version, scope))
-      .sort((a, b) => b.number - a.number)[0] as VersionData<Framework> | undefined) ?? null;
+    return (
+      ([...this.versions.values()]
+        .filter((version) => version.chatId === chatId && inScope(version, scope))
+        .sort((a, b) => b.number - a.number)[0] as VersionData<Framework> | undefined) ?? null
+    );
   }
 
   async listVersions<Framework extends FrameworkId>(
@@ -1718,31 +1797,31 @@ export class MemoryRepository implements Repository {
   ): Promise<RepositoryPage<DesignEvaluationData>> {
     let records = [...this.designEvaluations.values()]
       .filter((evaluation) => evaluation.versionId === versionId && inScope(evaluation, scope))
-      .sort((left, right) => (
-        right.createdAt.getTime() - left.createdAt.getTime() || right.id.localeCompare(left.id)
-      ));
+      .sort(
+        (left, right) =>
+          right.createdAt.getTime() - left.createdAt.getTime() || right.id.localeCompare(left.id),
+      );
     if (after) {
-      records = records.filter((evaluation) => (
-        evaluation.createdAt < after.createdAt
-        || (
-          evaluation.createdAt.getTime() === after.createdAt.getTime()
-          && evaluation.id < after.id
-        )
-      ));
+      records = records.filter(
+        (evaluation) =>
+          evaluation.createdAt < after.createdAt ||
+          (evaluation.createdAt.getTime() === after.createdAt.getTime() &&
+            evaluation.id < after.id),
+      );
     }
     return createPage(records, limit);
   }
 
   async listMessages(scope: UserScope, chatId: string): Promise<MessageData[]> {
-    return this.messages.filter(
-      (message) => message.chatId === chatId && inScope(message, scope),
-    );
+    return this.messages.filter((message) => message.chatId === chatId && inScope(message, scope));
   }
 
   async getMessage(scope: UserScope, chatId: string, id: string): Promise<MessageData | null> {
-    return this.messages.find((message) => (
-      message.id === id && message.chatId === chatId && inScope(message, scope)
-    )) ?? null;
+    return (
+      this.messages.find(
+        (message) => message.id === id && message.chatId === chatId && inScope(message, scope),
+      ) ?? null
+    );
   }
 
   async getAttachment(
@@ -1761,10 +1840,13 @@ export class MemoryRepository implements Repository {
     generationId: string,
   ): Promise<AttachmentContent[]> {
     return [...this.attachments.values()]
-      .filter((attachment) => attachment.generationId === generationId && inScope(attachment, scope))
-      .sort((left, right) => (
-        left.createdAt.getTime() - right.createdAt.getTime() || left.id.localeCompare(right.id)
-      ))
+      .filter(
+        (attachment) => attachment.generationId === generationId && inScope(attachment, scope),
+      )
+      .sort(
+        (left, right) =>
+          left.createdAt.getTime() - right.createdAt.getTime() || left.id.localeCompare(right.id),
+      )
       .map((attachment) => ({ ...attachment, bytes: Uint8Array.from(attachment.bytes) }));
   }
 
@@ -1775,12 +1857,13 @@ export class MemoryRepository implements Repository {
     this.#requireGeneration(scope, generationId);
     return [...this.generatedArtifacts.values()]
       .filter((artifact) => artifact.generationId === generationId && inScope(artifact, scope))
-      .sort((left, right) => (
-        left.createdAt.getTime() - right.createdAt.getTime()
-        || left.attemptId.localeCompare(right.attemptId)
-        || left.position - right.position
-        || left.id.localeCompare(right.id)
-      ))
+      .sort(
+        (left, right) =>
+          left.createdAt.getTime() - right.createdAt.getTime() ||
+          left.attemptId.localeCompare(right.attemptId) ||
+          left.position - right.position ||
+          left.id.localeCompare(right.id),
+      )
       .map(({ bytes: _bytes, tenantId: _tenantId, userId: _userId, ...artifact }) => artifact);
   }
 
@@ -1830,9 +1913,10 @@ export class MemoryRepository implements Repository {
     if (!version) return [];
     return [...this.visualArtifacts.values()]
       .filter((artifact) => artifact.versionId === versionId && inScope(artifact, scope))
-      .sort((left, right) => (
-        left.createdAt.getTime() - right.createdAt.getTime() || left.id.localeCompare(right.id)
-      ))
+      .sort(
+        (left, right) =>
+          left.createdAt.getTime() - right.createdAt.getTime() || left.id.localeCompare(right.id),
+      )
       .map(({ bytes: _bytes, tenantId: _tenantId, userId: _userId, ...artifact }) => artifact);
   }
 
@@ -1857,10 +1941,11 @@ export class MemoryRepository implements Repository {
       .filter((message) => message.chatId === chatId && inScope(message, scope))
       .sort(compareMessages);
     if (after) {
-      records = records.filter((message) => (
-        message.createdAt > after.createdAt
-        || (message.createdAt.getTime() === after.createdAt.getTime() && message.id > after.id)
-      ));
+      records = records.filter(
+        (message) =>
+          message.createdAt > after.createdAt ||
+          (message.createdAt.getTime() === after.createdAt.getTime() && message.id > after.id),
+      );
     }
     return createPage(records, limit);
   }
@@ -1889,9 +1974,11 @@ export class MemoryRepository implements Repository {
     artifactId: string,
   ): Promise<ProjectArtifactContent | null> {
     const version = await this.getVersion(scope, versionId);
-    const referenced = version && (this.files.get(versionId) ?? []).some((entry) => (
-      entry.type === "artifact" && entry.artifactId === artifactId
-    ));
+    const referenced =
+      version &&
+      (this.files.get(versionId) ?? []).some(
+        (entry) => entry.type === "artifact" && entry.artifactId === artifactId,
+      );
     const artifact = referenced ? this.projectArtifacts.get(artifactId) : undefined;
     return artifact && inScope(artifact, scope)
       ? { ...artifact, bytes: Uint8Array.from(artifact.bytes) }
@@ -1908,10 +1995,11 @@ export class MemoryRepository implements Repository {
     input: BeginRepositoryPushRecord,
   ): Promise<RepositoryPushData> {
     const version = await this.getVersion(scope, input.versionId);
-    if (!version || version.chatId !== input.chatId) throw new NotFoundError("Repository push version");
-    const existing = [...this.repositoryPushes.values()].find((push) => (
-      inScope(push, scope) && push.idempotencyKey === input.idempotencyKey
-    ));
+    if (!version || version.chatId !== input.chatId)
+      throw new NotFoundError("Repository push version");
+    const existing = [...this.repositoryPushes.values()].find(
+      (push) => inScope(push, scope) && push.idempotencyKey === input.idempotencyKey,
+    );
     if (existing) return publicRepositoryPush(existing);
     const push: RepositoryPushData & ScopedRecord = {
       id: input.id,
@@ -1947,13 +2035,14 @@ export class MemoryRepository implements Repository {
   ): Promise<RepositoryPushData> {
     const push = this.repositoryPushes.get(input.id);
     if (!push || !inScope(push, scope)) throw new NotFoundError("Repository push");
-    const existingLink = [...this.repositoryLinks.values()].find((link) => (
-      inScope(link, scope)
-      && link.chatId === push.chatId
-      && link.integrationId === push.integrationId
-      && link.connectionId === push.connectionId
-      && link.repositoryId === input.repository.id
-    ));
+    const existingLink = [...this.repositoryLinks.values()].find(
+      (link) =>
+        inScope(link, scope) &&
+        link.chatId === push.chatId &&
+        link.integrationId === push.integrationId &&
+        link.connectionId === push.connectionId &&
+        link.repositoryId === input.repository.id,
+    );
     const now = input.completedAt;
     const link: RepositoryLinkData & ScopedRecord = {
       id: existingLink?.id ?? createId(),
@@ -1972,31 +2061,32 @@ export class MemoryRepository implements Repository {
       ...scope,
     };
     this.repositoryLinks.set(link.id, link);
-    const completed: RepositoryPushData & ScopedRecord = input.result.status === "pushed"
-      ? {
-          ...push,
-          repositoryLinkId: link.id,
-          status: "pushed",
-          commit: { ...input.result.commit },
-          changedFiles: input.result.changedFiles,
-          pullRequest: input.result.pullRequest ? { ...input.result.pullRequest } : null,
-          actualHead: null,
-          error: null,
-          updatedAt: now,
-          completedAt: now,
-        }
-      : {
-          ...push,
-          repositoryLinkId: link.id,
-          status: "conflict",
-          commit: null,
-          changedFiles: null,
-          pullRequest: null,
-          actualHead: input.result.actualHead,
-          error: null,
-          updatedAt: now,
-          completedAt: now,
-        };
+    const completed: RepositoryPushData & ScopedRecord =
+      input.result.status === "pushed"
+        ? {
+            ...push,
+            repositoryLinkId: link.id,
+            status: "pushed",
+            commit: { ...input.result.commit },
+            changedFiles: input.result.changedFiles,
+            pullRequest: input.result.pullRequest ? { ...input.result.pullRequest } : null,
+            actualHead: null,
+            error: null,
+            updatedAt: now,
+            completedAt: now,
+          }
+        : {
+            ...push,
+            repositoryLinkId: link.id,
+            status: "conflict",
+            commit: null,
+            changedFiles: null,
+            pullRequest: null,
+            actualHead: input.result.actualHead,
+            error: null,
+            updatedAt: now,
+            completedAt: now,
+          };
     this.repositoryPushes.set(push.id, completed);
     return publicRepositoryPush(completed);
   }
@@ -2035,11 +2125,12 @@ export class MemoryRepository implements Repository {
     const chat = await this.getChat(scope, input.chatId);
     if (!chat) throw new NotFoundError("Chat");
     return [...this.repositoryPushes.values()]
-      .filter((push) => (
-        inScope(push, scope)
-        && push.chatId === input.chatId
-        && (input.versionId === undefined || push.versionId === input.versionId)
-      ))
+      .filter(
+        (push) =>
+          inScope(push, scope) &&
+          push.chatId === input.chatId &&
+          (input.versionId === undefined || push.versionId === input.versionId),
+      )
       .sort((left, right) => right.createdAt.getTime() - left.createdAt.getTime())
       .map(publicRepositoryPush);
   }
@@ -2050,9 +2141,10 @@ export class MemoryRepository implements Repository {
   ): Promise<DeploymentRecordData> {
     const version = await this.getVersion(scope, input.versionId);
     if (!version || version.chatId !== input.chatId) throw new NotFoundError("Deployment version");
-    const existing = [...this.deployments.values()].find((deployment) => (
-      inScope(deployment, scope) && deployment.idempotencyKey === input.idempotencyKey
-    ));
+    const existing = [...this.deployments.values()].find(
+      (deployment) =>
+        inScope(deployment, scope) && deployment.idempotencyKey === input.idempotencyKey,
+    );
     if (existing) return publicDeployment(existing);
     const transition: DeploymentStatusTransitionData = {
       id: createId(),
@@ -2095,13 +2187,14 @@ export class MemoryRepository implements Repository {
   ): Promise<DeploymentRecordData> {
     const deployment = this.deployments.get(input.id);
     if (!deployment || !inScope(deployment, scope)) throw new NotFoundError("Deployment");
-    const existingProject = [...this.deploymentProjects.values()].find((project) => (
-      inScope(project, scope)
-      && project.chatId === deployment.chatId
-      && project.integrationId === deployment.integrationId
-      && project.connectionId === deployment.connectionId
-      && project.providerProjectId === input.project.id
-    ));
+    const existingProject = [...this.deploymentProjects.values()].find(
+      (project) =>
+        inScope(project, scope) &&
+        project.chatId === deployment.chatId &&
+        project.integrationId === deployment.integrationId &&
+        project.connectionId === deployment.connectionId &&
+        project.providerProjectId === input.project.id,
+    );
     const project: DeploymentProjectLinkData & ScopedRecord = {
       id: existingProject?.id ?? createId(),
       chatId: deployment.chatId,
@@ -2137,14 +2230,17 @@ export class MemoryRepository implements Repository {
       ...deployment,
       status: "failed",
       error: input.error,
-      transitions: [...deployment.transitions, {
-        id: createId(),
-        deploymentId: deployment.id,
-        status: "failed",
-        url: deployment.url,
-        error: input.error,
-        createdAt: input.observedAt,
-      }],
+      transitions: [
+        ...deployment.transitions,
+        {
+          id: createId(),
+          deploymentId: deployment.id,
+          status: "failed",
+          url: deployment.url,
+          error: input.error,
+          createdAt: input.observedAt,
+        },
+      ],
       updatedAt: input.observedAt,
       completedAt: input.observedAt,
     };
@@ -2156,13 +2252,14 @@ export class MemoryRepository implements Repository {
     scope: UserScope,
     input: ObserveDeploymentRecord,
   ): Promise<DeploymentRecordData | null> {
-    const deployment = [...this.deployments.values()].find((candidate) => (
-      inScope(candidate, scope)
-      && candidate.integrationId === input.integrationId
-      && candidate.connectionId === input.connectionId
-      && candidate.provider === input.provider
-      && candidate.providerDeploymentId === input.deployment.id
-    ));
+    const deployment = [...this.deployments.values()].find(
+      (candidate) =>
+        inScope(candidate, scope) &&
+        candidate.integrationId === input.integrationId &&
+        candidate.connectionId === input.connectionId &&
+        candidate.provider === input.provider &&
+        candidate.providerDeploymentId === input.deployment.id,
+    );
     if (!deployment) return null;
     const observed = updateMemoryDeployment(deployment, input.deployment, input.observedAt);
     this.deployments.set(observed.id, observed);
@@ -2188,11 +2285,12 @@ export class MemoryRepository implements Repository {
     const chat = await this.getChat(scope, input.chatId);
     if (!chat) throw new NotFoundError("Chat");
     return [...this.deployments.values()]
-      .filter((deployment) => (
-        inScope(deployment, scope)
-        && deployment.chatId === input.chatId
-        && (input.versionId === undefined || deployment.versionId === input.versionId)
-      ))
+      .filter(
+        (deployment) =>
+          inScope(deployment, scope) &&
+          deployment.chatId === input.chatId &&
+          (input.versionId === undefined || deployment.versionId === input.versionId),
+      )
       .sort((left, right) => right.createdAt.getTime() - left.createdAt.getTime())
       .map(publicDeployment);
   }
@@ -2203,14 +2301,15 @@ export class MemoryRepository implements Repository {
   ): Promise<DeploymentArtifactData> {
     const deployment = this.deployments.get(input.deploymentId);
     if (
-      !deployment
-      || !inScope(deployment, scope)
-      || deployment.chatId !== input.chatId
-      || deployment.versionId !== input.versionId
-    ) throw new NotFoundError("Deployment");
-    const existing = [...this.deploymentArtifacts.values()].find((artifact) => (
-      inScope(artifact, scope) && artifact.deploymentId === input.deploymentId
-    ));
+      !deployment ||
+      !inScope(deployment, scope) ||
+      deployment.chatId !== input.chatId ||
+      deployment.versionId !== input.versionId
+    )
+      throw new NotFoundError("Deployment");
+    const existing = [...this.deploymentArtifacts.values()].find(
+      (artifact) => inScope(artifact, scope) && artifact.deploymentId === input.deploymentId,
+    );
     if (existing) return publicDeploymentArtifact(existing);
     if (input.bytes.byteLength !== input.size || sha256(input.bytes) !== input.checksum) {
       throw new ConfigurationError("Deployment artifact size or checksum is invalid.");
@@ -2252,7 +2351,8 @@ export class MemoryRepository implements Repository {
     artifactId: string,
   ): Promise<DeploymentArtifactContent | null> {
     const artifact = this.deploymentArtifacts.get(artifactId);
-    if (!artifact || !inScope(artifact, scope) || artifact.deploymentId !== deploymentId) return null;
+    if (!artifact || !inScope(artifact, scope) || artifact.deploymentId !== deploymentId)
+      return null;
     const deployment = this.deployments.get(deploymentId);
     if (!deployment || !inScope(deployment, scope)) return null;
     return {
@@ -2293,7 +2393,7 @@ export class MemoryRepository implements Repository {
   ): Promise<SandboxLeaseData<Framework> | null> {
     const lease = this.sandboxLeases.get(id);
     return lease && inScope(lease, scope)
-      ? lease as unknown as SandboxLeaseData<Framework>
+      ? (lease as unknown as SandboxLeaseData<Framework>)
       : null;
   }
 
@@ -2319,16 +2419,22 @@ export class MemoryRepository implements Repository {
   ): Promise<PreviewSessionData<Framework>> {
     const version = await this.getVersion<Framework>(scope, input.versionId);
     const lease = this.sandboxLeases.get(input.sandboxLeaseId);
-    if (!version || version.chatId !== input.chatId || !lease || !inScope(lease, scope)
-      || lease.context.versionId !== input.versionId || lease.status !== "active") {
+    if (
+      !version ||
+      version.chatId !== input.chatId ||
+      !lease ||
+      !inScope(lease, scope) ||
+      lease.context.versionId !== input.versionId ||
+      lease.status !== "active"
+    ) {
       throw new NotFoundError("Preview sandbox version");
     }
     if (lease.provider !== input.sandboxProvider) {
       throw new ConfigurationError("Preview sandbox provider does not match its lease.");
     }
-    const existing = [...this.previewSessions.values()].find((preview) => (
-      inScope(preview, scope) && preview.sandboxLeaseId === input.sandboxLeaseId
-    ));
+    const existing = [...this.previewSessions.values()].find(
+      (preview) => inScope(preview, scope) && preview.sandboxLeaseId === input.sandboxLeaseId,
+    );
     if (existing) return existing as unknown as PreviewSessionData<Framework>;
     const preview: PreviewSessionData<Framework> & ScopedRecord = {
       id: input.id,
@@ -2359,7 +2465,7 @@ export class MemoryRepository implements Repository {
   ): Promise<PreviewSessionData<Framework> | null> {
     const preview = this.previewSessions.get(id);
     return preview && inScope(preview, scope)
-      ? preview as unknown as PreviewSessionData<Framework>
+      ? (preview as unknown as PreviewSessionData<Framework>)
       : null;
   }
 
@@ -2367,13 +2473,17 @@ export class MemoryRepository implements Repository {
     scope: UserScope,
     options: PreviewSessionListOptions = {},
   ): Promise<PreviewSessionData<Framework>[]> {
-    return ([...this.previewSessions.values()]
-      .filter((preview) => inScope(preview, scope)
-        && (options.chatId === undefined || preview.chatId === options.chatId)
-        && (options.versionId === undefined || preview.versionId === options.versionId)
-        && (options.status === undefined || preview.status === options.status))
-      .sort((left, right) => right.createdAt.getTime() - left.createdAt.getTime())) as unknown as
-      PreviewSessionData<Framework>[];
+    return [...this.previewSessions.values()]
+      .filter(
+        (preview) =>
+          inScope(preview, scope) &&
+          (options.chatId === undefined || preview.chatId === options.chatId) &&
+          (options.versionId === undefined || preview.versionId === options.versionId) &&
+          (options.status === undefined || preview.status === options.status),
+      )
+      .sort(
+        (left, right) => right.createdAt.getTime() - left.createdAt.getTime(),
+      ) as unknown as PreviewSessionData<Framework>[];
   }
 
   async listExpiredPreviewSessions<Framework extends FrameworkId>(
@@ -2382,11 +2492,30 @@ export class MemoryRepository implements Repository {
     limit: number,
   ): Promise<PreviewSessionData<Framework>[]> {
     return [...this.previewSessions.values()]
-      .filter((preview) => inScope(preview, scope)
-        && (preview.status === "starting" || preview.status === "ready")
-        && preview.expiresAt <= now)
+      .filter(
+        (preview) =>
+          inScope(preview, scope) &&
+          (preview.status === "starting" || preview.status === "ready") &&
+          preview.expiresAt <= now,
+      )
       .sort((left, right) => left.expiresAt.getTime() - right.expiresAt.getTime())
       .slice(0, limit) as unknown as PreviewSessionData<Framework>[];
+  }
+
+  async retargetPreviewSession<Framework extends FrameworkId>(
+    scope: UserScope,
+    id: string,
+    versionId: string,
+    now: Date,
+  ): Promise<PreviewSessionData<Framework>> {
+    const preview = this.#activePreview(scope, id);
+    const version = await this.getVersion<Framework>(scope, versionId);
+    if (!version || version.chatId !== preview.chatId || version.framework !== preview.framework) {
+      throw new NotFoundError("Active preview version");
+    }
+    const updated = { ...preview, versionId, updatedAt: now };
+    this.previewSessions.set(id, updated);
+    return updated as unknown as PreviewSessionData<Framework>;
   }
 
   async markPreviewReady<Framework extends FrameworkId>(
@@ -2396,7 +2525,14 @@ export class MemoryRepository implements Repository {
     now: Date,
   ): Promise<PreviewSessionData<Framework>> {
     const preview = this.#activePreview(scope, id);
-    const updated = { ...preview, url, status: "ready" as const, error: null, readyAt: now, updatedAt: now };
+    const updated = {
+      ...preview,
+      url,
+      status: "ready" as const,
+      error: null,
+      readyAt: now,
+      updatedAt: now,
+    };
     this.previewSessions.set(id, updated);
     return updated as unknown as PreviewSessionData<Framework>;
   }
@@ -2408,7 +2544,13 @@ export class MemoryRepository implements Repository {
     now: Date,
   ): Promise<PreviewSessionData<Framework>> {
     const preview = this.#activePreview(scope, id);
-    const updated = { ...preview, status: "failed" as const, error, stoppedAt: now, updatedAt: now };
+    const updated = {
+      ...preview,
+      status: "failed" as const,
+      error,
+      stoppedAt: now,
+      updatedAt: now,
+    };
     this.previewSessions.set(id, updated);
     return updated as unknown as PreviewSessionData<Framework>;
   }
@@ -2470,9 +2612,12 @@ export class MemoryRepository implements Repository {
     options: ToolSourceRegistrationListOptions = {},
   ): Promise<readonly ToolSourceRegistrationData[]> {
     return [...this.toolSourceRegistrations.values()]
-      .filter((source) => inScope(source, scope)
-        && (options.status === undefined || source.status === options.status)
-        && (options.type === undefined || source.type === options.type))
+      .filter(
+        (source) =>
+          inScope(source, scope) &&
+          (options.status === undefined || source.status === options.status) &&
+          (options.type === undefined || source.type === options.type),
+      )
       .sort((left, right) => right.updatedAt.getTime() - left.updatedAt.getTime())
       .slice(0, options.limit ?? 100)
       .map(publicToolSourceRegistration);
@@ -2509,7 +2654,10 @@ export class MemoryRepository implements Repository {
     this.toolSourceRegistrations.set(id, archived);
     for (const [key, sourceIds] of this.chatToolSources) {
       if (key.startsWith(`${scope.tenantId}\0${scope.userId}\0`)) {
-        this.chatToolSources.set(key, sourceIds.filter((sourceId) => sourceId !== id));
+        this.chatToolSources.set(
+          key,
+          sourceIds.filter((sourceId) => sourceId !== id),
+        );
       }
     }
     return publicToolSourceRegistration(archived);
@@ -2567,7 +2715,8 @@ export class MemoryRepository implements Repository {
     consumedAt: Date,
   ): Promise<{ scope: UserScope; session: ToolSourceAuthorizationSessionData } | null> {
     const session = this.toolSourceAuthorizationSessions.get(stateHash);
-    if (!session || session.consumedAt || session.expiresAt.getTime() <= consumedAt.getTime()) return null;
+    if (!session || session.consumedAt || session.expiresAt.getTime() <= consumedAt.getTime())
+      return null;
     const consumed = { ...session, consumedAt };
     this.toolSourceAuthorizationSessions.set(stateHash, consumed);
     return {
@@ -2616,9 +2765,9 @@ export class MemoryRepository implements Repository {
     id: string,
     input: UpdateToolSourceConnectionRecord,
   ): Promise<StoredToolSourceConnection> {
-    const entry = [...this.toolSourceConnections.entries()].find(([, connection]) => (
-      connection.id === id && inScope(connection, scope)
-    ));
+    const entry = [...this.toolSourceConnections.entries()].find(
+      ([, connection]) => connection.id === id && inScope(connection, scope),
+    );
     if (!entry) throw new NotFoundError("Tool source connection");
     const [key, current] = entry;
     const updated = {
@@ -2664,10 +2813,10 @@ export class MemoryRepository implements Repository {
       if (part.type !== "tool-call") continue;
       const toolCall = this.toolCalls.get(part.data.toolCallId);
       if (
-        toolCall
-        && inScope(toolCall, scope)
-        && toolCall.generationId === input.generationId
-        && toolCall.attemptId === input.attemptId
+        toolCall &&
+        inScope(toolCall, scope) &&
+        toolCall.generationId === input.generationId &&
+        toolCall.attemptId === input.attemptId
       ) {
         this.toolCalls.set(toolCall.id, { ...toolCall, messageId: message.id });
       }
@@ -2728,10 +2877,12 @@ export class MemoryRepository implements Repository {
   }
 
   #hasWorkerLease(attempt: GenerationAttemptData, leaseToken: string): boolean {
-    return attempt.status === "running"
-      && this.workerLeaseTokens.get(attempt.id) === leaseToken
-      && attempt.leaseExpiresAt !== null
-      && attempt.leaseExpiresAt.getTime() > Date.now();
+    return (
+      attempt.status === "running" &&
+      this.workerLeaseTokens.get(attempt.id) === leaseToken &&
+      attempt.leaseExpiresAt !== null &&
+      attempt.leaseExpiresAt.getTime() > Date.now()
+    );
   }
 
   #append<Type extends GenerationEventType>(
@@ -2837,9 +2988,10 @@ function updateMemoryDeployment(
   projectLinkId = record.projectLinkId,
 ): DeploymentRecordData & ScopedRecord {
   const changed = record.status !== observation.status || record.url !== observation.url;
-  const terminal = observation.status === "ready"
-    || observation.status === "failed"
-    || observation.status === "cancelled";
+  const terminal =
+    observation.status === "ready" ||
+    observation.status === "failed" ||
+    observation.status === "cancelled";
   return {
     ...record,
     projectLinkId,
@@ -2848,36 +3000,43 @@ function updateMemoryDeployment(
     status: observation.status,
     url: observation.url,
     error: null,
-    transitions: changed ? [...record.transitions, {
-      id: createId(),
-      deploymentId: record.id,
-      status: observation.status,
-      url: observation.url,
-      error: null,
-      createdAt: observedAt,
-    }] : record.transitions,
+    transitions: changed
+      ? [
+          ...record.transitions,
+          {
+            id: createId(),
+            deploymentId: record.id,
+            status: observation.status,
+            url: observation.url,
+            error: null,
+            createdAt: observedAt,
+          },
+        ]
+      : record.transitions,
     updatedAt: observedAt,
     completedAt: terminal ? observedAt : null,
   };
 }
 
 function sortChats<Item extends ChatData>(chats: Item[]): Item[] {
-  return chats.sort((left, right) => (
-    right.updatedAt.getTime() - left.updatedAt.getTime() || right.id.localeCompare(left.id)
-  ));
+  return chats.sort(
+    (left, right) =>
+      right.updatedAt.getTime() - left.updatedAt.getTime() || right.id.localeCompare(left.id),
+  );
 }
 
 function containsJson(value: JsonValue, filter: JsonValue): boolean {
   if (Array.isArray(filter)) {
-    return Array.isArray(value) && filter.every((entry) => (
-      value.some((candidate) => containsJson(candidate, entry))
-    ));
+    return (
+      Array.isArray(value) &&
+      filter.every((entry) => value.some((candidate) => containsJson(candidate, entry)))
+    );
   }
   if (filter !== null && typeof filter === "object") {
     if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
-    return Object.entries(filter).every(([key, entry]) => (
-      Object.hasOwn(value, key) && containsJson(value[key]!, entry)
-    ));
+    return Object.entries(filter).every(
+      ([key, entry]) => Object.hasOwn(value, key) && containsJson(value[key]!, entry),
+    );
   }
   return Object.is(value, filter);
 }
@@ -2887,16 +3046,19 @@ function createMemoryMessage(
   input: MemoryMessageInput,
 ): MessageData & ScopedRecord {
   const id = input.id ?? createId();
-  const parts = input.parts.map((part, position) => ({
-    id: part.id ?? createId(),
-    messageId: id,
-    generationId: input.generationId,
-    attemptId: input.attemptId,
-    position,
-    type: part.type,
-    data: JSON.parse(JSON.stringify(part.data)) as MessagePart["data"],
-    createdAt: input.createdAt,
-  } as MessagePart));
+  const parts = input.parts.map(
+    (part, position) =>
+      ({
+        id: part.id ?? createId(),
+        messageId: id,
+        generationId: input.generationId,
+        attemptId: input.attemptId,
+        position,
+        type: part.type,
+        data: JSON.parse(JSON.stringify(part.data)) as MessagePart["data"],
+        createdAt: input.createdAt,
+      }) as MessagePart,
+  );
   const attachments = (input.attachments ?? []).map((attachment) => ({
     id: attachment.id,
     chatId: input.chatId,
@@ -2954,17 +3116,11 @@ function addCost(
   };
 }
 
-function outboundDeliveryKey(
-  generationId: string,
-  eventCursor: string,
-  sinkId: string,
-): string {
+function outboundDeliveryKey(generationId: string, eventCursor: string, sinkId: string): string {
   return `${generationId}:${eventCursor}:${sinkId}`;
 }
 
-function publicOutboundDelivery(
-  delivery: MemoryOutboundEventDelivery,
-): OutboundEventDeliveryData {
+function publicOutboundDelivery(delivery: MemoryOutboundEventDelivery): OutboundEventDeliveryData {
   return {
     generationId: delivery.generationId,
     eventCursor: delivery.eventCursor,

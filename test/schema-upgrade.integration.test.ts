@@ -9,122 +9,134 @@ import { PostgresRepository } from "../src/postgres-repository.js";
 
 const adminUrl = process.env.SCHEMA_UPGRADE_ADMIN_URL;
 
-test("upgrades a historical v0.2 schema without losing tenant data", {
-  skip: adminUrl ? false : "SCHEMA_UPGRADE_ADMIN_URL is not configured",
-  timeout: 60_000,
-}, async () => {
-  assert.ok(adminUrl);
-  const databaseName = `viby_upgrade_${randomUUID().replaceAll("-", "")}`;
-  assert.match(databaseName, /^viby_upgrade_[a-f0-9]{32}$/);
+test(
+  "upgrades a historical v0.2 schema without losing tenant data",
+  {
+    skip: adminUrl ? false : "SCHEMA_UPGRADE_ADMIN_URL is not configured",
+    timeout: 60_000,
+  },
+  async () => {
+    assert.ok(adminUrl);
+    const databaseName = `viby_upgrade_${randomUUID().replaceAll("-", "")}`;
+    assert.match(databaseName, /^viby_upgrade_[a-f0-9]{32}$/);
 
-  const admin = postgres(adminUrl, { max: 1, onnotice: () => undefined });
-  const databaseUrl = new URL(adminUrl);
-  databaseUrl.pathname = `/${databaseName}`;
-  const scope = { tenantId: "fixture-tenant", userId: "fixture-user" };
-  const chatId = randomUUID();
-  let fixture: ReturnType<typeof postgres> | undefined;
-  let repository: PostgresRepository | undefined;
+    const admin = postgres(adminUrl, { max: 1, onnotice: () => undefined });
+    const databaseUrl = new URL(adminUrl);
+    databaseUrl.pathname = `/${databaseName}`;
+    const scope = { tenantId: "fixture-tenant", userId: "fixture-user" };
+    const chatId = randomUUID();
+    let fixture: ReturnType<typeof postgres> | undefined;
+    let repository: PostgresRepository | undefined;
 
-  try {
-    await admin.unsafe(`CREATE DATABASE "${databaseName}"`);
-    fixture = postgres(databaseUrl.toString(), { max: 1, onnotice: () => undefined });
+    try {
+      await admin.unsafe(`CREATE DATABASE "${databaseName}"`);
+      fixture = postgres(databaseUrl.toString(), { max: 1, onnotice: () => undefined });
 
-    for (const version of [
-      "0001_initial",
-      "0002_durable_generations",
-      "0003_source_versions",
-      "0004_chat_metadata",
-    ]) {
-      const migration = await readFile(join(process.cwd(), "migrations", `${version}.sql`), "utf8");
-      await fixture.unsafe(migration);
-    }
-    await fixture`
+      for (const version of [
+        "0001_initial",
+        "0002_durable_generations",
+        "0003_source_versions",
+        "0004_chat_metadata",
+      ]) {
+        const migration = await readFile(
+          join(process.cwd(), "migrations", `${version}.sql`),
+          "utf8",
+        );
+        await fixture.unsafe(migration);
+      }
+      await fixture`
       CREATE TABLE viby.schema_migrations (
         version text PRIMARY KEY,
         applied_at timestamptz NOT NULL DEFAULT now()
       )
     `;
-    for (const version of [
-      "0001_initial",
-      "0002_durable_generations",
-      "0003_source_versions",
-      "0004_chat_metadata",
-    ]) {
-      await fixture`INSERT INTO viby.schema_migrations (version) VALUES (${version})`;
-    }
-    await fixture`
+      for (const version of [
+        "0001_initial",
+        "0002_durable_generations",
+        "0003_source_versions",
+        "0004_chat_metadata",
+      ]) {
+        await fixture`INSERT INTO viby.schema_migrations (version) VALUES (${version})`;
+      }
+      await fixture`
       INSERT INTO viby.chats (id, tenant_id, user_id, title, framework, metadata)
       VALUES (
         ${chatId}, ${scope.tenantId}, ${scope.userId},
         'Historical project', 'farm', ${fixture.json({ release: "0.2" })}
       )
     `;
-    await fixture.end({ timeout: 5 });
-    fixture = undefined;
+      await fixture.end({ timeout: 5 });
+      fixture = undefined;
 
-    assert.deepEqual(await migrateDatabase(databaseUrl.toString()), [
-      "0005_sandbox_leases",
-      "0006_generation_worker_leases",
-      "0007_version_changes",
-      "0008_message_parts",
-      "0009_agent_trace_events",
-      "0010_tool_calls",
-      "0011_locked_files",
-      "0012_chat_retention",
-      "0013_generation_costs",
-      "0014_outbound_event_deliveries",
-      "0015_generation_configuration",
-      "0016_attachments",
-      "0017_design_evaluations",
-      "0018_artifact_storage",
-      "0019_generated_artifacts",
-      "0020_visual_artifacts",
-      "0021_project_artifacts",
-      "0022_integration_connections",
-      "0023_repository_push_history",
-      "0024_deployment_history",
-      "0025_deployment_artifacts",
-      "0026_message_finish_reasons",
-      "0027_provider_neutral_skill_sources",
-      "0028_environment_variables",
-      "0029_preview_sessions",
-      "0030_tool_source_registry",
-      "0031_tool_source_authorization",
-      "0032_generation_quality_events",
-      "0033_generation_steering",
-    ]);
-    assert.equal((await getMigrationStatus(databaseUrl.toString())).every((entry) => entry.applied), true);
-    assert.deepEqual(await migrateDatabase(databaseUrl.toString()), []);
+      assert.deepEqual(await migrateDatabase(databaseUrl.toString()), [
+        "0005_sandbox_leases",
+        "0006_generation_worker_leases",
+        "0007_version_changes",
+        "0008_message_parts",
+        "0009_agent_trace_events",
+        "0010_tool_calls",
+        "0011_locked_files",
+        "0012_chat_retention",
+        "0013_generation_costs",
+        "0014_outbound_event_deliveries",
+        "0015_generation_configuration",
+        "0016_attachments",
+        "0017_design_evaluations",
+        "0018_artifact_storage",
+        "0019_generated_artifacts",
+        "0020_visual_artifacts",
+        "0021_project_artifacts",
+        "0022_integration_connections",
+        "0023_repository_push_history",
+        "0024_deployment_history",
+        "0025_deployment_artifacts",
+        "0026_message_finish_reasons",
+        "0027_provider_neutral_skill_sources",
+        "0028_environment_variables",
+        "0029_preview_sessions",
+        "0030_tool_source_registry",
+        "0031_tool_source_authorization",
+        "0032_generation_quality_events",
+        "0033_generation_steering",
+        "0034_generation_workspace_events",
+      ]);
+      assert.equal(
+        (await getMigrationStatus(databaseUrl.toString())).every((entry) => entry.applied),
+        true,
+      );
+      assert.deepEqual(await migrateDatabase(databaseUrl.toString()), []);
 
-    repository = new PostgresRepository(databaseUrl.toString());
-    await repository.assertReady();
-    const chat = await repository.getChat<"farm">(scope, chatId);
-    assert.ok(chat);
-    assert.equal(chat.title, "Historical project");
-    assert.equal(chat.framework, "farm");
-    assert.deepEqual(chat.metadata, { release: "0.2" });
+      repository = new PostgresRepository(databaseUrl.toString());
+      await repository.assertReady();
+      const chat = await repository.getChat<"farm">(scope, chatId);
+      assert.ok(chat);
+      assert.equal(chat.title, "Historical project");
+      assert.equal(chat.framework, "farm");
+      assert.deepEqual(chat.metadata, { release: "0.2" });
 
-    const inspection = postgres(databaseUrl.toString(), { max: 1, onnotice: () => undefined });
-    try {
-      const [row] = await inspection<{
-        deliveries: string | null;
-        costColumn: boolean;
-        lockedColumn: boolean;
-        configurationColumn: boolean;
-        attachments: string | null;
-        designEvaluations: string | null;
-        artifactKeyColumn: boolean;
-        generatedArtifacts: string | null;
-        visualArtifacts: string | null;
-        projectArtifacts: string | null;
-        projectArtifactColumn: boolean;
-        integrationConnections: string | null;
-        integrationSecrets: string | null;
-        messageFinishReasonColumn: boolean;
-        environmentVariables: string | null;
-        toolSourceConnections: string | null;
-        toolSourceAuthorizationSessions: string | null;
-      }[]>`
+      const inspection = postgres(databaseUrl.toString(), { max: 1, onnotice: () => undefined });
+      try {
+        const [row] = await inspection<
+          {
+            deliveries: string | null;
+            costColumn: boolean;
+            lockedColumn: boolean;
+            configurationColumn: boolean;
+            attachments: string | null;
+            designEvaluations: string | null;
+            artifactKeyColumn: boolean;
+            generatedArtifacts: string | null;
+            visualArtifacts: string | null;
+            projectArtifacts: string | null;
+            projectArtifactColumn: boolean;
+            integrationConnections: string | null;
+            integrationSecrets: string | null;
+            messageFinishReasonColumn: boolean;
+            environmentVariables: string | null;
+            toolSourceConnections: string | null;
+            toolSourceAuthorizationSessions: string | null;
+          }[]
+        >`
         SELECT
           to_regclass('viby.outbound_event_deliveries')::text AS deliveries,
           EXISTS (
@@ -169,38 +181,39 @@ test("upgrades a historical v0.2 schema without losing tenant data", {
               AND column_name = 'artifact_id'
           ) AS "projectArtifactColumn"
       `;
-      assert.equal(row?.deliveries, "viby.outbound_event_deliveries");
-      assert.equal(row?.costColumn, true);
-      assert.equal(row?.lockedColumn, true);
-      assert.equal(row?.configurationColumn, true);
-      assert.equal(row?.attachments, "viby.attachments");
-      assert.equal(row?.designEvaluations, "viby.design_evaluations");
-      assert.equal(row?.artifactKeyColumn, true);
-      assert.equal(row?.generatedArtifacts, "viby.generated_artifacts");
-      assert.equal(row?.visualArtifacts, "viby.visual_artifacts");
-      assert.equal(row?.projectArtifacts, "viby.project_artifacts");
-      assert.equal(row?.projectArtifactColumn, true);
-      assert.equal(row?.integrationConnections, "viby.integration_connections");
-      assert.equal(row?.integrationSecrets, "viby.integration_secrets");
-      assert.equal(row?.messageFinishReasonColumn, true);
-      assert.equal(row?.environmentVariables, "viby.environment_variables");
-      assert.equal(row?.toolSourceConnections, "viby.tool_source_connections");
-      assert.equal(
-        row?.toolSourceAuthorizationSessions,
-        "viby.tool_source_authorization_sessions",
-      );
+        assert.equal(row?.deliveries, "viby.outbound_event_deliveries");
+        assert.equal(row?.costColumn, true);
+        assert.equal(row?.lockedColumn, true);
+        assert.equal(row?.configurationColumn, true);
+        assert.equal(row?.attachments, "viby.attachments");
+        assert.equal(row?.designEvaluations, "viby.design_evaluations");
+        assert.equal(row?.artifactKeyColumn, true);
+        assert.equal(row?.generatedArtifacts, "viby.generated_artifacts");
+        assert.equal(row?.visualArtifacts, "viby.visual_artifacts");
+        assert.equal(row?.projectArtifacts, "viby.project_artifacts");
+        assert.equal(row?.projectArtifactColumn, true);
+        assert.equal(row?.integrationConnections, "viby.integration_connections");
+        assert.equal(row?.integrationSecrets, "viby.integration_secrets");
+        assert.equal(row?.messageFinishReasonColumn, true);
+        assert.equal(row?.environmentVariables, "viby.environment_variables");
+        assert.equal(row?.toolSourceConnections, "viby.tool_source_connections");
+        assert.equal(
+          row?.toolSourceAuthorizationSessions,
+          "viby.tool_source_authorization_sessions",
+        );
+      } finally {
+        await inspection.end({ timeout: 5 });
+      }
     } finally {
-      await inspection.end({ timeout: 5 });
-    }
-  } finally {
-    await repository?.close().catch(() => undefined);
-    await fixture?.end({ timeout: 5 }).catch(() => undefined);
-    await admin`
+      await repository?.close().catch(() => undefined);
+      await fixture?.end({ timeout: 5 }).catch(() => undefined);
+      await admin`
       SELECT pg_terminate_backend(pid)
       FROM pg_stat_activity
       WHERE datname = ${databaseName} AND pid <> pg_backend_pid()
     `.catch(() => undefined);
-    await admin.unsafe(`DROP DATABASE IF EXISTS "${databaseName}"`).catch(() => undefined);
-    await admin.end({ timeout: 5 });
-  }
-});
+      await admin.unsafe(`DROP DATABASE IF EXISTS "${databaseName}"`).catch(() => undefined);
+      await admin.end({ timeout: 5 });
+    }
+  },
+);

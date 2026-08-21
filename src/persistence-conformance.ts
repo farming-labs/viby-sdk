@@ -70,36 +70,43 @@ export async function verifyPersistenceAdapter(
       kind: "project",
       title: "Persistence conformance",
       summary: "Portable durable lifecycle fixture.",
-      files: [{
-        path: "src/index.ts",
-        content: source,
-        mediaType: "text/javascript",
-        size: Buffer.byteLength(source),
-        checksum: sha256(source),
-        locked: false,
-      }],
-      artifacts: [{
-        filename: "conformance.png",
-        mediaType: "image/png",
-        bytes: new Uint8Array([137, 80, 78, 71]),
-      }],
+      files: [
+        {
+          path: "src/index.ts",
+          content: source,
+          mediaType: "text/javascript",
+          size: Buffer.byteLength(source),
+          checksum: sha256(source),
+          locked: false,
+        },
+      ],
+      artifacts: [
+        {
+          filename: "conformance.png",
+          mediaType: "image/png",
+          bytes: new Uint8Array([137, 80, 78, 71]),
+        },
+      ],
       usage,
       finishReason: "stop",
     };
-    const viby = createVibyWithDependencies({
-      framework: "persistence-conformance",
-      engine: {
-        identity: { provider: "conformance", model: "fixture-v1" },
-        async generate(_generationInput, options) {
-          options?.signal?.throwIfAborted();
-          return output;
+    const viby = createVibyWithDependencies(
+      {
+        framework: "persistence-conformance",
+        engine: {
+          identity: { provider: "conformance", model: "fixture-v1" },
+          async generate(_generationInput, options) {
+            options?.signal?.throwIfAborted();
+            return output;
+          },
         },
+        retention: { deletedChatsMs: 0 },
       },
-      retention: { deletedChatsMs: 0 },
-    }, {
-      repository: persistence,
-      skillResolver: new SkillResolver({}),
-    });
+      {
+        repository: persistence,
+        skillResolver: new SkillResolver({}),
+      },
+    );
     const suffix = crypto.randomUUID();
     const scope = { tenantId: `conformance-${suffix}`, userId: `owner-${suffix}` };
     const owner = viby.forUser(scope);
@@ -115,9 +122,15 @@ export async function verifyPersistenceAdapter(
     const outcome = await generation.wait({ pollIntervalMs: 10 });
     assertConformance(outcome.status === "succeeded", "Generation did not persist successfully.");
     if (outcome.status !== "succeeded") throw new PersistenceConformanceError("Missing version.");
-    assertConformance((await generation.attempts()).length === 1, "Attempt history was not durable.");
+    assertConformance(
+      (await generation.attempts()).length === 1,
+      "Attempt history was not durable.",
+    );
     assertConformance((await chat.listMessages()).items.length === 2, "Messages were not durable.");
-    assertConformance((await outcome.version.files())[0]?.content === source, "Version files changed.");
+    assertConformance(
+      (await outcome.version.files())[0]?.content === source,
+      "Version files changed.",
+    );
     checks.push("durable-generation");
 
     const steeringGenerationId = crypto.randomUUID();
@@ -145,7 +158,10 @@ export async function verifyPersistenceAdapter(
       prompt: "Duplicate submission",
       idempotencyKey: `steering-${suffix}`,
     });
-    assertConformance(duplicateSteering.id === steering.id, "Steering idempotency was not durable.");
+    assertConformance(
+      duplicateSteering.id === steering.id,
+      "Steering idempotency was not durable.",
+    );
     const lease = await persistence.claimGenerationAttempt({
       workerId: `conformance-${suffix}`,
       leaseToken: crypto.randomUUID(),
@@ -154,19 +170,26 @@ export async function verifyPersistenceAdapter(
       modelProvider: "conformance",
       modelId: "fixture-v1",
     });
-    assertConformance(lease?.generationId === steeringGenerationId, "Steering attempt was not claimable.");
+    assertConformance(
+      lease?.generationId === steeringGenerationId,
+      "Steering attempt was not claimable.",
+    );
     const appliedSteering = await persistence.consumeGenerationSteering(scope, lease!);
     assertConformance(
-      appliedSteering[0]?.id === steering.id
-      && appliedSteering[0]?.status === "applied"
-      && (await persistence.listGenerationSteering(scope, steeringGenerationId))[0]?.status === "applied",
+      appliedSteering[0]?.id === steering.id &&
+        appliedSteering[0]?.status === "applied" &&
+        (await persistence.listGenerationSteering(scope, steeringGenerationId))[0]?.status ===
+          "applied",
       "Steering was not durably consumed.",
     );
     checks.push("generation-steering");
     await persistence.cancelGeneration(scope, steeringGenerationId, "Conformance check complete");
 
     const firstEvents = await generation.events({ limit: 2 });
-    assertConformance(firstEvents.events.length === 2 && firstEvents.nextCursor !== null, "Event page is incomplete.");
+    assertConformance(
+      firstEvents.events.length === 2 && firstEvents.nextCursor !== null,
+      "Event page is incomplete.",
+    );
     const nextEvents = await generation.events({ after: firstEvents.nextCursor!, limit: 100 });
     assertConformance(nextEvents.events.length > 0, "Event cursor did not resume.");
     checks.push("event-cursors");
@@ -174,10 +197,18 @@ export async function verifyPersistenceAdapter(
     const child = await outcome.version.apply({
       title: "Persistence conformance edit",
       summary: "Created an immutable child.",
-      changes: [{ type: "write", path: "src/index.ts", content: "export const conformance = 2;\n" }],
+      changes: [
+        { type: "write", path: "src/index.ts", content: "export const conformance = 2;\n" },
+      ],
     });
-    assertConformance(child.parentVersionId === outcome.version.id, "Version lineage was not retained.");
-    assertConformance((await chat.listVersions()).items.length === 2, "Version history was not durable.");
+    assertConformance(
+      child.parentVersionId === outcome.version.id,
+      "Version lineage was not retained.",
+    );
+    assertConformance(
+      (await chat.listVersions()).items.length === 2,
+      "Version history was not durable.",
+    );
     checks.push("source-history");
 
     const sandboxLeaseId = crypto.randomUUID();
@@ -214,19 +245,38 @@ export async function verifyPersistenceAdapter(
       "https://preview.example.test/",
       new Date(),
     );
-    assertConformance(readyPreview.status === "ready" && readyPreview.url !== null,
-      "Preview readiness was not durable.");
-    assertConformance((await persistence.listPreviewSessions(scope, {
-      versionId: child.id,
-    }))[0]?.id === previewId, "Preview history was not queryable by version.");
+    assertConformance(
+      readyPreview.status === "ready" && readyPreview.url !== null,
+      "Preview readiness was not durable.",
+    );
+    assertConformance(
+      (
+        await persistence.listPreviewSessions(scope, {
+          versionId: child.id,
+        })
+      )[0]?.id === previewId,
+      "Preview history was not queryable by version.",
+    );
+    const retargetedPreview = await persistence.retargetPreviewSession(
+      scope,
+      previewId,
+      outcome.version.id,
+      new Date(),
+    );
+    assertConformance(
+      retargetedPreview.versionId === outcome.version.id,
+      "Preview leases could not be reused by another immutable version.",
+    );
     const stoppedPreview = await persistence.closePreviewSession(
       scope,
       previewId,
       "stopped",
       new Date(),
     );
-    assertConformance(stoppedPreview.status === "stopped" && stoppedPreview.stoppedAt !== null,
-      "Preview stop state was not durable.");
+    assertConformance(
+      stoppedPreview.status === "stopped" && stoppedPreview.stoppedAt !== null,
+      "Preview stop state was not durable.",
+    );
     await persistence.closeSandboxLease(scope, sandboxLeaseId, "stopped");
     checks.push("preview-sessions");
 
@@ -246,8 +296,10 @@ export async function verifyPersistenceAdapter(
       [toolSourceId],
       new Date(),
     );
-    assertConformance(selectedToolSources[0]?.id === toolSourceId,
-      "Chat tool-source selection was not durable.");
+    assertConformance(
+      selectedToolSources[0]?.id === toolSourceId,
+      "Chat tool-source selection was not durable.",
+    );
     const authorizationStateHash = sha256(`state-${suffix}`);
     const authorizationSession = await persistence.createToolSourceAuthorizationSession(scope, {
       id: crypto.randomUUID(),
@@ -261,24 +313,30 @@ export async function verifyPersistenceAdapter(
       expiresAt: new Date(Date.now() + 60_000),
       createdAt: new Date(),
     });
-    assertConformance(authorizationSession.consumedAt === null,
-      "Tool-source authorization session was not durable.");
+    assertConformance(
+      authorizationSession.consumedAt === null,
+      "Tool-source authorization session was not durable.",
+    );
     const pendingAuthorization = await persistence.getToolSourceAuthorizationSession(
       authorizationStateHash,
       new Date(),
     );
-    assertConformance(pendingAuthorization?.scope.tenantId === scope.tenantId,
-      "Tool-source authorization session lost its tenant ownership.");
+    assertConformance(
+      pendingAuthorization?.scope.tenantId === scope.tenantId,
+      "Tool-source authorization session lost its tenant ownership.",
+    );
     const consumedAuthorization = await persistence.consumeToolSourceAuthorizationSession(
       authorizationStateHash,
       new Date(),
     );
-    assertConformance(consumedAuthorization?.session.consumedAt !== null
-      && await persistence.consumeToolSourceAuthorizationSession(
-        authorizationStateHash,
-        new Date(),
-      ) === null,
-    "Tool-source authorization state was not single use.");
+    assertConformance(
+      consumedAuthorization?.session.consumedAt !== null &&
+        (await persistence.consumeToolSourceAuthorizationSession(
+          authorizationStateHash,
+          new Date(),
+        )) === null,
+      "Tool-source authorization state was not single use.",
+    );
     const firstConnection = await persistence.upsertToolSourceConnection(scope, {
       id: crypto.randomUUID(),
       toolSourceId,
@@ -289,9 +347,10 @@ export async function verifyPersistenceAdapter(
       expiresAt: null,
       now: new Date(),
     });
-    assertConformance(firstConnection.connection.status === "active"
-      && firstConnection.replacedSecretRef === null,
-    "Tool-source connection was not created.");
+    assertConformance(
+      firstConnection.connection.status === "active" && firstConnection.replacedSecretRef === null,
+      "Tool-source connection was not created.",
+    );
     const rotatedConnection = await persistence.upsertToolSourceConnection(scope, {
       id: crypto.randomUUID(),
       toolSourceId,
@@ -302,13 +361,15 @@ export async function verifyPersistenceAdapter(
       expiresAt: null,
       now: new Date(),
     });
-    assertConformance(rotatedConnection.replacedSecretRef === "credential-ref-1"
-      && (await persistence.getToolSourceConnection(scope, toolSourceId))?.scopes.length === 2
-      && await persistence.getToolSourceConnection(
-        { tenantId: scope.tenantId, userId: `outsider-${suffix}` },
-        toolSourceId,
-      ) === null,
-    "Tool-source connection rotation or tenant isolation failed.");
+    assertConformance(
+      rotatedConnection.replacedSecretRef === "credential-ref-1" &&
+        (await persistence.getToolSourceConnection(scope, toolSourceId))?.scopes.length === 2 &&
+        (await persistence.getToolSourceConnection(
+          { tenantId: scope.tenantId, userId: `outsider-${suffix}` },
+          toolSourceId,
+        )) === null,
+      "Tool-source connection rotation or tenant isolation failed.",
+    );
     const revokedConnection = await persistence.updateToolSourceConnection(
       scope,
       rotatedConnection.connection.id,
@@ -320,24 +381,29 @@ export async function verifyPersistenceAdapter(
         now: new Date(),
       },
     );
-    assertConformance(revokedConnection.status === "revoked" && revokedConnection.secretRef === null,
-      "Tool-source connection revocation was not durable.");
-    checks.push("tool-source-authorization");
-    const disabledToolSource = await persistence.updateToolSourceRegistration(
-      scope,
-      toolSourceId,
-      { status: "disabled", now: new Date() },
+    assertConformance(
+      revokedConnection.status === "revoked" && revokedConnection.secretRef === null,
+      "Tool-source connection revocation was not durable.",
     );
-    assertConformance(disabledToolSource.status === "disabled",
-      "Tool-source status was not durable.");
+    checks.push("tool-source-authorization");
+    const disabledToolSource = await persistence.updateToolSourceRegistration(scope, toolSourceId, {
+      status: "disabled",
+      now: new Date(),
+    });
+    assertConformance(
+      disabledToolSource.status === "disabled",
+      "Tool-source status was not durable.",
+    );
     const archivedToolSource = await persistence.archiveToolSourceRegistration(
       scope,
       toolSourceId,
       new Date(),
     );
-    assertConformance(archivedToolSource.status === "archived"
-      && (await persistence.listChatToolSources(scope, chat.id)).length === 0,
-    "Tool-source archive did not remove chat selection.");
+    assertConformance(
+      archivedToolSource.status === "archived" &&
+        (await persistence.listChatToolSources(scope, chat.id)).length === 0,
+      "Tool-source archive did not remove chat selection.",
+    );
     checks.push("tool-source-registry");
 
     const pushId = crypto.randomUUID();
@@ -390,20 +456,22 @@ export async function verifyPersistenceAdapter(
       "Repository link was not durable.",
     );
     assertConformance(
-      (await persistence.beginRepositoryPush(scope, {
-        id: crypto.randomUUID(),
-        chatId: chat.id,
-        versionId: child.id,
-        integrationId: "conformance-git",
-        connectionId: "connection-1",
-        provider: "conformance-git",
-        target: { owner: "acme", name: "generated" },
-        branch: "main",
-        commitMessage: "test: verify repository persistence",
-        expectedHead: null,
-        idempotencyKey: pushKey,
-        now: new Date(),
-      })).id === pushId,
+      (
+        await persistence.beginRepositoryPush(scope, {
+          id: crypto.randomUUID(),
+          chatId: chat.id,
+          versionId: child.id,
+          integrationId: "conformance-git",
+          connectionId: "connection-1",
+          provider: "conformance-git",
+          target: { owner: "acme", name: "generated" },
+          branch: "main",
+          commitMessage: "test: verify repository persistence",
+          expectedHead: null,
+          idempotencyKey: pushKey,
+          now: new Date(),
+        })
+      ).id === pushId,
       "Repository push idempotency was not durable.",
     );
     checks.push("repository-history");
@@ -456,13 +524,13 @@ export async function verifyPersistenceAdapter(
     });
     assertConformance(storedDeployment?.status === "ready", "Deployment status was not durable.");
     assertConformance(
-      storedDeployment.transitions.map((transition) => transition.status).join(",")
-        === "pending,queued,ready",
+      storedDeployment.transitions.map((transition) => transition.status).join(",") ===
+        "pending,queued,ready",
       "Deployment transitions were not durable.",
     );
     assertConformance(
-      (await persistence.listDeploymentProjects(scope, chat.id))[0]?.providerProjectId
-        === "project-1",
+      (await persistence.listDeploymentProjects(scope, chat.id))[0]?.providerProjectId ===
+        "project-1",
       "Deployment project link was not durable.",
     );
     checks.push("deployment-history");
@@ -478,13 +546,15 @@ export async function verifyPersistenceAdapter(
       framework: child.framework,
       sandboxProvider: "conformance-sandbox",
       outputDirectory: "dist",
-      commands: [{
-        command: "npm",
-        args: ["run", "build"],
-        cwd: ".",
-        environment: ["PUBLIC_API_ORIGIN"],
-        timeoutMs: null,
-      }],
+      commands: [
+        {
+          command: "npm",
+          args: ["run", "build"],
+          cwd: ".",
+          environment: ["PUBLIC_API_ORIGIN"],
+          timeoutMs: null,
+        },
+      ],
       fileCount: 1,
       bytes: deploymentArchive,
       size: deploymentArchive.byteLength,
@@ -512,7 +582,7 @@ export async function verifyPersistenceAdapter(
       source: {
         type: "files",
         files: [
-          { path: "index.html", content: "<img src=\"/logo.png\">\n" },
+          { path: "index.html", content: '<img src="/logo.png">\n' },
           { type: "artifact", path: "public/logo.png", bytes: binaryBytes, mediaType: "image/png" },
         ],
       },
@@ -522,7 +592,8 @@ export async function verifyPersistenceAdapter(
     const binaryEntry = (await binaryVersion.entries()).find((entry) => entry.type === "artifact");
     assertConformance(binaryEntry?.type === "artifact", "Binary entry metadata was not durable.");
     assertConformance(
-      (await binaryVersion.projectArtifact(binaryEntry.artifactId)).checksum === binaryEntry.checksum,
+      (await binaryVersion.projectArtifact(binaryEntry.artifactId)).checksum ===
+        binaryEntry.checksum,
       "Binary project bytes did not roundtrip.",
     );
     assertConformance(
@@ -530,17 +601,17 @@ export async function verifyPersistenceAdapter(
       "The compatible text file view exposed a binary entry.",
     );
     assertConformance(
-      unzipSync((await binaryVersion.download()).bytes)["public/logo.png"]?.byteLength
-        === binaryBytes.byteLength,
+      unzipSync((await binaryVersion.download()).bytes)["public/logo.png"]?.byteLength ===
+        binaryBytes.byteLength,
       "The binary ZIP entry was not materialized.",
     );
     const binaryChild = await binaryVersion.apply({
       changes: [{ type: "move", from: "public/logo.png", to: "assets/logo.png" }],
     });
     assertConformance(
-      (await binaryChild.entries()).some((entry) => (
-        entry.type === "artifact" && entry.path === "assets/logo.png"
-      )),
+      (await binaryChild.entries()).some(
+        (entry) => entry.type === "artifact" && entry.path === "assets/logo.png",
+      ),
       "A binary move did not preserve its artifact entry.",
     );
     const binaryFork = await binaryChild.fork({ title: "Binary persistence fork" });
@@ -557,7 +628,10 @@ export async function verifyPersistenceAdapter(
     checks.push("binary-projects");
 
     const [artifact] = await generation.artifacts();
-    assertConformance(artifact?.versionId === outcome.version.id, "Artifact ownership is incomplete.");
+    assertConformance(
+      artifact?.versionId === outcome.version.id,
+      "Artifact ownership is incomplete.",
+    );
     assertConformance(
       (await generation.getArtifact(artifact!.id)).checksum === artifact!.checksum,
       "Artifact content did not roundtrip.",
@@ -582,12 +656,13 @@ export async function verifyPersistenceAdapter(
       checksum: sha256(screenshot),
     });
     assertConformance(
-      (await persistence.getVisualArtifact(scope, outcome.version.id, visualArtifactId))?.checksum
-        === sha256(screenshot),
+      (await persistence.getVisualArtifact(scope, outcome.version.id, visualArtifactId))
+        ?.checksum === sha256(screenshot),
       "Visual artifact content did not roundtrip.",
     );
     assertConformance(
-      (await persistence.listVisualArtifacts(scope, outcome.version.id))[0]?.id === visualArtifactId,
+      (await persistence.listVisualArtifacts(scope, outcome.version.id))[0]?.id ===
+        visualArtifactId,
       "Visual artifact metadata was not durable.",
     );
     checks.push("visual-artifacts");
@@ -597,14 +672,16 @@ export async function verifyPersistenceAdapter(
       status: "passed",
       score: 100,
       summary: "Portable evidence fixture.",
-      criteria: [{
-        id: "source",
-        label: "Source",
-        status: "passed",
-        score: 100,
-        summary: "Source persisted.",
-        evidence: [{ type: "version-file", path: "src/index.ts" }],
-      }],
+      criteria: [
+        {
+          id: "source",
+          label: "Source",
+          status: "passed",
+          score: 100,
+          summary: "Source persisted.",
+          evidence: [{ type: "version-file", path: "src/index.ts" }],
+        },
+      ],
       evidence: [{ type: "artifact", artifactId: visualArtifactId }],
     });
     assertConformance(
@@ -615,17 +692,19 @@ export async function verifyPersistenceAdapter(
 
     const outsider = viby.forUser({ tenantId: scope.tenantId, userId: `other-${suffix}` });
     await outsider.chats.get(chat.id).then(
-      () => { throw new PersistenceConformanceError("Adapter exposed another user's chat."); },
+      () => {
+        throw new PersistenceConformanceError("Adapter exposed another user's chat.");
+      },
       (error) => {
         if (!(error instanceof NotFoundError)) throw error;
       },
     );
     assertConformance(
-      await persistence.getProjectArtifact(
+      (await persistence.getProjectArtifact(
         { tenantId: scope.tenantId, userId: `other-${suffix}` },
         binaryVersion.id,
         binaryEntry.artifactId,
-      ) === null,
+      )) === null,
       "Adapter exposed another user's project artifact.",
     );
     checks.push("tenant-isolation");
@@ -633,7 +712,10 @@ export async function verifyPersistenceAdapter(
     await chat.delete({ retentionMs: 0 });
     await binaryChat.delete({ retentionMs: 0 });
     await binaryFork.delete({ retentionMs: 0 });
-    assertConformance(await owner.chats.purgeDeleted() === 3, "Retention purge did not remove every chat.");
+    assertConformance(
+      (await owner.chats.purgeDeleted()) === 3,
+      "Retention purge did not remove every chat.",
+    );
     checks.push("retention-purge");
     await viby.close();
     closed = true;

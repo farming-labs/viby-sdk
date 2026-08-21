@@ -135,22 +135,37 @@ const viby = createViby({
   framework: "farmjs",
   model,
   sandbox,
+  preview: {
+    prepare: [{ command: "pnpm", args: ["install", "--prefer-offline"] }],
+    start: { command: "pnpm", args: ["dev", "--host", "0.0.0.0"] },
+    port: 3000,
+  },
   generation: {
+    workspace: { preview: "eager" },
     quality: {
-      prepare: [{ id: "install", command: "npm", args: ["install", "--ignore-scripts"] }],
+      prepare: [{ id: "install", command: "pnpm", args: ["install", "--prefer-offline"] }],
       checks: [
-        { id: "typecheck", command: "npm", args: ["run", "typecheck"] },
-        { id: "build", command: "npm", args: ["run", "build"] },
+        { id: "typecheck", command: "pnpm", args: ["typecheck"] },
+        { id: "build", command: "pnpm", args: ["build"] },
       ],
+      checkConcurrency: 2,
     },
   },
 });
 ```
 
-Viby materializes the complete candidate in a fresh sandbox and commits it only after every check
-exits successfully. Failures end the attempt without persisting a partial version. Start and finish
-events use the normal resumable cursor, while command output is deliberately not persisted because
-it may contain secrets. The configured command policy applies to every quality command.
+With `workspace.preview: "eager"`, Viby opens the immutable base version immediately, starts preview
+preparation while the model works, and emits `workspace.started`, `workspace.prepared`,
+`preview.ready`, or `preview.failed` through the normal resumable generation cursor. The preview URL
+does not wait for typecheck or production build. Viby synchronizes the final candidate into the same
+sandbox, runs preparation, and executes up to `checkConcurrency` independent checks concurrently.
+The durable preview record is then retargeted to the committed version without reinstalling or
+restarting its server.
+
+Without an eager workspace, quality gates continue to use a fresh sandbox. In either mode, Viby
+commits only after every check succeeds. Failures end the attempt without persisting a partial
+version. Command output is deliberately not persisted because it may contain secrets, and the
+configured command policy applies to every preview and quality command.
 
 ## Worker execution
 
