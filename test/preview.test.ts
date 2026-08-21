@@ -289,6 +289,44 @@ test("streams provider-neutral preview phases and terminal output", async () => 
   await viby.close();
 });
 
+test("keeps a ready preview process independent from its startup request", async () => {
+  const repository = new MemoryRepository();
+  const adapter = new PreviewSandboxAdapter();
+  const { viby, version } = await importVersion(repository, adapter);
+  const controller = new AbortController();
+
+  const preview = await version.preview({ signal: controller.signal });
+  const started = adapter.instances.get("preview-1")!.starts[0];
+  assert.equal(started?.signal, undefined);
+
+  controller.abort(new DOMException("Startup request completed.", "AbortError"));
+  assert.equal((await viby.forUser(scope).previews.get(preview.id)).status, "ready");
+  assert.equal(adapter.instances.get("preview-1")!.stopCalls, 0);
+
+  await viby.close();
+});
+
+test("stops a preview sandbox when startup is cancelled before readiness", async () => {
+  const repository = new MemoryRepository();
+  const adapter = new PreviewSandboxAdapter();
+  const { viby, version } = await importVersion(repository, adapter);
+  const controller = new AbortController();
+  const pending = version.preview({
+    signal: controller.signal,
+    onEvent(event) {
+      if (event.type === "readiness.started") {
+        controller.abort(new DOMException("Preview cancelled.", "AbortError"));
+      }
+    },
+  });
+
+  await assert.rejects(pending, /could not become ready/);
+  assert.equal(adapter.instances.get("preview-1")!.starts[0]?.signal, undefined);
+  assert.equal(adapter.instances.get("preview-1")!.stopCalls, 1);
+
+  await viby.close();
+});
+
 test("coalesces concurrent preview starts for the same immutable version", async () => {
   const repository = new MemoryRepository();
   const adapter = new PreviewSandboxAdapter();

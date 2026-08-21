@@ -414,9 +414,11 @@ export class PreviewRegistry<Framework extends FrameworkId = FrameworkId> {
         command: startSnapshot,
         createdAt: new Date(),
       });
+      // The startup request owns readiness and cleanup, not the lifetime of the
+      // detached server. Binding its signal to the process can terminate a
+      // healthy preview as soon as an HTTP/SSE response finishes.
       const process = await sandbox.start({
         ...withPreviewOutput(options.start, options.onEvent, preview.id, "start", 0),
-        ...(options.signal ? { signal: options.signal } : {}),
       });
       await emitPreviewEvent(options.onEvent, {
         type: "readiness.started",
