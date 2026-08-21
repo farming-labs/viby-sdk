@@ -31,5 +31,6 @@
   "0030_tool_source_registry.sql": "1d0cc0c18779d286fc7b03562ee15b3fb2c5dbb1fe647b75e38b088cde35d96d",
   "0031_tool_source_authorization.sql": "b5629926216c6d411a0bdef621a78a54789d46a1a598801e436a290aa5de7e8e",
   "0032_generation_quality_events.sql": "8d2086c45f2e4c5219033b55964bb3984f979089c4745c6699b8ba552c6a7358",
-  "0033_generation_steering.sql": "8170fc38f7dbedcb2aea9ddb0a355827b8ec8fa559dafb5e855d5e9a4050c1c2"
+  "0033_generation_steering.sql": "8170fc38f7dbedcb2aea9ddb0a355827b8ec8fa559dafb5e855d5e9a4050c1c2",
+  "0034_generation_workspace_events.sql": "d0485799de40289f8dd769e120526eb53d415c72f6722b7681d07f55526aad40"
 }
