@@ -270,13 +270,23 @@ export interface GenerationWorkerRunOptions {
   readonly signal?: AbortSignal;
 }
 
+export interface VibyCloseOptions {
+  /**
+   * Leave durable sandbox leases, including active previews, running while
+   * closing request-scoped workers, stores, and provider clients.
+   *
+   * Defaults to false so existing shutdown behavior remains unchanged.
+   */
+  readonly preserveSandboxes?: boolean;
+}
+
 export interface Viby<Framework extends FrameworkId = FrameworkId> {
   readonly framework: Framework;
   readonly integrations: IntegrationClient;
   readonly toolSources: ToolSourceAuthorizationCallbacks;
   forUser(scope: UserScope): ScopedViby<Framework>;
   worker(options: GenerationWorkerOptions): GenerationWorker<Framework>;
-  close(): Promise<void>;
+  close(options?: VibyCloseOptions): Promise<void>;
 }
 
 export type GenerationOutcome<Framework extends FrameworkId = FrameworkId> =
@@ -688,13 +698,16 @@ class VibyClient<Framework extends FrameworkId> implements Viby<Framework> {
     return worker;
   }
 
-  async close(): Promise<void> {
+  async close(options: VibyCloseOptions = {}): Promise<void> {
     await Promise.allSettled([...this.#workers].map((worker) => worker.stop()));
     await this.#registry.abortAll("Viby client closed.");
-    const preview = await Promise.allSettled([this.#previews.stopAll()]);
+    const preserveSandboxes = options?.preserveSandboxes === true;
+    const preview = await Promise.allSettled([
+      preserveSandboxes ? Promise.resolve() : this.#previews.stopAll(),
+    ]);
     const [sandboxes, toolSources, toolSourceRegistry, environment, integrations, repository] =
       await Promise.allSettled([
-        this.#sandboxes.stopAll(),
+        preserveSandboxes ? Promise.resolve() : this.#sandboxes.stopAll(),
         Promise.all(this.#toolSources.map((source) => source.close?.())),
         this.#toolSourceRegistry.close(),
         this.#environment?.close(),

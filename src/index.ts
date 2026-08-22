@@ -29,24 +29,13 @@ export type {
   PreviewStatus,
   ResolvedPreviewOpenOptions,
 } from "./preview.js";
-export {
-  defineSkillResolver,
-  skillFrom,
-  skillInline,
-} from "./skill-resolver.js";
+export { defineSkillResolver, skillFrom, skillInline } from "./skill-resolver.js";
 export { skillRead } from "./skills.js";
-export {
-  builtInFrameworks,
-  isBuiltInFramework,
-} from "./frameworks.js";
+export { builtInFrameworks, isBuiltInFramework } from "./frameworks.js";
 export { frameworkSkill } from "./framework-skills.js";
 export { modelsFrom } from "./model-catalog.js";
 export { titleFromPrompt } from "./chat-title.js";
-export type {
-  LanguageModelProvider,
-  ModelCatalog,
-  ModelsFromResult,
-} from "./model-catalog.js";
+export type { LanguageModelProvider, ModelCatalog, ModelsFromResult } from "./model-catalog.js";
 export { defineDatabaseAdapter } from "./storage.js";
 export {
   EnvironmentManager,
@@ -77,10 +66,7 @@ export { DownloadArtifact } from "./download.js";
 export { AgentWorkspace } from "./agent-workspace.js";
 export { AgentProjectGenerator } from "./agent-runner.js";
 export { defineGenerationEngine } from "./generation-engine.js";
-export {
-  normalizeGenerationQuality,
-  verifyGenerationQuality,
-} from "./generation-quality.js";
+export { normalizeGenerationQuality, verifyGenerationQuality } from "./generation-quality.js";
 export type * from "./generation-quality.js";
 export { createVibyApi, vibyApi } from "./api-host.js";
 export {
@@ -104,10 +90,7 @@ export {
   resolveToolSourcePolicy,
   resolveToolSources,
 } from "./tool-source.js";
-export {
-  defineToolSourceAdapter,
-  ToolSourceRegistry,
-} from "./tool-source-registry.js";
+export { defineToolSourceAdapter, ToolSourceRegistry } from "./tool-source-registry.js";
 export type * from "./tool-source-authorization.js";
 export type {
   CreateToolSourceInput,
@@ -186,10 +169,7 @@ export type {
   RepositoryImportSource,
   RepositoryIntegrationHandleOptions,
 } from "./repository-integrations.js";
-export type {
-  IntegrationConnectionStore,
-  SecretStore,
-} from "./integration-store.js";
+export type { IntegrationConnectionStore, SecretStore } from "./integration-store.js";
 export type {
   ConfiguredIntegrationStatus,
   ConnectIntegrationInput,
@@ -470,6 +450,7 @@ export type {
   OutboundEventDeliveryPage,
   OutboundEventRedriveInput,
   Viby,
+  VibyCloseOptions,
 } from "./client.js";
 export type {
   AttachmentContent,

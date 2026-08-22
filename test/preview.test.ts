@@ -306,6 +306,26 @@ test("keeps a ready preview process independent from its startup request", async
   await viby.close();
 });
 
+test("preserves durable previews when a request-scoped client closes", async () => {
+  const repository = new MemoryRepository();
+  const adapter = new PreviewSandboxAdapter();
+  const { viby: worker, version } = await importVersion(repository, adapter);
+
+  const preview = await version.preview();
+  await worker.close({ preserveSandboxes: true });
+  assert.equal(adapter.instances.get("preview-1")?.stopCalls, 0);
+
+  const request = createPreviewViby(repository, adapter);
+  const restored = await request.forUser(scope).previews.get(preview.id);
+  await restored.reconnect();
+  assert.equal(restored.status, "ready");
+  assert.equal(adapter.reconnects.length, 1);
+
+  await restored.stop();
+  assert.equal(adapter.instances.get("preview-1")?.stopCalls, 1);
+  await request.close();
+});
+
 test("stops a preview sandbox when startup is cancelled before readiness", async () => {
   const repository = new MemoryRepository();
   const adapter = new PreviewSandboxAdapter();
