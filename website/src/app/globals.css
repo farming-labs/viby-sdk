@@ -298,7 +298,7 @@ svg {
   min-height: 48px;
   align-items: center;
   gap: 0.55rem;
-  border: 1px solid rgb(255 255 255 / 0.045);
+  border: 0;
   border-radius: 5px;
   background: #171717;
   color: rgb(255 255 255 / 0.82);
@@ -309,7 +309,6 @@ svg {
 
 .hero-copy-menu > button:hover,
 .hero-copy-menu > button:focus-visible {
-  border-color: rgb(255 255 255 / 0.08);
   background: #202020;
   color: var(--landing-fg);
   outline: none;
