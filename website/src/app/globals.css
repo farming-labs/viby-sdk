@@ -281,14 +281,20 @@ svg {
   top: calc(100% + 8px);
   left: 0;
   display: grid;
+  overflow: hidden;
   width: 246px;
   gap: 2px;
-  border: 1px solid rgb(255 255 255 / 0.1);
+  border: 1px solid rgb(255 255 255 / 0.12);
   border-radius: 8px;
-  background: #111;
+  background:
+    linear-gradient(180deg, rgb(255 255 255 / 0.085), transparent 42%),
+    rgb(14 14 14 / 0.82);
   box-shadow:
-    0 18px 48px rgb(0 0 0 / 0.56),
-    inset 0 1px 0 rgb(255 255 255 / 0.06);
+    0 18px 48px rgb(0 0 0 / 0.5),
+    inset 0 1px 0 rgb(255 255 255 / 0.12),
+    inset 0 0 0 1px rgb(255 255 255 / 0.025);
+  backdrop-filter: blur(18px) saturate(140%);
+  -webkit-backdrop-filter: blur(18px) saturate(140%);
   padding: 4px;
 }
 
@@ -300,18 +306,28 @@ svg {
   gap: 0.55rem;
   border: 0;
   border-radius: 5px;
-  background: #171717;
+  background: transparent;
   color: rgb(255 255 255 / 0.82);
   cursor: pointer;
   padding: 0.45rem 0.55rem;
   text-align: left;
 }
 
-.hero-copy-menu > button:hover,
+.hero-copy-menu > button:hover {
+  background: rgb(255 255 255 / 0.055);
+  color: var(--landing-fg);
+}
+
 .hero-copy-menu > button:focus-visible {
-  background: #202020;
+  background: transparent;
   color: var(--landing-fg);
   outline: none;
+}
+
+.hero-copy-menu > button:focus-visible strong {
+  text-decoration: underline;
+  text-decoration-color: rgb(255 255 255 / 0.5);
+  text-underline-offset: 0.2em;
 }
 
 .hero-copy-menu > button > svg,
