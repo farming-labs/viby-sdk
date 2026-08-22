@@ -1,7 +1,50 @@
+import { HeroInstallCopy } from "../components/hero-install-copy";
+
+function DocsIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      className="hero-button-leading-icon"
+      fill="none"
+      viewBox="0 0 16 16"
+    >
+      <path
+        d="M2.5 2.5h3.25A2.25 2.25 0 0 1 8 4.75v8.75a2.25 2.25 0 0 0-2.25-2.25H2.5V2.5ZM13.5 2.5h-3.25A2.25 2.25 0 0 0 8 4.75v8.75a2.25 2.25 0 0 1 2.25-2.25h3.25V2.5Z"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
 function GitHubIcon() {
   return (
-    <svg aria-hidden="true" fill="currentColor" viewBox="0 0 24 24">
+    <svg
+      aria-hidden="true"
+      className="hero-button-leading-icon"
+      fill="currentColor"
+      viewBox="0 0 24 24"
+    >
       <path d="M12 0C5.37 0 0 5.37 0 12c0 5.3 3.44 9.8 8.21 11.39.6.11.79-.26.79-.58v-2.23c-3.34.73-4.03-1.42-4.03-1.42-.55-1.39-1.33-1.76-1.33-1.76-1.09-.74.08-.73.08-.73 1.21.08 1.84 1.24 1.84 1.24 1.07 1.83 2.81 1.3 3.49 1 .11-.78.42-1.31.76-1.61-2.66-.3-5.47-1.33-5.47-5.93 0-1.31.47-2.38 1.24-3.22-.12-.3-.54-1.52.12-3.18 0 0 1.01-.32 3.3 1.23A11.5 11.5 0 0 1 12 5.8c1.02 0 2.05.14 3.01.4 2.29-1.55 3.3-1.23 3.3-1.23.65 1.66.24 2.88.12 3.18.77.84 1.24 1.91 1.24 3.22 0 4.61-2.81 5.62-5.48 5.92.43.37.81 1.1.81 2.22v3.3c0 .32.19.69.8.58A12 12 0 0 0 12 0Z" />
+    </svg>
+  );
+}
+
+function ArrowUpRightIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      className="hero-button-icon"
+      fill="none"
+      viewBox="0 0 16 16"
+    >
+      <path
+        d="M4 12 12 4M6 4h6v6"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
     </svg>
   );
 }
@@ -127,21 +170,25 @@ export default function HomePage() {
             The infrastructure SDK for persistent, skill-guided vibe coding products. Bring your
             framework, model, storage, and runtime.
           </p>
-          <div className="hero-install" aria-label="Install @viby/sdk with pnpm">
-            <span aria-hidden="true">$</span>
-            <code aria-label="pnpm add @viby/sdk">
-              <span className="hero-install-command" aria-hidden="true">pnpm add @viby/sdk</span>
-            </code>
-          </div>
+          <HeroInstallCopy />
           <div className="hero-actions">
             <a className="hero-button hero-button-primary" href="/docs">
-              Read the docs
+              <DocsIcon />
+              <span aria-hidden="true" className="hero-button-divider">
+                /
+              </span>
+              <span>Read the docs</span>
             </a>
             <a
               className="hero-button hero-button-secondary"
               href="https://github.com/farming-labs/viby-sdk"
             >
-              <GitHubIcon /> Open Source
+              <GitHubIcon />
+              <span aria-hidden="true" className="hero-button-divider">
+                /
+              </span>
+              <span>Open Source</span>
+              <ArrowUpRightIcon />
             </a>
           </div>
         </div>
