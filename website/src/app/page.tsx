@@ -159,7 +159,6 @@ export default function HomePage() {
       <header className="landing-header">
         <div>
           <VibyLogo />
-          <a className="header-docs" href="/docs">Docs</a>
         </div>
       </header>
 
