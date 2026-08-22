@@ -121,10 +121,9 @@ const viby = createViby({
         }),
       }),
     },
-    select: ({ context }) => context.metadata.toolset === "private"
-      ? ["docs", "private"]
-      : ["docs"],
-    policy: ({ tool }) => tool.effect === "read" ? "allow" : "approval-required",
+    select: ({ context }) =>
+      context.metadata.toolset === "private" ? ["docs", "private"] : ["docs"],
+    policy: ({ tool }) => (tool.effect === "read" ? "allow" : "approval-required"),
   },
 });
 ```
@@ -627,7 +626,7 @@ try {
 }
 ```
 
-Commands use a separate executable and argument list instead of an interpolated shell command. Sessions support streamed output, relative file reads and writes, optional public port URLs, abort signals, and idempotent cleanup. `viby.close()` stops any session the application left open.
+Commands use a separate executable and argument list instead of an interpolated shell command. Sessions support streamed output, relative file reads and writes, optional public port URLs, abort signals, and idempotent cleanup. `viby.close()` stops any session the application left open. A request-scoped durable worker can instead call `viby.close({ preserveSandboxes: true })` after handing an eager preview to its durable record; local stores and provider clients close while the reconnectable sandbox keeps running.
 
 Inspect `sandbox.capabilities` or call `sandbox.supports("portUrls")` before using optional behavior. The typed capability record is provider-neutral and reports what the configured adapter implements; unsupported primitives remain `false` until the adapter exposes them through Viby.
 
@@ -951,11 +950,7 @@ const browser = await openSandboxPreview(browserAdapter, sandbox, {
 Configure the browser once, then evaluate any immutable version against either a URL or a sandbox preview. The workflow captures each route, stores its screenshot in the configured artifact store, and records artifact evidence on the existing design-evaluation history:
 
 ```ts
-import {
-  accessibilityGate,
-  consoleErrorGate,
-  createViby,
-} from "@viby/sdk";
+import { accessibilityGate, consoleErrorGate, createViby } from "@viby/sdk";
 import { playwrightBrowser } from "@viby/sdk/browser/playwright";
 
 const viby = createViby({
@@ -1109,12 +1104,13 @@ const productEvents = signedOutboundEventSink({
   id: "product-events",
   keyId: "events-2026-08",
   secret: process.env.VIBY_EVENT_SECRET!,
-  send: (request) => fetch(process.env.EVENT_ENDPOINT!, {
-    method: "POST",
-    headers: request.headers,
-    body: request.body,
-    signal: request.signal,
-  }),
+  send: (request) =>
+    fetch(process.env.EVENT_ENDPOINT!, {
+      method: "POST",
+      headers: request.headers,
+      body: request.body,
+      signal: request.signal,
+    }),
 });
 
 const viby = createViby({
@@ -1162,8 +1158,7 @@ const viby = createViby({
   telemetry: openTelemetry({ tracer, meter }),
   cost: {
     currency: "USD",
-    calculate: ({ inputTokens, outputTokens }) =>
-      (inputTokens ?? 0) * 2 + (outputTokens ?? 0) * 8,
+    calculate: ({ inputTokens, outputTokens }) => (inputTokens ?? 0) * 2 + (outputTokens ?? 0) * 8,
   },
 });
 ```
@@ -1193,7 +1188,7 @@ Failures and interrupted processes retain their original attempts. Recovery crea
 ```ts
 const generation = await userViby.generations.get(generationId);
 
-await generation.retry();  // failed or cancelled generation
+await generation.retry(); // failed or cancelled generation
 await generation.resume(); // interrupted, failed, or cancelled generation
 ```
 
