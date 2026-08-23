@@ -359,10 +359,16 @@ const user = viby.forUser({ tenantId, userId });
 const result = await user.integrations.repository.connect("github", {
   callbackUrl: "https://app.example/api/integrations/callback",
   returnTo: "/projects/project-123",
+  authorization: { account: "existing" },
 });
 ```
 
 `connect` returns an existing healthy connection or a single-use authorization URL. Complete every provider through one Web-standard callback with `viby.integrations.callback(request)`. Viby persists connection metadata and hashed authorization state in PostgreSQL; the default secret store encrypts OAuth/installation credentials with AES-256-GCM. Advanced products can provide `storage.connections` and `storage.secrets` implementations instead. No provider token is returned to application UI objects, generation events, or the model.
+
+`authorization.account` is a provider-neutral `"existing" | "new"` preference. The GitHub adapter
+uses `"existing"` to authorize the user, discover an already-installed GitHub App, and attach it
+without reinstalling. Use `"new"` to open the installation flow. If a product has already let the
+user select among several accounts, pass that provider identifier as `externalAccountId`.
 
 After authorization, one reusable repository handle covers discovery, import, immutable-version pushes, branches, and pull requests:
 

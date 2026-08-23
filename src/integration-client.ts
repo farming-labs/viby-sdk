@@ -15,6 +15,7 @@ import type {
   ConfiguredIntegration,
   DeploymentIntegration,
   IntegrationCategory,
+  IntegrationAuthorizationPreference,
   IntegrationCredential,
   IntegrationOperationContext,
   RepositoryIntegration,
@@ -32,6 +33,7 @@ const AUTHORIZATION_SESSION_MS = 10 * 60 * 1_000;
 export interface ConnectIntegrationInput {
   readonly callbackUrl: string;
   readonly returnTo: string;
+  readonly authorization?: IntegrationAuthorizationPreference;
   readonly scopes?: readonly string[];
   readonly force?: boolean;
   readonly signal?: AbortSignal;
@@ -248,6 +250,7 @@ export class IntegrationClient {
     const stores = this.#stores();
     const callbackUrl = normalizeHttpUrl(input.callbackUrl, "Integration callback URL");
     const returnTo = normalizeReturnTo(input.returnTo, callbackUrl);
+    const authorization = normalizeAuthorizationPreference(input.authorization);
     const scopes = normalizeScopes(input.scopes);
     input.signal?.throwIfAborted();
     if (input.force !== true) {
@@ -274,6 +277,7 @@ export class IntegrationClient {
       request = validateAuthorizationRequest(await adapter.connection.startAuthorization({
         callbackUrl,
         state,
+        ...(authorization ? { authorization } : {}),
         ...(scopes.length > 0 ? { scopes } : {}),
         ...(input.signal ? { signal: input.signal } : {}),
       }, { ...scope, ...(input.signal ? { signal: input.signal } : {}) }), state, adapter.provider);
@@ -589,6 +593,24 @@ function normalizeScopes(value: readonly string[] | undefined): readonly string[
   }
   const scopes = value.map((scope) => assertIdentifier(scope, "Integration scope"));
   return Object.freeze([...new Set(scopes)].sort());
+}
+
+function normalizeAuthorizationPreference(
+  value: IntegrationAuthorizationPreference | undefined,
+): IntegrationAuthorizationPreference | undefined {
+  if (value === undefined) return undefined;
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new ConfigurationError("Integration authorization must be an object.");
+  }
+  if (value.account !== "existing" && value.account !== "new") {
+    throw new ConfigurationError('Integration authorization account must be "existing" or "new".');
+  }
+  if (value.externalAccountId === undefined) return { account: value.account };
+  const externalAccountId = assertIdentifier(
+    value.externalAccountId,
+    "Integration authorization external account id",
+  );
+  return { account: value.account, externalAccountId };
 }
 
 function normalizeHttpUrl(value: string, label: string): string {

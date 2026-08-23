@@ -327,6 +327,7 @@ test("maps provider-neutral preview and integration operations onto the Web API"
   await client.integrations.repository.connect("github", {
     callbackUrl: "https://app.example/callback",
     returnTo: "/settings",
+    authorization: { account: "existing", externalAccountId: "42" },
   });
   await client.integrations.repository.disconnect("github", "connection-1");
   await client.integrations.repository.owners("github", { connectionId: "connection-1" });
@@ -376,6 +377,15 @@ test("maps provider-neutral preview and integration operations onto the Web API"
   });
   assert.equal(requests[2]?.url,
     "https://app.example/api/viby/previews?chatId=chat-1&status=ready");
+  assert.deepEqual(requests.find((item) => item.url.endsWith("/integrations/repository/github/connect")), {
+    method: "POST",
+    url: "https://app.example/api/viby/integrations/repository/github/connect",
+    body: {
+      callbackUrl: "https://app.example/callback",
+      returnTo: "/settings",
+      authorization: { account: "existing", externalAccountId: "42" },
+    },
+  });
   assert.deepEqual(requests.find((item) => item.url.includes("/branches?")), {
     method: "GET",
     url: "https://app.example/api/viby/integrations/repository/github/branches?owner=farming-labs&name=viby&connectionId=connection-1",

@@ -42,10 +42,20 @@ export interface IntegrationCredential {
   readonly scopes: readonly string[];
 }
 
+export type IntegrationAuthorizationAccount = "existing" | "new";
+
+/** Provider-neutral preference for reconnecting an account or provisioning a new one. */
+export interface IntegrationAuthorizationPreference {
+  readonly account: IntegrationAuthorizationAccount;
+  /** Optional provider account identifier when the product already knows the desired account. */
+  readonly externalAccountId?: string;
+}
+
 export interface IntegrationAuthorizationStartInput {
   readonly callbackUrl: string;
   /** Single-use state generated and verified by Viby. */
   readonly state: string;
+  readonly authorization?: IntegrationAuthorizationPreference;
   readonly scopes?: readonly string[];
   readonly signal?: AbortSignal;
 }

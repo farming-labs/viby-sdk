@@ -5,6 +5,7 @@ import type {
   CreateRepositoryInput,
   CreateRepositoryPullRequestInput,
   GetRepositoryBranchInput,
+  IntegrationAuthorizationCompleteInput,
   IntegrationAuthorizationContext,
   IntegrationAuthorizationResult,
   IntegrationCredential,
@@ -83,6 +84,12 @@ interface GitHubCredentialData {
   readonly userExpiresAt: string | null;
   readonly userRefreshToken: string | null;
   readonly userRefreshExpiresAt: string | null;
+}
+
+interface GitHubAuthorizationSession {
+  readonly version: 1;
+  readonly account: "existing";
+  readonly externalAccountId: string | null;
 }
 
 interface GitHubAccount {
@@ -167,12 +174,37 @@ export function github(
     connection: {
       async startAuthorization(input) {
         input.signal?.throwIfAborted();
+        if (input.authorization?.account === "existing") {
+          const externalAccountId = input.authorization.externalAccountId;
+          if (externalAccountId !== undefined) {
+            positiveInteger(externalAccountId, "authorization.externalAccountId");
+          }
+          const url = new URL("/login/oauth/authorize", runtime.webUrl);
+          url.searchParams.set("client_id", runtime.clientId);
+          url.searchParams.set("redirect_uri", input.callbackUrl);
+          url.searchParams.set("state", input.state);
+          if (input.scopes?.length) url.searchParams.set("scope", input.scopes.join(" "));
+          return {
+            url: url.href,
+            expiresAt: null,
+            session: encodeAuthorizationSession({
+              version: 1,
+              account: "existing",
+              externalAccountId: externalAccountId ?? null,
+            }),
+          };
+        }
+        if (input.authorization?.externalAccountId !== undefined) {
+          throw new ConfigurationError(
+            "GitHub externalAccountId can only be used with an existing account authorization.",
+          );
+        }
         const url = new URL(runtime.installationUrl);
         url.searchParams.set("state", input.state);
         return { url: url.href, expiresAt: null };
       },
       async completeAuthorization(input, context) {
-        return completeAuthorization(runtime, input.callbackUrl, context);
+        return completeAuthorization(runtime, input, context);
       },
       async refreshCredential(credential, context) {
         const current = decodeCredential(credential.secret);
@@ -252,24 +284,34 @@ export const githubRepository = github;
 
 async function completeAuthorization(
   runtime: GitHubRuntime,
-  callbackUrl: string,
+  input: IntegrationAuthorizationCompleteInput,
   context: IntegrationAuthorizationContext,
 ): Promise<IntegrationAuthorizationResult> {
-  const callback = new URL(callbackUrl);
+  const callback = new URL(input.callbackUrl);
   const code = requiredQuery(callback, "code");
-  const installationId = positiveInteger(requiredQuery(callback, "installation_id"), "installation_id");
   const user = await exchangeUserCode(runtime, code, callback.origin + callback.pathname, context.signal);
-  const accessible = await userCanAccessInstallation(
-    runtime,
-    user.access_token,
-    installationId,
-    context.signal,
-  );
-  if (!accessible) {
-    throw new GitHubRepositoryError(
-      "GitHub did not confirm that the authorizing user can access this app installation.",
-      { status: 403 },
+  const callbackInstallationId = callback.searchParams.get("installation_id");
+  const installationId = callbackInstallationId
+    ? positiveInteger(callbackInstallationId, "installation_id")
+    : await existingInstallationId(
+        runtime,
+        user.access_token,
+        decodeAuthorizationSession(input.session),
+        context.signal,
+      );
+  if (callbackInstallationId) {
+    const accessible = await userCanAccessInstallation(
+      runtime,
+      user.access_token,
+      installationId,
+      context.signal,
     );
+    if (!accessible) {
+      throw new GitHubRepositoryError(
+        "GitHub did not confirm that the authorizing user can access this app installation.",
+        { status: 403 },
+      );
+    }
   }
   const appToken = createAppJwt(runtime);
   const installation = await githubRequest<{
@@ -306,6 +348,37 @@ async function completeAuthorization(
       scopes: permissionScopes(token.permissions),
     },
   };
+}
+
+async function existingInstallationId(
+  runtime: GitHubRuntime,
+  userToken: string,
+  session: GitHubAuthorizationSession,
+  signal?: AbortSignal,
+): Promise<number> {
+  const installations = await userInstallations(runtime, userToken, signal);
+  if (session.externalAccountId !== null) {
+    const requested = positiveInteger(
+      session.externalAccountId,
+      "authorization.externalAccountId",
+    );
+    if (installations.includes(requested)) return requested;
+    throw new GitHubRepositoryError(
+      "The selected GitHub App installation is not accessible to the authorizing user.",
+      { status: 403 },
+    );
+  }
+  if (installations.length === 1) return installations[0]!;
+  if (installations.length === 0) {
+    throw new GitHubRepositoryError(
+      "No accessible GitHub App installation was found. Install the app, then reconnect.",
+      { status: 404 },
+    );
+  }
+  throw new GitHubRepositoryError(
+    "More than one GitHub App installation is available. Pass authorization.externalAccountId to select one.",
+    { status: 409 },
+  );
 }
 
 async function exchangeUserCode(
@@ -349,6 +422,48 @@ async function userCanAccessInstallation(
     if (page * 100 >= result.total_count) return false;
   }
   return false;
+}
+
+async function userInstallations(
+  runtime: GitHubRuntime,
+  token: string,
+  signal?: AbortSignal,
+): Promise<readonly number[]> {
+  const installations: number[] = [];
+  for (let page = 1; page <= 10; page += 1) {
+    const result = await githubRequest<{
+      readonly total_count: number;
+      readonly installations: readonly { readonly id: number }[];
+    }>(runtime, `/user/installations?per_page=100&page=${page}`, { token, signal });
+    installations.push(...result.installations.map((installation) => installation.id));
+    if (page * 100 >= result.total_count) return installations;
+  }
+  return installations;
+}
+
+function encodeAuthorizationSession(session: GitHubAuthorizationSession): Uint8Array {
+  return new TextEncoder().encode(JSON.stringify(session));
+}
+
+function decodeAuthorizationSession(value: Uint8Array | undefined): GitHubAuthorizationSession {
+  if (!value) {
+    throw new GitHubRepositoryError("The GitHub existing-account authorization session is missing.", {
+      status: 400,
+    });
+  }
+  try {
+    const parsed = JSON.parse(new TextDecoder().decode(value)) as Partial<GitHubAuthorizationSession>;
+    if (parsed.version !== 1 || parsed.account !== "existing"
+      || (parsed.externalAccountId !== null && typeof parsed.externalAccountId !== "string")) {
+      throw new Error("invalid GitHub authorization session");
+    }
+    return parsed as GitHubAuthorizationSession;
+  } catch (error) {
+    throw new GitHubRepositoryError("The GitHub existing-account authorization session is invalid.", {
+      status: 400,
+      cause: error,
+    });
+  }
 }
 
 async function createInstallationToken(

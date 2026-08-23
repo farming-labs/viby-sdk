@@ -43,8 +43,12 @@ User-scoped categories expose the same methods:
 | `disconnect(integrationId, options?)` | Revokes remotely when supported, deletes secret material, and records local revocation. |
 | `use(integrationId, { connectionId? })` | Creates a repository or deployment handle; provider work resolves/refreshes credentials just in time. |
 
-`connect` requires an absolute callback URL, a bounded return path, optional scopes, and optional
-`force`. Callback state is hashed, expiring, and single use. Complete repository and deployment
+`connect` requires an absolute callback URL and a bounded return path. It also accepts optional
+scopes, `force`, and a provider-neutral `authorization` preference. Set
+`authorization.account` to `"existing"` when reconnecting an account or `"new"` when provisioning
+one; `externalAccountId` can carry a provider identifier selected by the product. Adapters that do
+not distinguish those paths may treat the preference as a hint. Callback state is hashed,
+expiring, and single use. Complete repository and deployment
 callbacks through `viby.integrations.callback(request)`, then redirect only to an application-
 allowlisted `returnTo` value.
 

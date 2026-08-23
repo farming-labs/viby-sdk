@@ -182,6 +182,87 @@ test("authorizes a GitHub App installation only after user-access verification",
   assert.equal(spoofed.routes.length, 0);
 });
 
+test("connects an existing GitHub App installation without reinstalling it", async () => {
+  const fixture = new GitHubFetchFixture();
+  authorizeRoutes(fixture);
+  const adapter = github(options(fixture.fetch));
+  const started = await adapter.connection.startAuthorization({
+    callbackUrl: "https://app.example/integrations/callback",
+    state: "state-existing",
+    authorization: { account: "existing" },
+  }, { tenantId: "tenant", userId: "user" });
+
+  assert.equal(
+    started.url,
+    "https://github.test/login/oauth/authorize?client_id=Iv1.client&redirect_uri=https%3A%2F%2Fapp.example%2Fintegrations%2Fcallback&state=state-existing",
+  );
+  const session = started.session;
+  assert.ok(session instanceof Uint8Array);
+
+  const authorization = await adapter.connection.completeAuthorization({
+    callbackUrl: "https://app.example/integrations/callback?code=oauth-code&state=state-existing",
+    session,
+  }, { tenantId: "tenant", userId: "user" });
+
+  assert.equal(authorization.account.id, "42");
+  assert.equal(authorization.account.name, "acme");
+  assert.equal(fixture.routes.length, 0);
+});
+
+test("selects a requested existing GitHub installation after user verification", async () => {
+  const fixture = new GitHubFetchFixture()
+    .add({
+      method: "POST",
+      path: "/login/oauth/access_token",
+      body: { access_token: "github-user-token" },
+    })
+    .add({
+      method: "GET",
+      path: "/api/v3/user/installations?per_page=100&page=1",
+      body: { total_count: 2, installations: [{ id: 42 }, { id: 43 }] },
+    })
+    .add({
+      method: "GET",
+      path: "/api/v3/app/installations/43",
+      body: {
+        id: 43,
+        target_type: "Organization",
+        account: {
+          id: 10,
+          login: "farming-labs",
+          type: "Organization",
+          html_url: "https://github.test/farming-labs",
+        },
+      },
+    })
+    .add({
+      method: "POST",
+      path: "/api/v3/app/installations/43/access_tokens",
+      status: 201,
+      body: {
+        token: "github-installation-token",
+        expires_at: new Date(Date.now() + 3_600_000).toISOString(),
+        permissions: { contents: "write" },
+      },
+    });
+  const adapter = github(options(fixture.fetch));
+  const started = await adapter.connection.startAuthorization({
+    callbackUrl: "https://app.example/integrations/callback",
+    state: "state-selected",
+    authorization: { account: "existing", externalAccountId: "43" },
+  }, { tenantId: "tenant", userId: "user" });
+  const session = started.session;
+  assert.ok(session instanceof Uint8Array);
+  const authorization = await adapter.connection.completeAuthorization({
+    callbackUrl: "https://app.example/integrations/callback?code=oauth-code&state=state-selected",
+    session,
+  }, { tenantId: "tenant", userId: "user" });
+
+  assert.equal(authorization.account.id, "43");
+  assert.equal(authorization.account.name, "farming-labs");
+  assert.equal(fixture.routes.length, 0);
+});
+
 test("refreshes installation tokens and revokes both GitHub credentials", async () => {
   const fixture = new GitHubFetchFixture();
   const { adapter, authorization } = await authorize(fixture);

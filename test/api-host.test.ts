@@ -583,9 +583,19 @@ test("hosts integration discovery, repository workflows, deployment workflows, a
     body: JSON.stringify({
       callbackUrl: "https://app.example/callback",
       returnTo: "/settings/integrations",
+      authorization: { account: "existing", externalAccountId: "42" },
     }),
   });
   assert.equal(object(connected.result).status, "authorization-required");
+  assert.deepEqual(calls[0], {
+    operation: "connect-repository",
+    input: {
+      callbackUrl: "https://app.example/callback",
+      returnTo: "/settings/integrations",
+      authorization: { account: "existing", externalAccountId: "42" },
+      signal: calls[0] && object(calls[0].input).signal,
+    },
+  });
   const repositories = await requestJson(
     api,
     "/integrations/repository/git/repositories?owner=farming-labs&search=viby&connectionId=repository-connection",

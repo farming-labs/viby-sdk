@@ -26,7 +26,11 @@ import type {
   SourceEntryInput,
   UserScope,
 } from "./types.js";
-import type { IntegrationCategory, IntegrationSourceFile } from "./integrations.js";
+import type {
+  IntegrationAuthorizationPreference,
+  IntegrationCategory,
+  IntegrationSourceFile,
+} from "./integrations.js";
 import type { PreviewEventListener, PreviewSessionData } from "./preview.js";
 import type { ToolSourceRegistrationStatus } from "./tool-source-registry.js";
 
@@ -827,6 +831,9 @@ async function integrationRoute<Framework extends FrameworkId>(
     return json({ result: await integrations.connect(integrationId, {
       callbackUrl: requiredString(body.callbackUrl, "callbackUrl", 2_000),
       returnTo: requiredString(body.returnTo, "returnTo", 2_000),
+      ...(body.authorization === undefined
+        ? {}
+        : { authorization: integrationAuthorizationPreference(body.authorization) }),
       ...(body.scopes === undefined ? {} : { scopes: stringArray(body.scopes, "scopes", 200) }),
       ...(body.force === undefined ? {} : { force: booleanValue(body.force, "force") }),
       signal: request.signal,
@@ -1473,6 +1480,26 @@ function jsonObject(value: unknown, name: string): Readonly<Record<string, JsonV
   } catch (error) {
     throw new ConfigurationError(`${name} must be JSON serializable.`, { cause: error });
   }
+}
+
+function integrationAuthorizationPreference(value: unknown): IntegrationAuthorizationPreference {
+  const input = jsonObject(value, "authorization") as Record<string, unknown>;
+  const account = requiredString(input.account, "authorization.account", 32);
+  if (account !== "existing" && account !== "new") {
+    throw new ConfigurationError('authorization.account must be "existing" or "new".');
+  }
+  return {
+    account,
+    ...(input.externalAccountId === undefined
+      ? {}
+      : {
+          externalAccountId: requiredString(
+            input.externalAccountId,
+            "authorization.externalAccountId",
+            200,
+          ),
+        }),
+  };
 }
 
 function nullableInteger(value: unknown, name: string): number | null {
