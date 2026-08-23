@@ -6,7 +6,7 @@ See the [shipped capability inventory](./docs/capabilities.md) for the complete 
 
 ## Demo
 
-https://github.com/user-attachments/assets/25ddaa42-3bd5-43a3-91ab-924b95187c62
+https://github.com/user-attachments/assets/54b4c532-d7e5-47cf-bb88-04ff65a2ae5d
 
 ## Install
 
