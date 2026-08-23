@@ -6,9 +6,7 @@ See the [shipped capability inventory](./docs/capabilities.md) for the complete 
 
 ## Demo
 
-[![Viby product demo: prompt, live preview, source, history, and shipping](./.github/assets/viby-product-demo.webp)](./.github/assets/viby-product-demo.mp4)
-
-Prompt a complete project, see its preview as soon as coherent source exists, inspect the immutable source and history, then prepare it for delivery. [Watch the full cursor-guided recording](./.github/assets/viby-product-demo.mp4). The long generation interval is accelerated; every product interaction and preview comes from the public Viby application.
+https://github.com/user-attachments/assets/25ddaa42-3bd5-43a3-91ab-924b95187c62
 
 ## Install
 
