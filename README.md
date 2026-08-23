@@ -6,7 +6,7 @@ See the [shipped capability inventory](./docs/capabilities.md) for the complete 
 
 ## Demo
 
-https://raw.githubusercontent.com/farming-labs/viby-sdk/main/.github/assets/viby-product-demo.mp4
+https://github.com/user-attachments/assets/25ddaa42-3bd5-43a3-91ab-924b95187c62
 
 ## Install
 
