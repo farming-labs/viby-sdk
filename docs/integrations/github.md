@@ -54,6 +54,7 @@ const user = viby.forUser({ tenantId, userId });
 const connection = await user.integrations.repository.connect("github", {
   callbackUrl: "https://app.example/api/integrations/callback",
   returnTo: "/projects/new",
+  authorization: { account: "existing" },
 });
 
 if (connection.status === "authorization-required") {
@@ -64,6 +65,31 @@ if (connection.status === "authorization-required") {
 const completed = await viby.integrations.callback(request);
 return Response.redirect(new URL(completed.returnTo, request.url));
 ```
+
+Use `authorization.account` to make the account intent explicit:
+
+- `"existing"` runs the GitHub App OAuth flow, lists installations accessible to the authorized
+  user, and reconnects the only available installation without asking them to reinstall the app.
+- `"new"` opens the GitHub App installation flow for a new account or organization.
+- omit `authorization` to preserve the install-first behavior used by earlier SDK versions.
+
+When the authorized user can access more than one installation, provide the selected provider
+identifier after an account-selection step:
+
+```ts
+await user.integrations.repository.connect("github", {
+  callbackUrl: "https://app.example/api/integrations/callback",
+  returnTo: "/projects/new",
+  authorization: {
+    account: "existing",
+    externalAccountId: "155948974",
+  },
+});
+```
+
+The preference is provider-neutral and is also accepted by the Web API and typed web client.
+Products can present “Use installed app” and “Install on another account” without introducing a
+GitHub-specific route at their SDK boundary.
 
 The callback state is hashed, expiring, and single-use. GitHub user tokens are refreshed when GitHub enables expiration; installation tokens are renewed before their one-hour expiry. Disconnect attempts to revoke both tokens and always revokes the local connection.
 
