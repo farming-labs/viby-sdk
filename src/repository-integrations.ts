@@ -334,8 +334,13 @@ export async function pushVersionSource<PushOptions, PullRequestOptions>(
   files: readonly IntegrationSourceFile[],
   input: PushVersionRepositoryInput<PushOptions, PullRequestOptions>,
 ): Promise<PushVersionRepositoryResult> {
-  const repository = await ensureRepository(input);
   const branch = typeof input.branch === "string" ? { name: input.branch } : input.branch;
+  if (input.pullRequest && branch.name.trim() === input.pullRequest.base.trim()) {
+    throw new ConfigurationError(
+      "Repository pull request head branch must differ from its base branch.",
+    );
+  }
+  const repository = await ensureRepository(input);
   const pushed = await input.using.pushSource({
     repository,
     branch: branch.name,
