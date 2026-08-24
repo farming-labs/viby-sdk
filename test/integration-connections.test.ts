@@ -11,7 +11,9 @@ import type {
 } from "../src/integrations.js";
 import {
   ConfigurationError,
+  CredentialReauthorizationRequiredError,
   IntegrationAuthorizationError,
+  IntegrationConnectionRequiredError,
 } from "../src/errors.js";
 import { MemoryRepository } from "./helpers/memory-repository.js";
 import {
@@ -20,7 +22,10 @@ import {
 } from "./helpers/memory-integration-store.js";
 import { verifyIntegrationStores } from "../src/integration-store-conformance.js";
 
-function fakeGitHub(options: { readonly expired?: boolean } = {}) {
+function fakeGitHub(options: {
+  readonly expired?: boolean;
+  readonly reauthorizationRequired?: boolean;
+} = {}) {
   const calls = {
     start: 0,
     complete: 0,
@@ -58,6 +63,9 @@ function fakeGitHub(options: { readonly expired?: boolean } = {}) {
     },
     async refreshCredential() {
       calls.refresh += 1;
+      if (options.reauthorizationRequired) {
+        throw new CredentialReauthorizationRequiredError("github");
+      }
       return {
         secret: new TextEncoder().encode("access-token-2"),
         expiresAt: new Date(Date.now() + 60_000),
@@ -124,7 +132,10 @@ function fakeGitHub(options: { readonly expired?: boolean } = {}) {
   return { adapter, calls };
 }
 
-function setup(options: { readonly expired?: boolean } = {}) {
+function setup(options: {
+  readonly expired?: boolean;
+  readonly reauthorizationRequired?: boolean;
+} = {}) {
   const provider = fakeGitHub(options);
   const connectionStore = new MemoryIntegrationConnectionStore();
   const secretStore = new MemorySecretStore();
@@ -199,6 +210,35 @@ test("refreshes expired credentials atomically before provider operations", asyn
   assert.equal(new TextDecoder().decode(context.credential), "access-token-2");
   assert.equal(fixture.provider.calls.refresh, 1);
   assert.equal(fixture.secretStore.secrets.size, 1);
+});
+
+test("invalidates irrecoverable credentials and restarts authorization", async () => {
+  const fixture = setup({ expired: true, reauthorizationRequired: true });
+  const { user, completed } = await authorize(fixture);
+
+  await assert.rejects(
+    () => fixture.client.operationContext(
+      fixture.scope,
+      "repository",
+      "github",
+      completed.connection.id,
+    ),
+    IntegrationConnectionRequiredError,
+  );
+  const stored = await fixture.connectionStore.getConnection(
+    fixture.scope,
+    completed.connection.id,
+  );
+  assert.equal(stored?.status, "authorization-required");
+  assert.equal(stored?.secretRef, null);
+  assert.equal(fixture.secretStore.secrets.size, 0);
+
+  const restarted = await user.repository.connect("github", {
+    callbackUrl: "https://app.example/api/integrations/callback",
+    returnTo: "/projects/project-1",
+  });
+  assert.equal(restarted.status, "authorization-required");
+  assert.equal(fixture.provider.calls.start, 2);
 });
 
 test("disconnects locally even when provider revocation is unavailable", async () => {

@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { generateKeyPairSync } from "node:crypto";
 import { test } from "node:test";
-import { ConfigurationError } from "../src/errors.js";
+import {
+  ConfigurationError,
+  CredentialReauthorizationRequiredError,
+} from "../src/errors.js";
 import {
   GitHubRepositoryError,
   github,
@@ -301,6 +304,27 @@ test("refreshes installation tokens and revokes both GitHub credentials", async 
     tenantId: "tenant",
     userId: "user",
   });
+  assert.equal(fixture.routes.length, 0);
+});
+
+test("requires reauthorization when a stored GitHub installation no longer exists", async () => {
+  const fixture = new GitHubFetchFixture();
+  const { adapter, authorization } = await authorize(fixture);
+  fixture.add({
+    method: "POST",
+    path: "/api/v3/app/installations/42/access_tokens",
+    status: 404,
+    body: { message: "Not Found" },
+  });
+
+  await assert.rejects(
+    () => adapter.connection.refreshCredential!(authorization.credential, {
+      tenantId: "tenant",
+      userId: "user",
+    }),
+    (error: unknown) => error instanceof CredentialReauthorizationRequiredError
+      && error.provider === "github",
+  );
   assert.equal(fixture.routes.length, 0);
 });
 

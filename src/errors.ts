@@ -180,6 +180,21 @@ export class IntegrationConnectionRequiredError extends VibyError {
   }
 }
 
+/** Signals that a provider credential cannot be refreshed and must be authorized again. */
+export class CredentialReauthorizationRequiredError extends VibyError {
+  readonly provider: string;
+
+  constructor(provider: string, options?: ErrorOptions) {
+    super(
+      "credential_reauthorization_required",
+      `${provider} authorization must be renewed.`,
+      options,
+    );
+    this.name = "CredentialReauthorizationRequiredError";
+    this.provider = provider;
+  }
+}
+
 export class IntegrationOperationError extends VibyError {
   readonly category: "repository" | "deployment";
   readonly provider: string;
