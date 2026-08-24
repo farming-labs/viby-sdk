@@ -348,6 +348,7 @@ export {
 export {
   ConfigurationError,
   DatabaseNotReadyError,
+  CredentialReauthorizationRequiredError,
   GenerationCancelledError,
   GenerationError,
   GenerationQualityError,

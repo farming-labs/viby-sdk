@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import {
+  CredentialReauthorizationRequiredError,
   ConfigurationError,
   NotFoundError,
   ToolSourceAuthorizationError,
@@ -431,11 +432,26 @@ export class ToolSourceAuthorizationManager {
         });
         throw new ToolSourceConnectionRequiredError(source.id);
       }
-      const refreshed = validateCredential(await authorization.refreshCredential({
-        secret,
-        expiresAt: connection.expiresAt,
-        scopes: connection.scopes,
-      }, { ...scope, source, ...(signal ? { signal } : {}) }), authorization.provider);
+      let refreshed: IntegrationCredential;
+      try {
+        refreshed = validateCredential(await authorization.refreshCredential({
+          secret,
+          expiresAt: connection.expiresAt,
+          scopes: connection.scopes,
+        }, { ...scope, source, ...(signal ? { signal } : {}) }), authorization.provider);
+      } catch (error) {
+        if (!(error instanceof CredentialReauthorizationRequiredError)) throw error;
+        const previousSecretRef = connection.secretRef;
+        await this.#store.updateToolSourceConnection(scope, connection.id, {
+          status: "authorization-required",
+          secretRef: null,
+          scopes: connection.scopes,
+          expiresAt: connection.expiresAt,
+          now: new Date(),
+        });
+        await secrets.delete(scope, previousSecretRef).catch(() => undefined);
+        throw new ToolSourceConnectionRequiredError(source.id);
+      }
       const nextSecretRef = await secrets.put(scope, {
         bytes: refreshed.secret,
         purpose: "tool-source-credential",

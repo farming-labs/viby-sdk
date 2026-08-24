@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import {
+  CredentialReauthorizationRequiredError,
   ConfigurationError,
   IntegrationAuthorizationError,
   IntegrationConnectionRequiredError,
@@ -394,11 +395,26 @@ export class IntegrationClient {
         });
         throw new IntegrationConnectionRequiredError(category, integrationId);
       }
-      const refreshed = validateCredential(await adapter.connection.refreshCredential({
-        secret,
-        expiresAt: connection.expiresAt,
-        scopes: connection.scopes,
-      }, { ...scope, ...(signal ? { signal } : {}) }), adapter.provider);
+      let refreshed: IntegrationCredential;
+      try {
+        refreshed = validateCredential(await adapter.connection.refreshCredential({
+          secret,
+          expiresAt: connection.expiresAt,
+          scopes: connection.scopes,
+        }, { ...scope, ...(signal ? { signal } : {}) }), adapter.provider);
+      } catch (error) {
+        if (!(error instanceof CredentialReauthorizationRequiredError)) throw error;
+        const previousSecretRef = connection.secretRef;
+        await stores.connection.updateConnection(scope, connection.id, {
+          status: "authorization-required",
+          secretRef: null,
+          scopes: connection.scopes,
+          expiresAt: connection.expiresAt,
+          now: new Date(),
+        });
+        await stores.secret.delete(scope, previousSecretRef).catch(() => undefined);
+        throw new IntegrationConnectionRequiredError(category, integrationId);
+      }
       const nextSecretRef = await stores.secret.put(scope, {
         bytes: refreshed.secret,
         purpose: "integration-credential",

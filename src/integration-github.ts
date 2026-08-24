@@ -1,5 +1,5 @@
 import { createPrivateKey, createSign, type KeyObject } from "node:crypto";
-import { ConfigurationError } from "./errors.js";
+import { ConfigurationError, CredentialReauthorizationRequiredError } from "./errors.js";
 import type {
   CreateRepositoryBranchInput,
   CreateRepositoryInput,
@@ -208,12 +208,25 @@ export function github(
       },
       async refreshCredential(credential, context) {
         const current = decodeCredential(credential.secret);
-        const user = await refreshUserToken(runtime, current, context.signal);
-        const installation = await createInstallationToken(
-          runtime,
-          current.installationId,
-          context.signal,
-        );
+        let user: GitHubCredentialData;
+        let installation: Awaited<ReturnType<typeof createInstallationToken>>;
+        try {
+          user = await refreshUserToken(runtime, current, context.signal);
+          installation = await createInstallationToken(
+            runtime,
+            current.installationId,
+            context.signal,
+          );
+        } catch (error) {
+          if (
+            error instanceof GitHubRepositoryError
+            && error.status !== null
+            && [401, 403, 404].includes(error.status)
+          ) {
+            throw new CredentialReauthorizationRequiredError("github", { cause: error });
+          }
+          throw error;
+        }
         const next = { ...user, installationToken: installation.token };
         return {
           secret: encodeCredential(next),
