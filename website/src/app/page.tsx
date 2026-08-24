@@ -18,6 +18,25 @@ function DocsIcon() {
   );
 }
 
+function DemoIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      className="hero-button-leading-icon"
+      fill="none"
+      viewBox="0 0 16 16"
+    >
+      <rect x="1.75" y="2.25" width="12.5" height="9.5" rx="1.5" stroke="currentColor" />
+      <path
+        d="m6.5 5.25 3.25 1.75L6.5 8.75v-3.5ZM5.25 13.75h5.5"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
 function GitHubIcon() {
   return (
     <svg
@@ -159,6 +178,17 @@ export default function HomePage() {
       <header className="landing-header">
         <div>
           <VibyLogo />
+          <a
+            aria-label="Open the Viby demo"
+            className="hero-button hero-button-secondary"
+            href="https://viby-app.farming-labs.dev"
+          >
+            <DemoIcon />
+            <span aria-hidden="true" className="hero-button-divider">
+              /
+            </span>
+            <span>Demo</span>
+          </a>
         </div>
       </header>
 
