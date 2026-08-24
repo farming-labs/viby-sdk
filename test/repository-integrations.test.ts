@@ -281,6 +281,18 @@ test("imports, iterates, pushes immutable versions, opens pull requests, and rep
   assert.equal(link?.repositoryId, "repository-2");
   assert.equal(link?.name, "generated");
 
+  await assert.rejects(
+    () => first.push({
+      using: repository,
+      repository: { owner: "acme", name: "invalid-pull-request", createIfMissing: true },
+      branch: { name: "main", createIfMissing: true },
+      commit: { message: "feat: reject an invalid pull request" },
+      pullRequest: { base: "main", title: "feat: reject an invalid pull request" },
+    }),
+    /head branch must differ from its base branch/,
+  );
+  assert.equal(fixture.repositories.has("acme/invalid-pull-request"), false);
+
   const second = await first.apply({
     changes: [{
       type: "write",
