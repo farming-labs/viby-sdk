@@ -3151,13 +3151,18 @@ class GenerationRunner<Framework extends FrameworkId> {
     const forwardAbort = () => controller.abort(signal.reason);
     if (signal.aborted) forwardAbort();
     else signal.addEventListener("abort", forwardAbort, { once: true });
-    const heartbeat = this.#heartbeat(lease, leaseMs, heartbeatMs, controller);
+    const heartbeatStop = new AbortController();
+    const heartbeat = this.#heartbeat(
+      lease,
+      leaseMs,
+      heartbeatMs,
+      controller,
+      heartbeatStop.signal,
+    );
     try {
       await this.#execute(lease, controller.signal, cancelOnAbort);
     } finally {
-      if (!controller.signal.aborted) {
-        controller.abort(new DOMException("Generation attempt completed.", "AbortError"));
-      }
+      heartbeatStop.abort(new DOMException("Generation attempt completed.", "AbortError"));
       signal.removeEventListener("abort", forwardAbort);
       await heartbeat;
     }
@@ -3168,10 +3173,12 @@ class GenerationRunner<Framework extends FrameworkId> {
     leaseMs: number,
     heartbeatMs: number,
     controller: AbortController,
+    stopSignal: AbortSignal,
   ): Promise<void> {
     try {
-      while (!controller.signal.aborted) {
-        await waitForPoll(heartbeatMs, controller.signal);
+      while (!stopSignal.aborted && !controller.signal.aborted) {
+        await waitForPoll(heartbeatMs, stopSignal);
+        if (controller.signal.aborted) return;
         const renewed = await this.#dependencies.repository.heartbeatGenerationAttempt(
           lease,
           leaseMs,
@@ -3181,7 +3188,7 @@ class GenerationRunner<Framework extends FrameworkId> {
         }
       }
     } catch (error) {
-      if (!controller.signal.aborted) {
+      if (!stopSignal.aborted && !controller.signal.aborted) {
         controller.abort(
           error instanceof GenerationWorkerLeaseLostError
             ? error

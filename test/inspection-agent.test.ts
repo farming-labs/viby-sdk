@@ -37,11 +37,13 @@ function sourceProject(): GeneratorOutput {
 
 test("persists read-only inspections without creating a source version", async () => {
   const calls: GeneratorInput<"farmjs">[] = [];
+  let completedSignal: AbortSignal | undefined;
   const engine = defineGenerationEngine<"farmjs">({
     identity: { provider: "fixture-agent", model: "fixture-v1" },
-    async generate(input) {
+    async generate(input, options) {
       calls.push(input);
       if (input.operation === "inspect") {
+        completedSignal = options?.signal;
         assert.equal(input.previousFiles[0]?.path, "src/index.ts");
         return {
           kind: "message",
@@ -73,6 +75,8 @@ test("persists read-only inspections without creating a source version", async (
   assert.equal((await inspectionGeneration.data()).configuration.operation, "inspect");
   assert.equal((await inspectionGeneration.wait()).status, "responded");
   assert.deepEqual(calls.map((call) => call.operation), ["change", "inspect"]);
+  await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  assert.equal(completedSignal?.aborted, false);
   await viby.close();
 });
 
