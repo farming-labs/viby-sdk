@@ -358,7 +358,7 @@ test("persists a durable generation, iteration, events, and download in Postgres
     assert.deepEqual(inspectionOutcome.generation.configuration, {
       model: "default",
       operation: "inspect",
-      instructions: undefined,
+      instructions: null,
       skills: { core: [frameworkSkill("farmjs")] },
       metadata: { test: "postgres-inspection" },
       toolSources: [],
