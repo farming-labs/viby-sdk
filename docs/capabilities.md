@@ -15,6 +15,7 @@ This inventory describes the current `@viby/sdk` source on `main`. “Shipped”
 | Runtime-neutral core | `@viby/sdk/core` with Web-standard contracts and helpers; Node and provider adapters use explicit subpaths | portable consumers do not load filesystem, process, crypto, migrations, Docker, or database clients |
 | Model selection | any AI SDK `LanguageModel` | host configures and owns provider credentials |
 | Generation engine | public provider-neutral engine plus conformance suite | host may replace the AI SDK shortcut with any agent, model runtime, or orchestrator |
+| Packaged coding agents | typed `CodingAgent` configuration plus optional `@viby/sdk/agent/codex` adapter | host selects the agent/model and owns credentials; Viby owns durable lifecycle and source history |
 | Categorized skills | skills.sh slugs, `skillRead(...)` directories, inline snapshots, and provider-neutral resolvers | host selects; Viby resolves and snapshots exact content |
 | Categorized storage | `storage.database`, `storage.artifacts`, `storage.connections`, and `storage.secrets`; `DATABASE_URL` remains the PostgreSQL shortcut | host selects each provider-neutral implementation independently |
 | Project environments | chat-scoped development, preview, production, and custom variables; public values plus redacted secret metadata | PostgreSQL is the default metadata store; secret bytes stay in `storage.secrets` and resolve only for runtime operations |

@@ -26,6 +26,18 @@ extends ProjectGenerator<Framework> {
   readonly identity: GenerationEngineIdentity;
 }
 
+/**
+ * A named, packaged coding agent that can be selected directly in createViby().
+ *
+ * Coding agents use the same provider-neutral generation contract as custom
+ * engines. The marker exists only to make the public configuration ergonomic
+ * and unambiguous.
+ */
+export interface CodingAgent<Framework extends FrameworkId = FrameworkId>
+extends GenerationEngine<Framework> {
+  readonly kind: "agent";
+}
+
 export interface DefineGenerationEngineInput<Framework extends FrameworkId = FrameworkId> {
   readonly identity: GenerationEngineIdentity;
   generate(
@@ -33,6 +45,9 @@ export interface DefineGenerationEngineInput<Framework extends FrameworkId = Fra
     options?: GeneratorOptions,
   ): Promise<GeneratorOutput>;
 }
+
+export type DefineCodingAgentInput<Framework extends FrameworkId = FrameworkId> =
+  DefineGenerationEngineInput<Framework>;
 
 /** Defines and validates a custom generation engine without coupling it to an AI SDK model. */
 export function defineGenerationEngine<Framework extends FrameworkId = FrameworkId>(
@@ -46,6 +61,25 @@ export function defineGenerationEngine<Framework extends FrameworkId = Framework
     identity,
     generate: input.generate.bind(input),
   });
+}
+
+/** Defines a packaged coding agent without exposing its provider runtime to Viby core. */
+export function defineCodingAgent<Framework extends FrameworkId = FrameworkId>(
+  input: DefineCodingAgentInput<Framework>,
+): CodingAgent<Framework> {
+  const engine = defineGenerationEngine(input);
+  return Object.freeze({ kind: "agent" as const, ...engine });
+}
+
+export function isCodingAgent<Framework extends FrameworkId = FrameworkId>(
+  value: unknown,
+): value is CodingAgent<Framework> {
+  return Boolean(
+    value
+      && typeof value === "object"
+      && (value as { readonly kind?: unknown }).kind === "agent"
+      && typeof (value as { readonly generate?: unknown }).generate === "function",
+  );
 }
 
 export function normalizeGenerationEngineIdentity(

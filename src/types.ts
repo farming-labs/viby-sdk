@@ -1,5 +1,5 @@
 import type { LanguageModel } from "ai";
-import type { GenerationEngine } from "./generation-engine.js";
+import type { CodingAgent, GenerationEngine } from "./generation-engine.js";
 import type { ArtifactReference, ArtifactStore } from "./artifact-store.js";
 import type { BrowserAdapter } from "./browser.js";
 import type { PersistenceAdapter } from "./persistence.js";
@@ -123,11 +123,12 @@ interface VibyBaseConfig<Framework extends FrameworkId = FrameworkId> {
   readonly sandboxPolicy?: SandboxCommandPolicy;
   /** Optional durable sandbox-backed preview lifecycle. */
   readonly preview?: PreviewConfig;
-  readonly agent?: AgentRunnerConfig;
   /** Host-configured tools selected and authorized independently for every chat. */
   readonly tools?: ToolSourcesConfig<Framework>;
   readonly generation?: {
     readonly execution?: "embedded" | "worker";
+    /** Execution limits used by the built-in AI SDK agent runner. */
+    readonly limits?: AgentRunnerConfig;
     /** Optional sandbox checks that must pass before an immutable version is committed. */
     readonly quality?: GenerationQualityConfig;
     /** Optional eager, reusable workspace lifecycle for generated projects. */
@@ -149,6 +150,18 @@ export type VibyConfig<Framework extends FrameworkId = FrameworkId> = VibyBaseCo
         /** Convenient AI SDK shortcut. */
         readonly model: LanguageModel;
         readonly models?: Readonly<Record<string, LanguageModel>>;
+        /** @deprecated Use generation.limits. */
+        readonly agent?: AgentRunnerConfig;
+        readonly agents?: never;
+        readonly engine?: never;
+        readonly engines?: never;
+      }
+    | {
+        /** Packaged coding-agent shortcut, such as codex({ model }). */
+        readonly agent: CodingAgent<Framework>;
+        readonly agents?: Readonly<Record<string, CodingAgent<Framework>>>;
+        readonly model?: never;
+        readonly models?: never;
         readonly engine?: never;
         readonly engines?: never;
       }
@@ -156,6 +169,8 @@ export type VibyConfig<Framework extends FrameworkId = FrameworkId> = VibyBaseCo
         /** Advanced provider-neutral agent, model-runtime, or orchestration boundary. */
         readonly engine: GenerationEngine<Framework>;
         readonly engines?: Readonly<Record<string, GenerationEngine<Framework>>>;
+        readonly agent?: never;
+        readonly agents?: never;
         readonly model?: never;
         readonly models?: never;
       }
@@ -327,6 +342,10 @@ export interface GenerateInput {
   readonly prompt: string;
   /** Stable alias from `VibyConfig.models`. Omit to use the default `model`. */
   readonly model?: string;
+  /** Stable alias from `VibyConfig.agents`. Omit to use the default `agent`. */
+  readonly agent?: string;
+  /** Stable alias from `VibyConfig.engines`. Omit to use the default `engine`. */
+  readonly engine?: string;
   readonly instructions?: string;
   readonly skills?: SkillGroups;
   readonly metadata?: ChatMetadata;
@@ -651,6 +670,8 @@ export interface GenerationConfigurationData {
   readonly model: string;
   /** Durable operation kind. Missing on records created before read-only inspection shipped. */
   readonly operation?: GenerationOperation;
+  /** The configured execution surface used to resolve the durable alias. */
+  readonly executor?: "model" | "agent" | "engine";
   readonly instructions: string | null;
   readonly skills: SkillGroups;
   readonly metadata: ChatMetadata;

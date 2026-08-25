@@ -93,7 +93,11 @@ import type {
   GenerationSteeringUpdate,
   ProjectGenerator,
 } from "./generator.js";
-import { normalizeGenerationEngineIdentity, type GenerationEngine } from "./generation-engine.js";
+import {
+  isCodingAgent,
+  normalizeGenerationEngineIdentity,
+  type GenerationEngine,
+} from "./generation-engine.js";
 import {
   normalizeGenerationQuality,
   verifyGenerationQuality,
@@ -330,6 +334,7 @@ interface ClientDependencies<Framework extends FrameworkId> {
 
 interface GenerationModelBinding<Framework extends FrameworkId> {
   readonly alias: string;
+  readonly executor: "model" | "agent" | "engine";
   readonly provider: string;
   readonly id: string;
   readonly generator: ProjectGenerator<Framework>;
@@ -343,17 +348,34 @@ class GenerationModelRegistry<Framework extends FrameworkId> {
     dependencies: ClientDependencies<Framework>,
     tools: ToolSourcesRuntimeConfig<Framework> | undefined,
   ) {
-    if (config.engine) {
-      this.#addEngine("default", config.engine);
+    if ("engine" in config && config.engine) {
+      this.#addEngine("default", config.engine, "engine");
       for (const [alias, engine] of Object.entries(config.engines ?? {})) {
         if (alias === "default") {
           throw new ConfigurationError("engines.default is reserved for the top-level engine.");
         }
-        this.#addEngine(alias, engine);
+        this.#addEngine(alias, engine, "engine");
       }
       return;
     }
 
+    if (isCodingAgent<Framework>(config.agent)) {
+      this.#addEngine("default", config.agent, "agent");
+      for (const [alias, agent] of Object.entries(config.agents ?? {})) {
+        if (alias === "default") {
+          throw new ConfigurationError("agents.default is reserved for the top-level agent.");
+        }
+        if (!isCodingAgent<Framework>(agent)) {
+          throw new ConfigurationError(`Coding agent alias is invalid: ${alias}`);
+        }
+        this.#addEngine(alias, agent, "agent");
+      }
+      return;
+    }
+
+    if (!("model" in config) || !config.model) {
+      throw new ConfigurationError("Configure model, agent, or engine.");
+    }
     const defaultGenerator =
       dependencies.generator ?? new AgentProjectGenerator(config.model, config.agent, tools);
     this.#addModel("default", config.model, defaultGenerator);
@@ -404,10 +426,19 @@ class GenerationModelRegistry<Framework extends FrameworkId> {
       throw new ConfigurationError(`Generation model alias is duplicated: ${normalized}`);
     }
     const identity = languageModelIdentity(model);
-    this.#bindings.set(normalized, { alias: normalized, ...identity, generator });
+    this.#bindings.set(normalized, {
+      alias: normalized,
+      executor: "model",
+      ...identity,
+      generator,
+    });
   }
 
-  #addEngine(alias: string, engine: GenerationEngine<Framework>): void {
+  #addEngine(
+    alias: string,
+    engine: GenerationEngine<Framework>,
+    executor: "agent" | "engine",
+  ): void {
     const normalized = assertModelAlias(alias);
     if (this.#bindings.has(normalized)) {
       throw new ConfigurationError(`Generation engine alias is duplicated: ${normalized}`);
@@ -418,6 +449,7 @@ class GenerationModelRegistry<Framework extends FrameworkId> {
     }
     this.#bindings.set(normalized, {
       alias: normalized,
+      executor,
       provider: identity.provider,
       id: identity.model,
       generator: engine,
@@ -667,7 +699,9 @@ class VibyClient<Framework extends FrameworkId> implements Viby<Framework> {
       previews: this.#previews,
       quality,
       workspace,
-      agent: normalizeAgentRunnerConfig(config.agent),
+      agent: normalizeAgentRunnerConfig(
+        config.generation?.limits ?? (isCodingAgent(config.agent) ? undefined : config.agent),
+      ),
       telemetry: normalizeTelemetry(config.telemetry),
       cost: normalizeCostConfig(config.cost),
     });
@@ -2999,7 +3033,25 @@ function normalizeGenerationConfiguration<Framework extends FrameworkId>(
   models: GenerationModelRegistry<Framework>,
   operation: GenerationOperation,
 ): { configuration: GenerationConfigurationData; model: GenerationModelBinding<Framework> } {
-  const model = models.resolve(input.model);
+  const selectors = [input.model, input.agent, input.engine].filter(
+    (value): value is string => value !== undefined,
+  );
+  if (selectors.length > 1) {
+    throw new ConfigurationError("Choose only one generation selector: model, agent, or engine.");
+  }
+  const requestedExecutor = input.agent !== undefined
+    ? "agent"
+    : input.engine !== undefined
+      ? "engine"
+      : input.model !== undefined
+        ? "model"
+        : null;
+  const model = models.resolve(selectors[0]);
+  if (requestedExecutor && model.executor !== requestedExecutor) {
+    throw new ConfigurationError(
+      `Generation ${requestedExecutor} alias ${model.alias} resolves to a configured ${model.executor}.`,
+    );
+  }
   const instructions = input.instructions?.trim() || null;
   if (instructions && instructions.length > 50_000) {
     throw new ConfigurationError("Generation instructions cannot exceed 50,000 characters.");
@@ -3013,6 +3065,7 @@ function normalizeGenerationConfiguration<Framework extends FrameworkId>(
     configuration: {
       model: model.alias,
       operation,
+      executor: model.executor,
       instructions,
       skills,
       metadata: normalizeChatMetadata(input.metadata),

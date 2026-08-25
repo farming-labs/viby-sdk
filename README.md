@@ -44,13 +44,15 @@ export const viby = createViby({
   framework: "farmjs",
   model: openai("your-model-id"),
   retention: { deletedChatsMs: 30 * 24 * 60 * 60 * 1_000 },
-  agent: {
-    maxSteps: 20,
-    maxDurationMs: 300_000,
-    maxTokens: 200_000,
-    maxCommands: 20,
-    commandTimeoutMs: 60_000,
-    sandboxPorts: [3000],
+  generation: {
+    limits: {
+      maxSteps: 20,
+      maxDurationMs: 300_000,
+      maxTokens: 200_000,
+      maxCommands: 20,
+      commandTimeoutMs: 60_000,
+      sandboxPorts: [3000],
+    },
   },
   skills: {
     core: [skillRead("./skills/company")],
@@ -60,6 +62,33 @@ export const viby = createViby({
   },
 });
 ```
+
+Or select a packaged coding agent directly. The adapter is optional, so applications that do not
+use Codex never load its runtime or filesystem dependencies:
+
+```bash
+npm install @viby/sdk @openai/codex-sdk
+```
+
+```ts
+import { createViby } from "@viby/sdk";
+import { codex } from "@viby/sdk/agent/codex";
+
+const viby = createViby({
+  framework: "farmjs",
+  agent: codex({ model: "gpt-5.3-codex" }),
+  agents: {
+    fast: codex({ model: "gpt-5.3-codex-spark" }),
+  },
+});
+
+await chat.generate({ prompt: "Build the settings screen", agent: "fast" });
+```
+
+`agent` is a DX layer over the provider-neutral `CodingAgent`/`GenerationEngine` contract. Viby
+still owns durable attempts, events, tasks, source versions, and usage; the adapter owns how work is
+executed. Codex change runs use a disposable workspace-write checkout. Read-only inspections use
+Codex's read-only sandbox and can never commit a source version.
 
 ```ts
 const answer = await version.inspect({
