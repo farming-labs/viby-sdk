@@ -675,7 +675,13 @@ test("persists a durable generation, iteration, events, and download in Postgres
       after: messagePageOne.nextCursor,
     });
     assert.equal(messagePageTwo.items.length, 2);
-    assert.equal(messagePageTwo.nextCursor, null);
+    assert.ok(messagePageTwo.nextCursor);
+    const messagePageThree = await updatedChat.listMessages({
+      limit: 2,
+      after: messagePageTwo.nextCursor,
+    });
+    assert.equal(messagePageThree.items.length, 2);
+    assert.equal(messagePageThree.nextCursor, null);
 
     const versionPageOne = await updatedChat.listVersions({ limit: 1 });
     assert.equal(versionPageOne.items.length, 1);
