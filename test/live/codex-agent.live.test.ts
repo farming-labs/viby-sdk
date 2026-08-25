@@ -7,6 +7,7 @@ import { MemoryRepository } from "../helpers/memory-repository.js";
 
 const enabled = process.env.VIBY_LIVE_CODEX_AGENT === "1";
 const model = process.env.VIBY_CODEX_MODEL?.trim();
+const apiKey = process.env.VIBY_CODEX_API_KEY?.trim() ?? process.env.OPENAI_API_KEY?.trim();
 
 test("[live:codex] inspects and changes one immutable project end to end", {
   skip: !enabled
@@ -20,7 +21,11 @@ test("[live:codex] inspects and changes one immutable project end to end", {
   const viby = createVibyWithDependencies(
     {
       framework: "farmjs",
-      agent: codex({ model, reasoningEffort: "low" }),
+      agent: codex({
+        model,
+        reasoningEffort: "low",
+        ...(apiKey ? { apiKey } : {}),
+      }),
       skills: {},
     },
     {
