@@ -61,6 +61,25 @@ export const viby = createViby({
 });
 ```
 
+```ts
+const answer = await version.inspect({
+  prompt: "Where is session expiry enforced, and which tests cover it?",
+});
+
+console.log(answer.content);
+
+// Addressable, cancellable, retryable, and resumable when needed:
+const inspection = await version.startInspection({ prompt: "Audit the data flow" });
+for await (const event of inspection.stream()) {
+  // Persisted event cursor; reconnect with `after`.
+}
+const outcome = await inspection.wait(); // { status: "responded", message, generation }
+```
+
+Inspection is available only after a project has an immutable version. It receives read/search
+capabilities, filters effectful inbound tools, skips preview and quality-build work, persists the
+assistant response and usage, and leaves version history unchanged.
+
 `framework` is one type-safe string. Viby provides autocomplete and an automatically resolved,
 immutable framework skill for `farmjs`, `nextjs`, `svelte`, `sveltekit`, `vue`, `nuxt`, `solid`,
 `solidstart`, `tanstack-start`, `react-router`, `astro`, and `vite`. The skill is prepended to the

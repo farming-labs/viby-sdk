@@ -12,6 +12,7 @@ import type {
   AttachmentContent,
   GenerationTaskData,
   GenerationTaskRequest,
+  GenerationOperation,
   GenerationSteeringData,
   MessageData,
   MessagePartDataMap,
@@ -84,8 +85,14 @@ const generatedResponseSchema = z.object({
   task: generatedTaskSchema.nullable(),
 });
 
+const inspectionResponseSchema = z.object({
+  response: z.string().min(1).max(50_000),
+});
+
 export interface GeneratorInput<Framework extends FrameworkId = FrameworkId> {
   readonly framework: Framework;
+  /** Defaults to change for engines built before inspection support. */
+  readonly operation?: GenerationOperation;
   readonly prompt: string;
   readonly instructions?: string | null;
   readonly metadata?: Readonly<Record<string, JsonValue>>;
@@ -129,6 +136,14 @@ export interface GeneratorChangesOutput {
   readonly artifacts?: readonly GeneratorArtifactOutput[];
 }
 
+export interface GeneratorMessageOutput {
+  readonly kind: "message";
+  readonly content: string;
+  readonly usage: LanguageModelUsage;
+  readonly finishReason: string;
+  readonly artifacts?: readonly GeneratorArtifactOutput[];
+}
+
 export interface GeneratorArtifactOutput {
   readonly kind?: GeneratedArtifactKind;
   readonly filename: string;
@@ -136,7 +151,11 @@ export interface GeneratorArtifactOutput {
   readonly bytes: Uint8Array;
 }
 
-export type GeneratorOutput = GeneratorProjectOutput | GeneratorChangesOutput | GeneratorTaskOutput;
+export type GeneratorOutput =
+  | GeneratorProjectOutput
+  | GeneratorChangesOutput
+  | GeneratorTaskOutput
+  | GeneratorMessageOutput;
 
 export interface AgentTraceError {
   readonly message: string;
@@ -215,6 +234,9 @@ implements ProjectGenerator<Framework> {
     options: GeneratorOptions = {},
   ): Promise<GeneratorOutput> {
     const steeredInput = await applyQueuedSteering(input, options);
+    if (steeredInput.operation === "inspect") {
+      return this.#inspect(steeredInput, options);
+    }
     if (options.onDelta) return this.#generateStreaming(steeredInput, options);
 
     const result = await generateText({
@@ -242,6 +264,35 @@ implements ProjectGenerator<Framework> {
       ),
       generatedFileOutputs(result.files),
     );
+  }
+
+  async #inspect(
+    input: GeneratorInput<Framework>,
+    options: GeneratorOptions,
+  ): Promise<GeneratorMessageOutput> {
+    const result = await generateText({
+      model: this.#model,
+      system: createInspectionSystemPrompt(
+        input.framework,
+        input.skills,
+        input.instructions ?? null,
+      ),
+      ...createMultimodalPrompt(createGenerationPrompt(input), input.attachments),
+      output: Output.object({
+        name: "viby_inspection",
+        description: "A read-only answer grounded in the immutable source version.",
+        schema: inspectionResponseSchema,
+      }),
+      ...(options.signal ? { abortSignal: options.signal } : {}),
+    });
+    if (options.onDelta) await options.onDelta(result.output.response);
+    return {
+      kind: "message",
+      content: result.output.response,
+      usage: result.usage,
+      finishReason: result.finishReason,
+      artifacts: generatedFileOutputs(result.files),
+    };
   }
 
   async #generateStreaming(
@@ -371,6 +422,26 @@ function createSystemPrompt(
     "\nResolved skills:\n",
     skillContext,
     instructions ? `\nGeneration-specific host instructions:\n${instructions}` : "",
+  ].join("\n");
+}
+
+function createInspectionSystemPrompt(
+  framework: FrameworkId,
+  skills: readonly ResolvedSkill[],
+  instructions: string | null,
+): string {
+  const skillContext = skills.length === 0
+    ? "No additional skills were selected for this inspection."
+    : skills.map(renderSkill).join("\n\n");
+  return [
+    "You are Viby performing a strictly read-only source inspection.",
+    `The immutable project uses ${framework}.`,
+    "Answer only from the supplied project source, conversation, and attachments.",
+    "Do not propose or emit source edits as an executed result. Never claim that files were changed.",
+    "Be precise, cite relevant project paths, and clearly distinguish evidence from inference.",
+    "\nResolved skills:\n",
+    skillContext,
+    instructions ? `\nInspection-specific host instructions:\n${instructions}` : "",
   ].join("\n");
 }
 

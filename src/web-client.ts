@@ -392,6 +392,11 @@ export interface VibyWebChatsClient<Framework extends FrameworkId = FrameworkId>
     chatId: string,
     options?: VibyWebRequestOptions,
   ): Promise<{ readonly deployments: readonly VibyApiJson<DeploymentRecordData>[] }>;
+  inspect(
+    chatId: string,
+    input: VibyWebGenerationInput,
+    options?: VibyWebRequestOptions,
+  ): Promise<{ readonly generation: VibyWebGenerationReference }>;
   readonly environment: {
     list(
       chatId: string,
@@ -475,6 +480,12 @@ export interface VibyWebChatsClient<Framework extends FrameworkId = FrameworkId>
       options?: VibyWebRequestOptions,
     ): Promise<{ readonly deployment: VibyApiJson<DeploymentData> }>;
     iterate(
+      chatId: string,
+      versionId: string,
+      input: VibyWebGenerationInput,
+      options?: VibyWebRequestOptions,
+    ): Promise<{ readonly generation: VibyWebGenerationReference }>;
+    inspect(
       chatId: string,
       versionId: string,
       input: VibyWebGenerationInput,
@@ -806,6 +817,13 @@ export function createVibyWebClient<Framework extends FrameworkId = FrameworkId>
       undefined,
       request,
     ),
+    inspect: (chatId, input, request = {}) => transport.json(
+      "POST",
+      `/chats/${segment(chatId)}/inspections`,
+      generationBody(input),
+      undefined,
+      request,
+    ),
     environment: Object.freeze({
       list: (chatId: string, input = {}) => transport.json(
         "GET",
@@ -968,6 +986,18 @@ export function createVibyWebClient<Framework extends FrameworkId = FrameworkId>
       ) => transport.json<{ readonly generation: VibyWebGenerationReference }>(
         "POST",
         `/chats/${segment(chatId)}/versions/${segment(versionId)}/messages`,
+        generationBody(input),
+        undefined,
+        request,
+      ),
+      inspect: (
+        chatId: string,
+        versionId: string,
+        input: VibyWebGenerationInput,
+        request: VibyWebRequestOptions = {},
+      ) => transport.json<{ readonly generation: VibyWebGenerationReference }>(
+        "POST",
+        `/chats/${segment(chatId)}/versions/${segment(versionId)}/inspections`,
         generationBody(input),
         undefined,
         request,

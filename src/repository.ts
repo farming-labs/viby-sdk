@@ -297,6 +297,21 @@ export interface CompleteGenerationRecord<Framework extends FrameworkId = Framew
   readonly artifacts?: readonly CreateGeneratedArtifactRecord[];
 }
 
+/** Atomically completes a durable generation with an assistant response and no source version. */
+export interface CompleteGenerationResponseRecord {
+  readonly generationId: string;
+  readonly attemptId: string;
+  readonly leaseToken: string;
+  readonly assistantMessage: string;
+  readonly assistantParts: readonly MessagePartInput[];
+  readonly inputTokens: number | null;
+  readonly outputTokens: number | null;
+  readonly totalTokens: number | null;
+  readonly finishReason: string;
+  readonly cost: GenerationCostData | null;
+  readonly artifacts?: readonly CreateGeneratedArtifactRecord[];
+}
+
 export interface PauseGenerationRecord {
   readonly generationId: string;
   readonly attemptId: string;
@@ -517,6 +532,10 @@ extends DeploymentHistoryStore, PreviewSessionStore, ToolSourceRegistryStore, To
     scope: UserScope,
     input: CompleteGenerationRecord<Framework>,
   ): Promise<VersionData<Framework>>;
+  completeGenerationResponse(
+    scope: UserScope,
+    input: CompleteGenerationResponseRecord,
+  ): Promise<MessageData>;
   pauseGeneration(
     scope: UserScope,
     input: PauseGenerationRecord,

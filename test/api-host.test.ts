@@ -80,6 +80,15 @@ test("hosts chat, message, stream, task, preview, and download flows with Web AP
     async generate(input, options): Promise<GeneratorOutput> {
       inputs.push(input);
       steeringPrompts.push(...(await options?.steering?.consume() ?? []).map((entry) => entry.prompt));
+      if (input.operation === "inspect") {
+        await options?.onDelta?.("`src/index.ts` exports the current release.");
+        return {
+          kind: "message",
+          content: "`src/index.ts` exports the current release.",
+          usage,
+          finishReason: "stop",
+        };
+      }
       if (input.prompt.includes("approval") && !input.tasks.some((task) => task.status === "resolved")) {
         return {
           kind: "task",
@@ -177,6 +186,31 @@ test("hosts chat, message, stream, task, preview, and download flows with Web AP
     const firstVersion = object(array(chat.versions)[0]);
     const versionId = string(firstVersion.id);
     assert.equal(array(chat.messages).length, 2);
+
+    const inspected = await requestJson(
+      api,
+      `/chats/${chatId}/versions/${versionId}/inspections`,
+      {
+        method: "POST",
+        body: JSON.stringify({ prompt: "What does src/index.ts export?" }),
+      },
+      202,
+    );
+    const inspectionId = string(object(inspected.generation).id);
+    assert.match(
+      await (await api.fetch(request(`/generations/${inspectionId}/events`, {}, true))).text(),
+      /generation\.succeeded/,
+    );
+    const inspectedGeneration = await requestJson(api, `/generations/${inspectionId}`);
+    assert.equal(object(inspectedGeneration.generation).status, "succeeded");
+    assert.equal(inspectedGeneration.version, null);
+    const afterInspection = await requestJson(api, `/chats/${chatId}`);
+    assert.equal(array(afterInspection.versions).length, 1);
+    assert.equal(
+      object(array(afterInspection.messages).at(-1)).content,
+      "`src/index.ts` exports the current release.",
+    );
+
     const firstWindow = await requestJson(
       api,
       `/chats/${chatId}?messagesLimit=1&versionsLimit=1`,
@@ -223,7 +257,8 @@ test("hosts chat, message, stream, task, preview, and download flows with Web AP
     }, 202);
     const iterationId = string(object(iterated.generation).id);
     assert.match(await (await api.fetch(request(`/generations/${iterationId}/events`, {}, true))).text(), /generation\.succeeded/);
-    assert.equal(new TextDecoder().decode(inputs[1]?.attachments?.[0]?.bytes), "dense chart");
+    const iterationInput = inputs.find((input) => input.prompt === "Add a chart");
+    assert.equal(new TextDecoder().decode(iterationInput?.attachments?.[0]?.bytes), "dense chart");
 
     const messagesWithAttachment = await requestJson(api, `/chats/${chatId}/messages?limit=10`);
     const attachment = array(messagesWithAttachment.messages)

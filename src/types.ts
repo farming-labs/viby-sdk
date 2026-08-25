@@ -333,6 +333,9 @@ export interface GenerateInput {
   readonly attachments?: readonly AttachmentInput[];
 }
 
+export type InspectInput = GenerateInput;
+export type GenerationOperation = "change" | "inspect";
+
 export type IterateInput = GenerateInput;
 
 export type SourceChange =
@@ -646,6 +649,8 @@ export interface GenerationData {
 /** The exact, serializable request configuration stored with a durable generation. */
 export interface GenerationConfigurationData {
   readonly model: string;
+  /** Durable operation kind. Missing on records created before read-only inspection shipped. */
+  readonly operation?: GenerationOperation;
   readonly instructions: string | null;
   readonly skills: SkillGroups;
   readonly metadata: ChatMetadata;
@@ -845,10 +850,17 @@ export interface GenerationEventDataMap {
     readonly resolution: GenerationTaskResolution;
   };
   readonly "attempt.interrupted": { readonly number: number };
-  readonly "attempt.succeeded": { readonly number: number; readonly versionId: string };
+  readonly "attempt.succeeded": {
+    readonly number: number;
+    readonly versionId: string | null;
+    readonly responseMessageId?: string;
+  };
   readonly "attempt.failed": { readonly number: number; readonly error: string };
   readonly "attempt.cancelled": { readonly number: number; readonly reason: string };
-  readonly "generation.succeeded": { readonly versionId: string };
+  readonly "generation.succeeded": {
+    readonly versionId: string | null;
+    readonly responseMessageId?: string;
+  };
   readonly "generation.failed": { readonly error: string };
   readonly "generation.cancelled": { readonly reason: string };
 }

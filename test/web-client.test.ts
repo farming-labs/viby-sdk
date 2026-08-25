@@ -26,6 +26,14 @@ const usage: LanguageModelUsage = {
 
 class WebClientGenerator implements ProjectGenerator<"farm"> {
   async generate(input: GeneratorInput<"farm">): Promise<GeneratorOutput> {
+    if (input.operation === "inspect") {
+      return {
+        kind: "message",
+        content: "`src/index.ts` contains the generated prompt.",
+        usage,
+        finishReason: "stop",
+      };
+    }
     const content = `export const prompt = ${JSON.stringify(input.prompt)};\n`;
     const file: VersionFile = {
       path: "src/index.ts",
@@ -123,6 +131,21 @@ test("consumes the Web API host through typed chat, stream, preview, and downloa
     const detail = await client.chats.get(created.chat.id);
     assert.equal(detail.messages.length, 2);
     assert.equal(detail.versions.length, 1);
+
+    const inspection = await client.chats.versions.inspect(
+      created.chat.id,
+      generation.version!.id,
+      { prompt: "What is in src/index.ts?" },
+    );
+    const inspectionEvents = [];
+    for await (const event of client.generations.stream(inspection.generation.id)) {
+      inspectionEvents.push(event);
+    }
+    assert.equal(inspectionEvents.at(-1)?.type, "generation.succeeded");
+    assert.equal((await client.generations.get(inspection.generation.id)).version, null);
+    const inspectedDetail = await client.chats.get(created.chat.id);
+    assert.equal(inspectedDetail.messages.at(-1)?.content, "`src/index.ts` contains the generated prompt.");
+    assert.equal(inspectedDetail.versions.length, 1);
 
     const imported = await client.chats.import({
       title: "Imported web project",

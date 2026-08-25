@@ -33,6 +33,8 @@ import type {
   GeneratedArtifactKind,
   GenerationWaitOptions,
   GenerationWorkspaceConfig,
+  GenerationOperation,
+  InspectInput,
   IterateInput,
   MessageData,
   MessagePartDataMap,
@@ -294,6 +296,11 @@ export type GenerationOutcome<Framework extends FrameworkId = FrameworkId> =
       readonly status: "succeeded";
       readonly generation: GenerationData;
       readonly version: Version<Framework>;
+    }
+  | {
+      readonly status: "responded";
+      readonly generation: GenerationData;
+      readonly message: MessageData;
     }
   | {
       readonly status: "waiting";
@@ -1367,11 +1374,31 @@ export class Chat<Framework extends FrameworkId = FrameworkId> {
       this.#dependencies.scope,
       this.id,
     );
-    return startGenerationFrom(this.#dependencies, this.id, input, latest);
+    return startGenerationFrom(this.#dependencies, this.id, input, latest, "change");
   }
 
   async generate(input: GenerateInput): Promise<Version<Framework>> {
     return unwrapGenerationOutcome(await (await this.start(input)).wait());
+  }
+
+  /** Starts a durable, strictly read-only inspection of the latest immutable version. */
+  async startInspection(input: InspectInput): Promise<Generation<Framework>> {
+    await this.#assertActive();
+    const latest = await this.#dependencies.repository.getLatestVersion<Framework>(
+      this.#dependencies.scope,
+      this.id,
+    );
+    if (!latest) {
+      throw new ConfigurationError(
+        "Read-only inspection requires an existing project version. Import or generate source first.",
+      );
+    }
+    return startGenerationFrom(this.#dependencies, this.id, input, latest, "inspect");
+  }
+
+  /** Inspects the latest immutable version and returns the durable assistant response. */
+  async inspect(input: InspectInput): Promise<MessageData> {
+    return unwrapInspectionOutcome(await (await this.startInspection(input)).wait());
   }
 
   async getGeneration(id: string): Promise<Generation<Framework>> {
@@ -1519,6 +1546,7 @@ async function startGenerationFrom<Framework extends FrameworkId>(
   chatId: string,
   input: GenerateInput,
   baseVersion: VersionData<Framework> | null,
+  operation: GenerationOperation = "change",
 ): Promise<Generation<Framework>> {
   if (baseVersion && baseVersion.chatId !== chatId) throw new NotFoundError("Version");
   const prompt = assertPrompt(input.prompt);
@@ -1526,6 +1554,7 @@ async function startGenerationFrom<Framework extends FrameworkId>(
     input,
     dependencies.skills,
     dependencies.models,
+    operation,
   );
   const attachments = normalizeAttachments(input.attachments);
   const toolSources = await dependencies.toolSourceRegistry.snapshot(dependencies.scope, chatId);
@@ -1829,6 +1858,20 @@ export class Generation<Framework extends FrameworkId = FrameworkId> {
       const generation = await this.data();
       switch (generation.status) {
         case "succeeded": {
+          if (generation.configuration.operation === "inspect") {
+            const messages = await this.#dependencies.repository.listMessages(
+              this.#dependencies.scope,
+              this.chatId,
+            );
+            const message = messages
+              .filter(
+                (candidate) =>
+                  candidate.generationId === this.id && candidate.role === "assistant",
+              )
+              .at(-1);
+            if (!message) throw new NotFoundError("Inspection response");
+            return { status: "responded", generation, message };
+          }
           const version = await this.#dependencies.repository.getVersionByGeneration<Framework>(
             this.#dependencies.scope,
             this.id,
@@ -1971,6 +2014,22 @@ export class Version<Framework extends FrameworkId = FrameworkId> {
 
   async iterate(input: IterateInput): Promise<Version<Framework>> {
     return unwrapGenerationOutcome(await (await this.startIteration(input)).wait());
+  }
+
+  /** Starts a durable, strictly read-only inspection of this exact immutable version. */
+  async startInspection(input: InspectInput): Promise<Generation<Framework>> {
+    return startGenerationFrom(
+      this.#dependencies,
+      this.chatId,
+      input,
+      this.#data,
+      "inspect",
+    );
+  }
+
+  /** Inspects this exact immutable version and returns the durable assistant response. */
+  async inspect(input: InspectInput): Promise<MessageData> {
+    return unwrapInspectionOutcome(await (await this.startInspection(input)).wait());
   }
 
   async apply(input: ApplySourceChangesInput): Promise<Version<Framework>> {
@@ -2938,6 +2997,7 @@ function normalizeGenerationConfiguration<Framework extends FrameworkId>(
   input: GenerateInput,
   defaults: SkillGroups,
   models: GenerationModelRegistry<Framework>,
+  operation: GenerationOperation,
 ): { configuration: GenerationConfigurationData; model: GenerationModelBinding<Framework> } {
   const model = models.resolve(input.model);
   const instructions = input.instructions?.trim() || null;
@@ -2952,6 +3012,7 @@ function normalizeGenerationConfiguration<Framework extends FrameworkId>(
     model,
     configuration: {
       model: model.alias,
+      operation,
       instructions,
       skills,
       metadata: normalizeChatMetadata(input.metadata),
@@ -3252,7 +3313,11 @@ class GenerationRunner<Framework extends FrameworkId> {
       attemptNumber = attempts.find((attempt) => attempt.id === attemptId)?.number ?? 1;
       attemptStartedAt = attempts.find((attempt) => attempt.id === attemptId)?.startedAt ?? null;
       signal.throwIfAborted();
-      if (generation.baseVersionId && this.#dependencies.sandbox) {
+      if (
+        generation.configuration.operation !== "inspect"
+        && generation.baseVersionId
+        && this.#dependencies.sandbox
+      ) {
         const eagerOptions =
           this.#dependencies.workspace && baseVersion
             ? this.#dependencies.previews.resolve()
@@ -3330,6 +3395,7 @@ class GenerationRunner<Framework extends FrameworkId> {
         .generator.generate(
           {
             framework: chat.framework,
+            operation: generation.configuration.operation ?? "change",
             prompt: generation.prompt,
             instructions: generationInstructionsForAttempt(
               generation.configuration.instructions,
@@ -3448,6 +3514,74 @@ class GenerationRunner<Framework extends FrameworkId> {
         );
         safeSetSpanStatus(telemetrySpan, "ok");
         return;
+      }
+      if (generation.configuration.operation === "inspect") {
+        if (output.kind !== "message") {
+          throw new ConfigurationError(
+            "A read-only inspection must return a message and cannot create source changes.",
+          );
+        }
+        const inputTokens = output.usage.inputTokens ?? null;
+        const outputTokens = output.usage.outputTokens ?? null;
+        const totalTokens = output.usage.totalTokens ?? null;
+        const cost = await calculateGenerationCost(
+          this.#dependencies.cost,
+          {
+            ...scope,
+            chatId: chat.id,
+            generationId,
+            attemptId,
+            modelProvider: generation.modelProvider,
+            modelId: generation.modelId,
+            inputTokens,
+            outputTokens,
+            totalTokens,
+          },
+          this.#dependencies.telemetry,
+          telemetrySpan,
+          telemetryAttributes,
+        );
+        await this.#dependencies.repository.completeGenerationResponse(scope, {
+          generationId,
+          attemptId,
+          leaseToken,
+          assistantMessage: output.content,
+          assistantParts: [
+            ...trace.completedParts(),
+            { type: "text", data: { text: output.content } },
+            usageMessagePart(
+              inputTokens,
+              outputTokens,
+              totalTokens,
+              cost,
+              elapsedAttemptMs(attemptStartedAt),
+            ),
+          ],
+          inputTokens,
+          outputTokens,
+          totalTokens,
+          finishReason: output.finishReason,
+          cost,
+          artifacts,
+        });
+        telemetryOutcome = "succeeded";
+        recordGenerationUsage(
+          this.#dependencies.telemetry,
+          telemetrySpan,
+          telemetryAttributes,
+          telemetryOutcome,
+          inputTokens,
+          outputTokens,
+          totalTokens,
+          cost,
+        );
+        safeSetSpanStatus(telemetrySpan, "ok");
+        return;
+      }
+      if (output.kind === "message") {
+        throw new ConfigurationError(
+          "A source-changing generation cannot complete with a read-only message.",
+        );
       }
 
       let entries =
@@ -4216,6 +4350,34 @@ function unwrapGenerationOutcome<Framework extends FrameworkId>(
   switch (outcome.status) {
     case "succeeded":
       return outcome.version;
+    case "responded":
+      throw new GenerationStateError(
+        outcome.generation.id,
+        "The generation completed with a read-only response instead of a source version.",
+      );
+    case "waiting":
+      throw new GenerationTaskRequiredError(
+        outcome.generation.id,
+        outcome.tasks.map((task) => task.id),
+      );
+    case "failed":
+      throw new GenerationError(outcome.generation.id, outcome.error);
+    case "cancelled":
+      throw new GenerationCancelledError(outcome.generation.id, outcome.reason);
+  }
+}
+
+function unwrapInspectionOutcome<Framework extends FrameworkId>(
+  outcome: GenerationOutcome<Framework>,
+): MessageData {
+  switch (outcome.status) {
+    case "responded":
+      return outcome.message;
+    case "succeeded":
+      throw new GenerationStateError(
+        outcome.generation.id,
+        "The inspection unexpectedly created a source version.",
+      );
     case "waiting":
       throw new GenerationTaskRequiredError(
         outcome.generation.id,

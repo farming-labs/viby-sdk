@@ -202,7 +202,16 @@ test("persists a durable generation, iteration, events, and download in Postgres
   const generator: ProjectGenerator<"farm"> = {
     async generate(input, options): Promise<GeneratorOutput> {
       calls.push(input);
-      const number = calls.length;
+      if (input.operation === "inspect") {
+        await options?.onDelta?.("`src/index.ts` exports the current version number.");
+        return {
+          kind: "message",
+          content: "`src/index.ts` exports the current version number.",
+          usage,
+          finishReason: "stop",
+        };
+      }
+      const number = calls.filter((call) => call.operation !== "inspect").length;
       const content = `export const version = ${number};\n`;
       const files: VersionFile[] = [{
         path: "src/index.ts",
@@ -282,6 +291,7 @@ test("persists a durable generation, iteration, events, and download in Postgres
     assert.deepEqual(outcome.generation.cost, { amountMicros: 240, currency: "USD" });
     assert.deepEqual(outcome.generation.configuration, {
       model: "default",
+      operation: "change",
       instructions: "Use a compact product layout.",
       skills: {
         core: [frameworkSkill("farmjs")],
@@ -330,6 +340,39 @@ test("persists a durable generation, iteration, events, and download in Postgres
     });
     assert.deepEqual(await outcome.version.getDesignEvaluation(designEvaluation.id), designEvaluation);
     assert.deepEqual((await outcome.version.listDesignEvaluations()).items, [designEvaluation]);
+
+    const inspectionGeneration = await outcome.version.startInspection({
+      prompt: "What does the current source export?",
+      metadata: { test: "postgres-inspection" },
+    });
+    const inspectionOutcome = await inspectionGeneration.wait({ pollIntervalMs: 10 });
+    assert.equal(inspectionOutcome.status, "responded");
+    if (inspectionOutcome.status !== "responded") {
+      throw new Error("Expected a successful read-only inspection");
+    }
+    assert.equal(
+      inspectionOutcome.message.content,
+      "`src/index.ts` exports the current version number.",
+    );
+    assert.equal((await chat.listVersions()).items.length, 1);
+    assert.deepEqual(inspectionOutcome.generation.configuration, {
+      model: "default",
+      operation: "inspect",
+      instructions: undefined,
+      skills: { core: [frameworkSkill("farmjs")] },
+      metadata: { test: "postgres-inspection" },
+      toolSources: [],
+    });
+    const inspectionEvents = (await inspectionGeneration.events({ limit: 100 })).events;
+    const inspectionSucceeded = inspectionEvents.find(
+      (event) => event.type === "generation.succeeded",
+    );
+    assert.ok(inspectionSucceeded);
+    assert.equal(inspectionSucceeded.data.versionId, null);
+    assert.equal(
+      inspectionSucceeded.data.responseMessageId,
+      inspectionOutcome.message.id,
+    );
 
     const events = (await generation.events({ limit: 100 })).events;
     assert.deepEqual(events.map((event) => event.type), [

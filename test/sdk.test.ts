@@ -162,6 +162,7 @@ test("persists generation-scoped model, instructions, skills, and metadata acros
   assert.equal(queued.modelId, "other/visual");
   assert.deepEqual(queued.configuration, {
     model: "visual",
+    operation: "change",
     instructions: "Use the supplied design direction without changing frameworks.",
     skills: {
       core: [frameworkSkill("farmjs")],

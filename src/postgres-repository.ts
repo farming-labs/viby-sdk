@@ -67,6 +67,7 @@ import type {
   ClaimGenerationAttemptRecord,
   ClaimOutboundEventDeliveryRecord,
   CompleteGenerationRecord,
+  CompleteGenerationResponseRecord,
   CompleteToolCallRecord,
   CreateAttemptRecord,
   CreatedGeneration,
@@ -2014,6 +2015,12 @@ export class PostgresRepository implements Repository {
         FOR UPDATE
       `;
         if (!generation) throw new NotFoundError("Generation");
+        if (generation.configuration?.operation === "inspect") {
+          throw new GenerationStateError(
+            input.generationId,
+            "A read-only inspection cannot create a source version.",
+          );
+        }
         if (generation.status !== "running" || generation.active_attempt_id !== input.attemptId) {
           throw new GenerationStateError(
             input.generationId,
@@ -2147,6 +2154,124 @@ export class PostgresRepository implements Repository {
       throw error;
     }
     return mapVersion<Framework>(row);
+  }
+
+  async completeGenerationResponse(
+    scope: UserScope,
+    input: CompleteGenerationResponseRecord,
+  ): Promise<MessageData> {
+    await this.assertReady();
+    const artifacts = await this.#storeGeneratedArtifacts(
+      scope,
+      input.generationId,
+      input.artifacts ?? [],
+    );
+    const messageId = createId();
+    let chatId: string;
+    try {
+      chatId = await this.#sql.begin(async (sql) => {
+        const [generation] = await sql<GenerationRow[]>`
+          SELECT * FROM viby.generations
+          WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+            AND id = ${input.generationId}
+          FOR UPDATE
+        `;
+        if (!generation) throw new NotFoundError("Generation");
+        if (generation.configuration?.operation !== "inspect") {
+          throw new GenerationStateError(
+            input.generationId,
+            "Only a read-only inspection can complete without a source version.",
+          );
+        }
+        if (generation.status !== "running" || generation.active_attempt_id !== input.attemptId) {
+          throw new GenerationStateError(
+            input.generationId,
+            `Generation ${input.generationId} cannot complete from ${generation.status}.`,
+          );
+        }
+        const [attempt] = await sql<GenerationAttemptRow[]>`
+          SELECT * FROM viby.generation_attempts
+          WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+            AND generation_id = ${input.generationId} AND id = ${input.attemptId}
+            AND lease_token = ${input.leaseToken} AND lease_expires_at > now()
+          FOR UPDATE
+        `;
+        if (!attempt || attempt.status !== "running") {
+          throw new GenerationStateError(input.generationId, `Attempt ${input.attemptId} is not running.`);
+        }
+        await assertNoQueuedSteering(sql, scope, input.generationId);
+        await insertGeneratedArtifacts(sql, scope, {
+          chatId: generation.chat_id,
+          generationId: input.generationId,
+          attemptId: input.attemptId,
+          versionId: null,
+          artifacts,
+        });
+        await insertMessage(sql, scope, {
+          id: messageId,
+          chatId: generation.chat_id,
+          generationId: input.generationId,
+          attemptId: input.attemptId,
+          role: "assistant",
+          content: input.assistantMessage,
+          finishReason: input.finishReason,
+          parts: input.assistantParts,
+        });
+        await sql`
+          UPDATE viby.generation_attempts SET
+            status = 'succeeded', input_tokens = ${input.inputTokens},
+            output_tokens = ${input.outputTokens}, total_tokens = ${input.totalTokens},
+            estimated_cost_micros = ${input.cost?.amountMicros ?? null},
+            cost_currency = ${input.cost?.currency ?? null},
+            finish_reason = ${input.finishReason}, completed_at = now()
+          WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId} AND id = ${input.attemptId}
+        `;
+        await sql`
+          UPDATE viby.generations SET
+            status = 'succeeded', input_tokens = ${input.inputTokens},
+            output_tokens = ${input.outputTokens}, total_tokens = ${input.totalTokens},
+            estimated_cost_micros = CASE
+              WHEN ${input.cost?.amountMicros ?? null}::bigint IS NULL THEN estimated_cost_micros
+              ELSE COALESCE(estimated_cost_micros, 0) + ${input.cost?.amountMicros ?? null}::bigint
+            END,
+            cost_currency = COALESCE(cost_currency, ${input.cost?.currency ?? null}),
+            finish_reason = ${input.finishReason}, error = NULL, completed_at = now()
+          WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId} AND id = ${input.generationId}
+        `;
+        await sql`
+          UPDATE viby.chats SET updated_at = now()
+          WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+            AND id = ${generation.chat_id}
+        `;
+        await sql`
+          INSERT INTO viby.generation_events (
+            tenant_id, user_id, generation_id, attempt_id, type, data
+          ) VALUES (
+            ${scope.tenantId}, ${scope.userId}, ${input.generationId}, ${input.attemptId},
+            'attempt.succeeded', ${sql.json({
+              number: attempt.number,
+              versionId: null,
+              responseMessageId: messageId,
+            })}
+          )
+        `;
+        await sql`
+          INSERT INTO viby.generation_events (
+            tenant_id, user_id, generation_id, attempt_id, type, data
+          ) VALUES (
+            ${scope.tenantId}, ${scope.userId}, ${input.generationId}, ${input.attemptId},
+            'generation.succeeded', ${sql.json({ versionId: null, responseMessageId: messageId })}
+          )
+        `;
+        return generation.chat_id;
+      });
+    } catch (error) {
+      await this.#cleanupGeneratedArtifacts(scope, artifacts);
+      throw error;
+    }
+    const message = await this.getMessage(scope, chatId, messageId);
+    if (!message) throw new NotFoundError("Inspection response");
+    return message;
   }
 
   async pauseGeneration(
