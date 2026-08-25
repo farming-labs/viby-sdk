@@ -468,11 +468,11 @@ test("persists a durable generation, iteration, events, and download in Postgres
       amountMicros: 240,
       currency: "USD",
     });
-    assert.equal((await persistedChat.listMessages()).items.length, 4);
+    assert.equal((await persistedChat.listMessages()).items.length, 6);
     const persistedMessages = (await persistedChat.listMessages()).items;
     assert.deepEqual(
       persistedMessages.map((message) => message.finishReason),
-      [null, "stop", null, "stop"],
+      [null, "stop", null, "stop", null, "stop"],
     );
     assert.equal(persistedMessages[0]?.attachments[0]?.filename, "reference.txt");
     const persistedAttachment = await persistedChat.getAttachment(
