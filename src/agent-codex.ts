@@ -123,7 +123,7 @@ async function runCodex<Framework extends FrameworkId>(
         if (event.type === "item.completed") finalResponse = next;
       }
       if (event.type === "item.completed") {
-        await recordCodexTrace(event.item, options);
+        await recordCodexTrace(event.item, options, workspace);
       }
       if (event.type === "turn.completed") usage = event.usage;
       if (event.type === "turn.failed") throw new Error(event.error.message);
@@ -142,7 +142,7 @@ async function runCodex<Framework extends FrameworkId>(
         finishReason: "stop",
       };
     }
-    const files = await collectFiles(workspace, config);
+    const files = await collectFiles(workspace, config, input.previousFiles);
     const summary = finalResponse.trim().slice(0, 2_000);
     if (input.previousFiles.length === 0) {
       return {
@@ -198,6 +198,10 @@ function codexPrompt<Framework extends FrameworkId>(input: GeneratorInput<Framew
     .map((message) => `${message.role.toUpperCase()}: ${message.content}`)
     .join("\n\n");
   const readOnly = input.operation === "inspect";
+  const lockedFiles = input.previousFiles
+    .filter((file) => file.locked)
+    .map((file) => file.path)
+    .sort();
   return [
     readOnly
       ? "Inspect this project in read-only mode. Do not modify, create, move, or delete files and do not run effectful commands."
@@ -206,6 +210,9 @@ function codexPrompt<Framework extends FrameworkId>(input: GeneratorInput<Framew
     readOnly
       ? "Ground the response in files you actually inspect, cite relevant paths, and distinguish evidence from inference."
       : "Respect existing architecture, locked-file policy, and framework conventions. Do not add dependency folders, build output, secrets, or lockfiles.",
+    !readOnly && lockedFiles.length > 0
+      ? `Locked files (must remain byte-for-byte unchanged):\n${lockedFiles.map((path) => `- ${path}`).join("\n")}`
+      : "",
     input.instructions ? `Host instructions:\n${input.instructions}` : "",
     skills ? `Resolved skills:\n${skills}` : "",
     history ? `Conversation:\n${history}` : "",
@@ -216,6 +223,7 @@ function codexPrompt<Framework extends FrameworkId>(input: GeneratorInput<Framew
 async function recordCodexTrace(
   item: Extract<ThreadEvent, { type: "item.completed" }>["item"],
   options: GeneratorOptions,
+  workspace: string,
 ): Promise<void> {
   if (item.type === "reasoning" && item.text.trim()) {
     const part = await options.trace?.start("reasoning-summary");
@@ -236,7 +244,7 @@ async function recordCodexTrace(
       const part = await options.trace?.start("file-edit");
       await part?.complete({
         operation: change.kind === "add" ? "create" : change.kind,
-        path: normalizeProjectPath(change.path),
+        path: workspaceProjectPath(workspace, change.path),
       });
     }
     return;
@@ -252,6 +260,10 @@ async function recordCodexTrace(
   }
 }
 
+function workspaceProjectPath(workspace: string, path: string): string {
+  return normalizeProjectPath(relative(workspace, resolve(workspace, path)));
+}
+
 async function materializeFiles(root: string, files: readonly VersionFile[]): Promise<void> {
   for (const file of files) {
     const path = safeWorkspacePath(root, file.path);
@@ -263,7 +275,9 @@ async function materializeFiles(root: string, files: readonly VersionFile[]): Pr
 async function collectFiles(
   root: string,
   config: Pick<NormalizedCodexAgentOptions, "maxFiles" | "maxFileBytes" | "maxProjectBytes">,
+  previousFiles: readonly VersionFile[],
 ): Promise<VersionFile[]> {
+  const previousByPath = new Map(previousFiles.map((file) => [file.path, file]));
   const paths: string[] = [];
   async function walk(directory: string): Promise<void> {
     for (const entry of await readdir(directory, { withFileTypes: true })) {
@@ -290,10 +304,13 @@ async function collectFiles(
     }
     if (bytes.includes(0)) continue;
     const content = bytes.toString("utf8");
+    const previous = previousByPath.get(path);
     files.push({
       path: normalizeProjectPath(path),
       content,
-      mediaType: mediaTypeForPath(path),
+      // Existing source metadata is part of the immutable project contract.
+      // Re-inferring it here would turn an unchanged file into a false write.
+      mediaType: previous ? previous.mediaType : mediaTypeForPath(path),
       size: bytes.byteLength,
       checksum: sha256(bytes),
       locked: false,

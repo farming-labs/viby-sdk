@@ -150,6 +150,19 @@ test("Codex adapter uses read-only and workspace-write modes end to end", async 
             await writeFile(join(options.workingDirectory!, "src.ts"), "export const built = true;\n");
           }
           async function* events() {
+            if (options.sandboxMode === "workspace-write") {
+              yield {
+                type: "item.completed" as const,
+                item: {
+                  id: "file-change-1",
+                  type: "file_change" as const,
+                  changes: [{
+                    path: join(options.workingDirectory!, "src.ts"),
+                    kind: "add" as const,
+                  }],
+                },
+              };
+            }
             yield {
               type: "item.completed" as const,
               item: {
@@ -189,8 +202,33 @@ test("Codex adapter uses read-only and workspace-write modes end to end", async 
     skills: [],
     tasks: [],
   };
-  const project = await agent.generate({ ...common, operation: "change", previousFiles: [] });
+  const tracedFiles: string[] = [];
+  const project = await agent.generate(
+    { ...common, operation: "change", previousFiles: [] },
+    {
+      trace: {
+        async start(type) {
+          return {
+            id: `trace-${type}`,
+            type,
+            async delta() {},
+            async complete(value) {
+              if (
+                type === "file-edit" &&
+                "path" in value &&
+                typeof value.path === "string"
+              ) {
+                tracedFiles.push(value.path);
+              }
+            },
+            async fail() {},
+          };
+        },
+      },
+    },
+  );
   assert.equal(project.kind, "project");
+  assert.deepEqual(tracedFiles, ["src.ts"]);
   const inspection = await agent.generate({
     ...common,
     operation: "inspect",
@@ -209,4 +247,80 @@ test("Codex adapter uses read-only and workspace-write modes end to end", async 
     "live",
     "disabled",
   ]);
+});
+
+test("Codex adapter preserves locked file metadata and names locked paths in its prompt", async () => {
+  let prompt = "";
+  const client = {
+    startThread(options: { workingDirectory?: string }) {
+      return {
+        async runStreamed(nextPrompt: string) {
+          prompt = nextPrompt;
+          await writeFile(
+            join(options.workingDirectory!, "src/app/page.tsx"),
+            "export default function Page() { return <main>Updated</main>; }\n",
+          );
+          async function* events() {
+            yield {
+              type: "item.completed" as const,
+              item: {
+                id: "message-1",
+                type: "agent_message" as const,
+                text: "Updated the page without changing framework configuration.",
+              },
+            };
+            yield {
+              type: "turn.completed" as const,
+              usage: {
+                input_tokens: 4,
+                cached_input_tokens: 0,
+                cache_write_input_tokens: 0,
+                output_tokens: 3,
+                reasoning_output_tokens: 0,
+              },
+            };
+          }
+          return { events: events() };
+        },
+      };
+    },
+  };
+  const agent = codex<"farmjs">({ model: "gpt-test", client: client as never });
+  const config = "export default {};\n";
+  const page = "export default function Page() { return <main>Initial</main>; }\n";
+  const result = await agent.generate({
+    framework: "farmjs",
+    operation: "change",
+    prompt: "Update the page",
+    messages: [],
+    skills: [],
+    tasks: [],
+    previousFiles: [
+      {
+        path: "farm.config.ts",
+        content: config,
+        mediaType: "text/plain",
+        size: Buffer.byteLength(config),
+        checksum: sha256(config),
+        locked: true,
+      },
+      {
+        path: "src/app/page.tsx",
+        content: page,
+        mediaType: "text/plain",
+        size: Buffer.byteLength(page),
+        checksum: sha256(page),
+        locked: false,
+      },
+    ],
+  });
+
+  assert.equal(result.kind, "changes");
+  if (result.kind === "changes") {
+    assert.deepEqual(result.changes.map((change) => (
+      change.type === "move" ? change.from : change.path
+    )), ["src/app/page.tsx"]);
+    assert.equal(result.changes[0]?.type === "write" && result.changes[0].mediaType, "text/plain");
+  }
+  assert.match(prompt, /Locked files \(must remain byte-for-byte unchanged\):\n- farm\.config\.ts/);
 });
