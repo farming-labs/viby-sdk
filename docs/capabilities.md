@@ -22,6 +22,7 @@ This inventory describes the current `@viby/sdk` source on `main`. “Shipped”
 | Binary artifact storage | provider-neutral `ArtifactStore`, conformance suite, filesystem reference adapter, and S3-compatible adapter for AWS S3, R2, MinIO, and compatible stores | host selects storage and owns its credentials; the database keeps metadata and opaque references |
 | Tenant isolation | `viby.forUser({ tenantId, userId })` | host authenticates; every Viby query enforces both IDs |
 | Viby API key | none | no managed Viby control plane is required |
+| Health and diagnostics | typed `viby.health.check()` readiness plus credential-safe, read-only `viby doctor` human and JSON reports | host may add provider-neutral probes; diagnostics never create provider resources or apply migrations |
 
 ## Conversations, generation, and source
 

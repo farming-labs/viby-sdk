@@ -101,6 +101,12 @@ export default {
           { label: "Cloudflare", slug: "integrations/cloudflare" },
         ],
       },
+      {
+        label: "Operations",
+        children: [
+          { label: "Health and diagnostics", slug: "operations/health" },
+        ],
+      },
     ],
   },
 };

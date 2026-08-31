@@ -43,6 +43,10 @@ try {
     "dist/environment-postgres.js",
     "dist/environment-postgres.d.ts",
     "dist/cli.js",
+    "dist/health.js",
+    "dist/health.d.ts",
+    "dist/doctor.js",
+    "dist/doctor.d.ts",
     "dist/mcp.js",
     "dist/mcp.d.ts",
     "dist/sandbox-e2b.js",
@@ -154,7 +158,7 @@ try {
       "--input-type=module",
       "--eval",
       [
-        'import { accessibilityGate, builtInFrameworks, configuredIntegrations, consoleErrorGate, createViby, defineRemoteGenerationEngine, frameworkSkill, BrowserSession, DeploymentIntegrationHandle, DownloadArtifact, GenerationEngineToolApprovalRequiredError, IntegrationAuthorizationError, IntegrationClient, IntegrationOperationError, RemoteGenerationEngineError, RepositoryIntegrationHandle, SandboxSession, SourceImportError, generationEventStreamResponse, openBrowserSession, openTelemetry, signedOutboundEventSink, verifySignedOutboundEvent, skillRead } from "@viby/sdk";',
+        'import { accessibilityGate, builtInFrameworks, configuredIntegrations, consoleErrorGate, createViby, defineRemoteGenerationEngine, frameworkSkill, BrowserSession, DeploymentIntegrationHandle, DownloadArtifact, GenerationEngineToolApprovalRequiredError, IntegrationAuthorizationError, IntegrationClient, IntegrationOperationError, RemoteGenerationEngineError, RepositoryIntegrationHandle, SandboxSession, SourceImportError, VibyHealthService, formatVibyDoctorReport, generationEventStreamResponse, openBrowserSession, openTelemetry, runVibyDoctor, signedOutboundEventSink, verifySignedOutboundEvent, skillRead } from "@viby/sdk";',
         'if (typeof createViby !== "function") throw new Error("createViby export is missing");',
         'if (typeof BrowserSession !== "function") throw new Error("BrowserSession export is missing");',
         'if (typeof openBrowserSession !== "function") throw new Error("openBrowserSession export is missing");',
@@ -176,6 +180,8 @@ try {
         'if (typeof IntegrationOperationError !== "function") throw new Error("IntegrationOperationError export is missing");',
         'if (typeof RepositoryIntegrationHandle !== "function") throw new Error("RepositoryIntegrationHandle export is missing");',
         'if (typeof DeploymentIntegrationHandle !== "function") throw new Error("DeploymentIntegrationHandle export is missing");',
+        'if (typeof VibyHealthService !== "function") throw new Error("health service export is missing");',
+        'if (typeof runVibyDoctor !== "function" || typeof formatVibyDoctorReport !== "function") throw new Error("doctor exports are missing");',
         'if (skillRead("./skills").source !== "file") throw new Error("skillRead export is invalid");',
         'if (!builtInFrameworks.includes("farmjs") || builtInFrameworks.includes("farm")) throw new Error("framework IDs are invalid");',
         'if (frameworkSkill("nextjs").files[0].path !== "SKILL.md") throw new Error("framework skill is invalid");',
@@ -204,9 +210,10 @@ try {
       "--input-type=module",
       "--eval",
       [
-        'import { EnvironmentManager, normalizeEnvironmentVariableName } from "@viby/sdk/core";',
+        'import { EnvironmentManager, VibyHealthService, normalizeEnvironmentVariableName } from "@viby/sdk/core";',
         'import { postgresEnvironmentVariables } from "@viby/sdk/environment/postgres";',
         'if (typeof EnvironmentManager !== "function") throw new Error("environment manager is missing");',
+        'if (typeof VibyHealthService !== "function") throw new Error("portable health export is missing");',
         'if (normalizeEnvironmentVariableName("API_URL") !== "API_URL") throw new Error("environment name helper is invalid");',
         'if (typeof postgresEnvironmentVariables !== "function") throw new Error("Postgres environment adapter is missing");',
       ].join("\n"),
@@ -477,6 +484,7 @@ try {
   );
   const { stdout: cliOutput } = await execute(executable, ["--help"], { cwd: consumer });
   assert.match(cliOutput, /viby db migrate/);
+  assert.match(cliOutput, /viby doctor/);
 
   console.log(
     `Verified ${manifest.name}@${manifest.version}: ${manifest.entryCount} files, import, and CLI.`,
