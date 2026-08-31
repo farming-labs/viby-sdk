@@ -88,10 +88,6 @@
       "types": "./dist/generation-engine-conformance.d.ts",
       "import": "./dist/generation-engine-conformance.js"
     },
-    "./agent/codex": {
-      "types": "./dist/agent-codex.d.ts",
-      "import": "./dist/agent-codex.js"
-    },
     "./artifact/filesystem": {
       "types": "./dist/artifact-filesystem.d.ts",
       "import": "./dist/artifact-filesystem.js"
@@ -197,7 +193,6 @@
     "test:docker": "node --import tsx --test test/integration/sandbox-docker.test.ts",
     "test:playwright": "node --import tsx --test test/integration/browser-playwright.test.ts",
     "test:providers:live": "node --import tsx --test --test-concurrency=1 test/live/*.live.test.ts",
-    "test:agent:codex:live": "node --import tsx --test test/live/codex-agent.live.test.ts",
     "test:providers:cleanup": "node --import tsx scripts/cleanup-live-providers.ts",
     "test:package": "node scripts/package-smoke.mjs",
     "test:reference": "node --import tsx --test test/e2e/reference-app.test.mjs",
@@ -233,7 +228,6 @@
     "zod": "^4.4.3"
   },
   "peerDependencies": {
-    "@openai/codex-sdk": "^0.149.1",
     "@aws-sdk/client-s3": "^3.1108.0",
     "@axe-core/playwright": "^4.12.1",
     "@cloudflare/sandbox": "^0.12.5",
@@ -246,9 +240,6 @@
     "playwright": "^1.62.1"
   },
   "peerDependenciesMeta": {
-    "@openai/codex-sdk": {
-      "optional": true
-    },
     "@aws-sdk/client-s3": {
       "optional": true
     },
@@ -281,7 +272,6 @@
     }
   },
   "devDependencies": {
-    "@openai/codex-sdk": "^0.149.1",
     "@aws-sdk/client-s3": "^3.1108.0",
     "@axe-core/playwright": "^4.12.1",
     "@cloudflare/sandbox": "^0.12.5",

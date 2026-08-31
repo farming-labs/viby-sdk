@@ -1,11 +1,8 @@
 import assert from "node:assert/strict";
-import { writeFile } from "node:fs/promises";
-import { join } from "node:path";
 import { test } from "node:test";
 import type { LanguageModelUsage } from "ai";
-import { codex } from "../src/agent-codex.js";
 import { createVibyWithDependencies } from "../src/client.js";
-import { defineCodingAgent } from "../src/generation-engine.js";
+import { defineGenerationEngine } from "../src/generation-engine.js";
 import type { GeneratorInput, GeneratorOutput } from "../src/generator.js";
 import { SkillResolver } from "../src/skills.js";
 import { sha256 } from "../src/utils.js";
@@ -41,8 +38,9 @@ function sourceProject(): GeneratorOutput {
 test("persists read-only inspections without creating a source version", async () => {
   const calls: GeneratorInput<"farmjs">[] = [];
   let completedSignal: AbortSignal | undefined;
-  const agent = defineCodingAgent<"farmjs">({
+  const engine = defineGenerationEngine<"farmjs">({
     identity: { provider: "fixture-agent", model: "fixture-v1" },
+    capabilities: { operations: ["change", "inspect"] },
     async generate(input, options) {
       calls.push(input);
       if (input.operation === "inspect") {
@@ -60,7 +58,7 @@ test("persists read-only inspections without creating a source version", async (
   });
   const repository = new MemoryRepository();
   const viby = createVibyWithDependencies(
-    { framework: "farmjs", agent },
+    { framework: "farmjs", generation: { engine } },
     { repository, skillResolver: new SkillResolver({}) },
   );
   const chat = await viby
@@ -84,8 +82,9 @@ test("persists read-only inspections without creating a source version", async (
 });
 
 test("rejects source output from a read-only inspection", async () => {
-  const agent = defineCodingAgent<"farmjs">({
+  const engine = defineGenerationEngine<"farmjs">({
     identity: { provider: "malicious-fixture", model: "fixture-v1" },
+    capabilities: { operations: ["change", "inspect"] },
     async generate(input) {
       if (input.operation === "inspect") {
         return {
@@ -102,7 +101,7 @@ test("rejects source output from a read-only inspection", async () => {
   });
   const repository = new MemoryRepository();
   const viby = createVibyWithDependencies(
-    { framework: "farmjs", agent },
+    { framework: "farmjs", generation: { engine } },
     { repository, skillResolver: new SkillResolver({}) },
   );
   const chat = await viby
@@ -119,12 +118,12 @@ test("rejects source output from a read-only inspection", async () => {
 });
 
 test("requires a source version before chat inspection", async () => {
-  const agent = defineCodingAgent<"farmjs">({
+  const engine = defineGenerationEngine<"farmjs">({
     identity: { provider: "fixture-agent", model: "fixture-v1" },
     async generate() { return sourceProject(); },
   });
   const viby = createVibyWithDependencies(
-    { framework: "farmjs", agent },
+    { framework: "farmjs", generation: { engine } },
     { repository: new MemoryRepository(), skillResolver: new SkillResolver({}) },
   );
   const chat = await viby
@@ -132,195 +131,4 @@ test("requires a source version before chat inspection", async () => {
     .chats.create();
   await assert.rejects(() => chat.inspect({ prompt: "What is here?" }), /existing project version/);
   await viby.close();
-});
-
-test("Codex adapter uses read-only and workspace-write modes end to end", async () => {
-  const threadOptions: Array<{
-    sandboxMode?: string;
-    workingDirectory?: string;
-    networkAccessEnabled?: boolean;
-    webSearchMode?: string;
-  }> = [];
-  const client = {
-    startThread(options: { sandboxMode?: string; workingDirectory?: string }) {
-      threadOptions.push(options);
-      return {
-        async runStreamed() {
-          if (options.sandboxMode === "workspace-write") {
-            await writeFile(join(options.workingDirectory!, "src.ts"), "export const built = true;\n");
-          }
-          async function* events() {
-            if (options.sandboxMode === "workspace-write") {
-              yield {
-                type: "item.completed" as const,
-                item: {
-                  id: "file-change-1",
-                  type: "file_change" as const,
-                  changes: [{
-                    path: join(options.workingDirectory!, "src.ts"),
-                    kind: "add" as const,
-                  }],
-                },
-              };
-            }
-            yield {
-              type: "item.completed" as const,
-              item: {
-                id: "message-1",
-                type: "agent_message" as const,
-                text: options.sandboxMode === "read-only"
-                  ? "`src.ts` exports `built`."
-                  : "Created the source module.",
-              },
-            };
-            yield {
-              type: "turn.completed" as const,
-              usage: {
-                input_tokens: 4,
-                cached_input_tokens: 1,
-                cache_write_input_tokens: 0,
-                output_tokens: 3,
-                reasoning_output_tokens: 1,
-              },
-            };
-          }
-          return { events: events() };
-        },
-      };
-    },
-  };
-  const agent = codex<"farmjs">({
-    model: "gpt-test",
-    networkAccess: true,
-    webSearch: "live",
-    client: client as never,
-  });
-  const common = {
-    framework: "farmjs" as const,
-    prompt: "Work with the source",
-    messages: [],
-    skills: [],
-    tasks: [],
-  };
-  const tracedFiles: string[] = [];
-  const project = await agent.generate(
-    { ...common, operation: "change", previousFiles: [] },
-    {
-      trace: {
-        async start(type) {
-          return {
-            id: `trace-${type}`,
-            type,
-            async delta() {},
-            async complete(value) {
-              if (
-                type === "file-edit" &&
-                "path" in value &&
-                typeof value.path === "string"
-              ) {
-                tracedFiles.push(value.path);
-              }
-            },
-            async fail() {},
-          };
-        },
-      },
-    },
-  );
-  assert.equal(project.kind, "project");
-  assert.deepEqual(tracedFiles, ["src.ts"]);
-  const inspection = await agent.generate({
-    ...common,
-    operation: "inspect",
-    previousFiles: project.kind === "project" ? project.files : [],
-  });
-  assert.equal(inspection.kind, "message");
-  assert.deepEqual(threadOptions.map((options) => options.sandboxMode), [
-    "workspace-write",
-    "read-only",
-  ]);
-  assert.deepEqual(threadOptions.map((options) => options.networkAccessEnabled), [
-    true,
-    false,
-  ]);
-  assert.deepEqual(threadOptions.map((options) => options.webSearchMode), [
-    "live",
-    "disabled",
-  ]);
-});
-
-test("Codex adapter preserves locked file metadata and names locked paths in its prompt", async () => {
-  let prompt = "";
-  const client = {
-    startThread(options: { workingDirectory?: string }) {
-      return {
-        async runStreamed(nextPrompt: string) {
-          prompt = nextPrompt;
-          await writeFile(
-            join(options.workingDirectory!, "src/app/page.tsx"),
-            "export default function Page() { return <main>Updated</main>; }\n",
-          );
-          async function* events() {
-            yield {
-              type: "item.completed" as const,
-              item: {
-                id: "message-1",
-                type: "agent_message" as const,
-                text: "Updated the page without changing framework configuration.",
-              },
-            };
-            yield {
-              type: "turn.completed" as const,
-              usage: {
-                input_tokens: 4,
-                cached_input_tokens: 0,
-                cache_write_input_tokens: 0,
-                output_tokens: 3,
-                reasoning_output_tokens: 0,
-              },
-            };
-          }
-          return { events: events() };
-        },
-      };
-    },
-  };
-  const agent = codex<"farmjs">({ model: "gpt-test", client: client as never });
-  const config = "export default {};\n";
-  const page = "export default function Page() { return <main>Initial</main>; }\n";
-  const result = await agent.generate({
-    framework: "farmjs",
-    operation: "change",
-    prompt: "Update the page",
-    messages: [],
-    skills: [],
-    tasks: [],
-    previousFiles: [
-      {
-        path: "farm.config.ts",
-        content: config,
-        mediaType: "text/plain",
-        size: Buffer.byteLength(config),
-        checksum: sha256(config),
-        locked: true,
-      },
-      {
-        path: "src/app/page.tsx",
-        content: page,
-        mediaType: "text/plain",
-        size: Buffer.byteLength(page),
-        checksum: sha256(page),
-        locked: false,
-      },
-    ],
-  });
-
-  assert.equal(result.kind, "changes");
-  if (result.kind === "changes") {
-    assert.deepEqual(result.changes.map((change) => (
-      change.type === "move" ? change.from : change.path
-    )), ["src/app/page.tsx"]);
-    assert.equal(result.changes[0]?.type === "write" && result.changes[0].mediaType, "text/plain");
-  }
-  assert.match(prompt, /Locked files \(must remain byte-for-byte unchanged\):\n- farm\.config\.ts/);
 });

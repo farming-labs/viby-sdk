@@ -61,8 +61,6 @@ try {
     "dist/sandbox-conformance.d.ts",
     "dist/generation-engine-conformance.js",
     "dist/generation-engine-conformance.d.ts",
-    "dist/agent-codex.js",
-    "dist/agent-codex.d.ts",
     "dist/artifact-filesystem.js",
     "dist/artifact-filesystem.d.ts",
     "dist/artifact-s3.js",
@@ -205,19 +203,6 @@ try {
         'if (s3({ bucket: "package-smoke", client }).id !== "s3") throw new Error("S3 storage adapter is invalid");',
         'if (s3ArtifactStore !== s3) throw new Error("S3 factory alias is invalid");',
         'if (artifactS3 !== s3) throw new Error("S3 artifact alias is invalid");',
-      ].join("\n"),
-    ],
-    { cwd: consumer },
-  );
-  await execute(
-    node,
-    [
-      "--input-type=module",
-      "--eval",
-      [
-        'import { codex } from "@viby/sdk/agent/codex";',
-        'const agent = codex({ model: "package-smoke" , client: { startThread() { throw new Error("not run"); } } });',
-        'if (agent.kind !== "agent" || agent.identity.model !== "package-smoke") throw new Error("Codex agent export is invalid");',
       ].join("\n"),
     ],
     { cwd: consumer },

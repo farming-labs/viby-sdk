@@ -14,8 +14,7 @@ This inventory describes the current `@viby/sdk` source on `main`. “Shipped”
 | Framework-neutral project target | one `framework` string; typed built-ins, custom values, and automatic immutable framework skills | host selects; package skills cover common frameworks and host skills extend or define custom targets |
 | Runtime-neutral core | `@viby/sdk/core` with Web-standard contracts and helpers; Node and provider adapters use explicit subpaths | portable consumers do not load filesystem, process, crypto, migrations, Docker, or database clients |
 | Model selection | any AI SDK `LanguageModel` | host configures and owns provider credentials |
-| Generation engine | public provider-neutral engine plus conformance suite | host may replace the AI SDK shortcut with any agent, model runtime, or orchestrator |
-| Packaged coding agents | typed `CodingAgent` configuration plus optional `@viby/sdk/agent/codex` adapter | host selects the agent/model and owns credentials; Viby owns durable lifecycle and source history |
+| Generation engine | capability-discovered provider-neutral replacement boundary, stable durable run identity, lifecycle cleanup, and conformance suite | Viby owns the default model harness; advanced hosts may replace execution with another agent, model runtime, or orchestrator while Viby retains durable lifecycle and source history |
 | Categorized skills | skills.sh slugs, `skillRead(...)` directories, inline snapshots, and provider-neutral resolvers | host selects; Viby resolves and snapshots exact content |
 | Categorized storage | `storage.database`, `storage.artifacts`, `storage.connections`, and `storage.secrets`; `DATABASE_URL` remains the PostgreSQL shortcut | host selects each provider-neutral implementation independently |
 | Project environments | chat-scoped development, preview, production, and custom variables; public values plus redacted secret metadata | PostgreSQL is the default metadata store; secret bytes stay in `storage.secrets` and resolve only for runtime operations |
@@ -115,7 +114,7 @@ Product authentication, provider-app registration, public callback routes, event
 
 | Gate | Coverage |
 | --- | --- |
-| Unit suite | durable generation, source, agents, policy, adapters, MCP, SSE, telemetry, cost, delivery, and errors |
+| Unit suite | durable generation, source, generation engines, policy, adapters, MCP, SSE, telemetry, cost, delivery, and errors |
 | PostgreSQL integration | real migrations plus the complete persisted generation/iteration/download lifecycle |
 | Schema upgrade fixture | upgrades a disposable historical `0001`–`0004` database through the current schema and preserves data |
 | Migration immutability | published migration SHA-256 checksums; changes require a new migration |

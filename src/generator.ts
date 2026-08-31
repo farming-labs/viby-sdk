@@ -22,6 +22,7 @@ import type {
   SourceChange,
   ToolCallData,
   ToolCallEffect,
+  UserScope,
   VersionFile,
   VersionEntry,
   GeneratedArtifactKind,
@@ -201,11 +202,19 @@ export interface AgentToolCallWriter {
 
 export interface GeneratorOptions {
   readonly signal?: AbortSignal;
+  /** Stable durable identity for remote harness idempotency, logging, and reconnect metadata. */
+  readonly run?: GenerationEngineRunIdentity;
   readonly onDelta?: (delta: string) => void | Promise<void>;
   readonly trace?: AgentTraceWriter;
   readonly toolCalls?: AgentToolCallWriter;
   /** Durable, provider-neutral steering consumed at safe agent boundaries. */
   readonly steering?: GenerationSteeringChannel;
+}
+
+export interface GenerationEngineRunIdentity extends UserScope {
+  readonly chatId: string;
+  readonly generationId: string;
+  readonly attemptId: string;
 }
 
 export interface GenerationSteeringChannel {

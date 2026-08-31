@@ -1070,7 +1070,6 @@ function generateInput(body: Record<string, unknown>): GenerateInput {
   return {
     prompt: requiredString(body.prompt, "prompt", 100_000),
     ...(body.model === undefined ? {} : { model: requiredString(body.model, "model", 100) }),
-    ...(body.agent === undefined ? {} : { agent: requiredString(body.agent, "agent", 100) }),
     ...(body.engine === undefined ? {} : { engine: requiredString(body.engine, "engine", 100) }),
     ...(body.instructions === undefined
       ? {}

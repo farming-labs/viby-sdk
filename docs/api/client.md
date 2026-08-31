@@ -38,10 +38,10 @@ Configuration failures throw `ConfigurationError` before work begins.
 | Field                      | Type                                    | Behavior                                                                                                                                                          |
 | -------------------------- | --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `framework`                | `FrameworkId`                           | Required single target string. It is persisted with chats and versions and preserved in the generic return type.                                                  |
-| `model`                    | AI SDK `LanguageModel`                  | Convenient default generation path. Mutually exclusive with `engine`.                                                                                             |
+| `model`                    | AI SDK `LanguageModel`                  | Convenient default path through Viby's built-in coding loop. Mutually exclusive with `generation.engine`.                                                         |
 | `models`                   | record of `LanguageModel`               | Optional request-selectable aliases. `default` is reserved for the top-level model.                                                                               |
-| `engine`                   | `GenerationEngine`                      | Provider-neutral replacement for the default agent/model runtime. Mutually exclusive with `model`.                                                                |
-| `engines`                  | record of `GenerationEngine`            | Optional request-selectable engine aliases. `default` is reserved.                                                                                                |
+| `generation.engine`        | `GenerationEngine`                      | Provider-neutral replacement for Viby's built-in model loop. Mutually exclusive with `model`.                                                                     |
+| `generation.engines`       | record of `GenerationEngine`            | Optional request-selectable engine aliases. `default` is reserved.                                                                                                |
 | `storage.database`         | `DatabaseAdapter \| PersistenceAdapter` | Structured durable records. Omit it to open PostgreSQL from `DATABASE_URL`.                                                                                       |
 | `storage.artifacts`        | `ArtifactStore`                         | Binary attachments, project entries, generated outputs, screenshots, and prepared deployment archives.                                                            |
 | `storage.connections`      | `IntegrationConnectionStore`            | Public provider connection metadata and authorization state. PostgreSQL is the default.                                                                           |
@@ -64,32 +64,47 @@ Configuration failures throw `ConfigurationError` before work begins.
 | `telemetry`                | `VibyTelemetry`                         | Provider-neutral spans and metrics. Telemetry failures are fail-open.                                                                                             |
 | `cost`                     | `GenerationCostConfig`                  | Host-owned cost calculator stored in integer micro-units.                                                                                                         |
 
-The deprecated top-level `persistence`, `artifactStore`, `connectionStore`, and `secretStore` aliases
-remain for compatibility. Do not configure an alias and its corresponding `storage.*` field at the
-same time.
+The deprecated top-level `persistence`, `artifactStore`, `connectionStore`, `secretStore`, `engine`,
+and `engines` aliases remain for compatibility. Do not configure an alias and its categorized field
+at the same time.
 
 ## Model or generation engine
 
-Use `model` for the built-in bounded AI SDK agent. Use `engine` when the application supplies its own
-agent, orchestration runtime, or model protocol:
+Use `model` for the built-in bounded Viby coding loop. Use `generation.engine` only when the
+application intentionally replaces that loop with its own harness, orchestration runtime, or model
+protocol:
 
 ```ts
 import { defineGenerationEngine } from "@viby/sdk/core";
 
 const engine = defineGenerationEngine({
-  id: "company-agent",
-  provider: "internal",
-  model: "frontend-v3",
-  async generate(input, options) {
-    return companyAgent.generate(input, options);
+  identity: { provider: "internal", model: "frontend-v3" },
+  capabilities: {
+    operations: ["change", "inspect"],
+    streaming: true,
+    steering: true,
+    traces: true,
+  },
+  async generate(input, context) {
+    return companyHarness.generate(input, context);
+  },
+  async close() {
+    await companyHarness.close();
   },
 });
 
-const viby = createViby({ framework: "farmjs", engine });
+const viby = createViby({
+  framework: "farmjs",
+  generation: { engine },
+});
 ```
 
 Concrete provider and model identity are stored on each attempt. Model or engine objects and their
-credentials are never persisted.
+credentials are never persisted. The engine receives a stable run identity for remote idempotency
+and may return a project, immutable change set, blocking task, inspection message, usage, finish
+reason, and generated artifacts. Viby retains persistence, retries, permissions, validation,
+preview lifecycle, and source commits. See [Generation engines](/docs/api/generation-engines) for
+the complete ownership, capability, lifecycle, and conformance contract.
 
 ### Multiple models from one provider
 

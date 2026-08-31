@@ -77,6 +77,7 @@ export default {
         children: [
           { label: "Reference overview", slug: "api" },
           { label: "Client and configuration", slug: "api/client" },
+          { label: "Generation engines", slug: "api/generation-engines" },
           { label: "Chats and projects", slug: "api/chats" },
           { label: "Generations and events", slug: "api/generations" },
           { label: "Versions and artifacts", slug: "api/versions" },
