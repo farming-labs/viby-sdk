@@ -207,6 +207,8 @@ export interface GeneratorOptions {
   readonly onDelta?: (delta: string) => void | Promise<void>;
   readonly trace?: AgentTraceWriter;
   readonly toolCalls?: AgentToolCallWriter;
+  /** Opaque credential-free engine state scoped to this exact durable attempt. */
+  readonly checkpoint?: GenerationEngineCheckpointChannel;
   /** Durable, provider-neutral steering consumed at safe agent boundaries. */
   readonly steering?: GenerationSteeringChannel;
 }
@@ -215,6 +217,29 @@ export interface GenerationEngineRunIdentity extends UserScope {
   readonly chatId: string;
   readonly generationId: string;
   readonly attemptId: string;
+}
+
+export interface GenerationEngineCheckpointData {
+  readonly generationId: string;
+  readonly attemptId: string;
+  readonly revision: number;
+  readonly cursor: string | null;
+  readonly state: JsonValue;
+  readonly createdAt: Date;
+  readonly updatedAt: Date;
+}
+
+export interface SaveGenerationEngineCheckpointInput {
+  /** Optional provider cursor used to reconnect a remote event stream. */
+  readonly cursor?: string | null;
+  /** Opaque JSON state. Credentials and secret values must never be included. */
+  readonly state: JsonValue;
+}
+
+export interface GenerationEngineCheckpointChannel {
+  load(): Promise<GenerationEngineCheckpointData | null>;
+  save(input: SaveGenerationEngineCheckpointInput): Promise<GenerationEngineCheckpointData>;
+  clear(): Promise<void>;
 }
 
 export interface GenerationSteeringChannel {

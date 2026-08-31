@@ -166,8 +166,13 @@ export function defineRemoteGenerationEngine<Framework extends FrameworkId = Fra
     },
     async generate(generationInput, context = {}) {
       context.signal?.throwIfAborted();
-      const run = normalizeRemoteRun(await input.start(generationInput, context));
-      let cursor: string | null = null;
+      const checkpoint = await context.checkpoint?.load();
+      const checkpointRun = remoteRunFromCheckpoint(checkpoint?.state);
+      const run = checkpointRun ?? normalizeRemoteRun(await input.start(generationInput, context));
+      let cursor: string | null = checkpointRun ? checkpoint?.cursor ?? null : null;
+      if (!checkpointRun) {
+        await context.checkpoint?.save({ cursor, state: remoteRunCheckpoint(run) });
+      }
       const cursors = new Set<string>();
       try {
         for await (const event of input.events(run, {
@@ -185,6 +190,7 @@ export function defineRemoteGenerationEngine<Framework extends FrameworkId = Fra
           }
           cursors.add(normalizedCursor);
           cursor = normalizedCursor;
+          await context.checkpoint?.save({ cursor, state: remoteRunCheckpoint(run) });
           if (event.type === "output.delta") {
             if (typeof event.delta !== "string") {
               throw new RemoteGenerationEngineError(
@@ -197,13 +203,17 @@ export function defineRemoteGenerationEngine<Framework extends FrameworkId = Fra
             continue;
           }
           if (event.type === "failed") {
+            await context.checkpoint?.clear();
             throw new RemoteGenerationEngineError(
               run.id,
               normalizeRemoteError(event.error),
               event.retryable ?? false,
             );
           }
-          if (event.type === "completed") return event.output;
+          if (event.type === "completed") {
+            await context.checkpoint?.clear();
+            return event.output;
+          }
           throw new RemoteGenerationEngineError(
             run.id,
             "Remote generation engine emitted an unknown event.",
@@ -218,6 +228,7 @@ export function defineRemoteGenerationEngine<Framework extends FrameworkId = Fra
       } catch (error) {
         if (context.signal?.aborted && input.cancel) {
           await input.cancel(run, context).catch(() => undefined);
+          await context.checkpoint?.clear().catch(() => undefined);
         }
         throw error;
       }
@@ -321,4 +332,33 @@ function normalizeRemoteError(error: string): string {
     return "Remote generation engine failed without an error message.";
   }
   return error.trim().slice(0, 8_000);
+}
+
+function remoteRunCheckpoint(run: RemoteGenerationEngineRun): JsonValue {
+  return {
+    kind: "viby.remote-generation",
+    run: {
+      id: run.id,
+      ...(run.metadata === undefined ? {} : { metadata: run.metadata }),
+    },
+  };
+}
+
+function remoteRunFromCheckpoint(value: JsonValue | undefined): RemoteGenerationEngineRun | null {
+  if (!value || Array.isArray(value) || typeof value !== "object") return null;
+  if (value.kind !== "viby.remote-generation") return null;
+  const run = value.run;
+  if (!run || Array.isArray(run) || typeof run !== "object" || typeof run.id !== "string") {
+    return null;
+  }
+  const metadata = run.metadata;
+  if (metadata !== undefined && (!metadata || Array.isArray(metadata) || typeof metadata !== "object")) {
+    return null;
+  }
+  return normalizeRemoteRun({
+    id: run.id,
+    ...(metadata === undefined
+      ? {}
+      : { metadata: metadata as Readonly<Record<string, JsonValue>> }),
+  });
 }

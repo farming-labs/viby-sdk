@@ -60,6 +60,10 @@ import type { DeploymentHistoryStore } from "./deployment-history.js";
 import type { PreviewSessionStore } from "./preview.js";
 import type { ToolSourceRegistryStore } from "./tool-source-registry.js";
 import type { ToolSourceAuthorizationStore } from "./tool-source-authorization.js";
+import type {
+  GenerationEngineCheckpointData,
+  SaveGenerationEngineCheckpointInput,
+} from "./generator.js";
 
 export interface ImportChatRecord<Framework extends FrameworkId = FrameworkId> {
   readonly chatId: string;
@@ -221,6 +225,19 @@ export interface CreateGenerationSteeringRecord {
 }
 
 export interface ConsumeGenerationSteeringRecord {
+  readonly generationId: string;
+  readonly attemptId: string;
+  readonly leaseToken: string;
+}
+
+export interface SaveGenerationEngineCheckpointRecord
+extends SaveGenerationEngineCheckpointInput {
+  readonly generationId: string;
+  readonly attemptId: string;
+  readonly leaseToken: string;
+}
+
+export interface ClearGenerationEngineCheckpointRecord {
   readonly generationId: string;
   readonly attemptId: string;
   readonly leaseToken: string;
@@ -497,6 +514,19 @@ extends DeploymentHistoryStore, PreviewSessionStore, ToolSourceRegistryStore, To
     scope: UserScope,
     input: ConsumeGenerationSteeringRecord,
   ): Promise<GenerationSteeringData[]>;
+  getGenerationEngineCheckpoint(
+    scope: UserScope,
+    generationId: string,
+    attemptId: string,
+  ): Promise<GenerationEngineCheckpointData | null>;
+  saveGenerationEngineCheckpoint(
+    scope: UserScope,
+    input: SaveGenerationEngineCheckpointRecord,
+  ): Promise<GenerationEngineCheckpointData>;
+  clearGenerationEngineCheckpoint(
+    scope: UserScope,
+    input: ClearGenerationEngineCheckpointRecord,
+  ): Promise<void>;
   startGenerationAttempt(
     scope: UserScope,
     generationId: string,

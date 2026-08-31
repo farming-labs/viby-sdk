@@ -113,6 +113,7 @@ try {
     "migrations/0032_generation_quality_events.sql",
     "migrations/0033_generation_steering.sql",
     "migrations/0034_generation_workspace_events.sql",
+    "migrations/0035_generation_engine_checkpoints.sql",
   ]) {
     assert.ok(paths.has(path), `packed package is missing ${path}`);
   }

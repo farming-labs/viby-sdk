@@ -32,5 +32,6 @@
   "0031_tool_source_authorization.sql": "b5629926216c6d411a0bdef621a78a54789d46a1a598801e436a290aa5de7e8e",
   "0032_generation_quality_events.sql": "8d2086c45f2e4c5219033b55964bb3984f979089c4745c6699b8ba552c6a7358",
   "0033_generation_steering.sql": "8170fc38f7dbedcb2aea9ddb0a355827b8ec8fa559dafb5e855d5e9a4050c1c2",
-  "0034_generation_workspace_events.sql": "d0485799de40289f8dd769e120526eb53d415c72f6722b7681d07f55526aad40"
+  "0034_generation_workspace_events.sql": "d0485799de40289f8dd769e120526eb53d415c72f6722b7681d07f55526aad40",
+  "0035_generation_engine_checkpoints.sql": "d7cce9741a6f02ba2cfc76b3fd9b75cc7a0e9f0a15e915231c7239d03910b7c1"
 }

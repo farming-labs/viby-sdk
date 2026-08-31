@@ -104,6 +104,7 @@ test("passes the provider-neutral persistence conformance suite", async () => {
     "chat-metadata",
     "durable-generation",
     "generation-steering",
+    "generation-checkpoints",
     "event-cursors",
     "source-history",
     "preview-sessions",
