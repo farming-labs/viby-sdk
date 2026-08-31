@@ -194,6 +194,36 @@ The suite validates identity, advertised operations, output shape, usage, finish
 cancellation, and steering when advertised. Provider live tests should additionally verify remote
 authentication, reconnect behavior, timeouts, and cleanup.
 
+## Remote runs
+
+`defineRemoteGenerationEngine()` adapts an asynchronous provider run to the same validated output
+contract. It is useful when a harness executes behind another service rather than inside the Viby
+worker process:
+
+```ts
+const engine = defineRemoteGenerationEngine({
+  identity: { provider: "acme-runtime", model: "frontend-agent-v4" },
+  async start(input, context) {
+    return acme.start({
+      input,
+      idempotencyKey: context.run!.attemptId,
+    });
+  },
+  events(run, { after, signal }) {
+    return acme.events(run.id, { after, signal });
+  },
+  async cancel(run) {
+    await acme.cancel(run.id);
+  },
+});
+```
+
+`start` must be idempotent for the durable Viby attempt ID: a reclaimed worker may invoke it again
+and must receive the same external run. `events` emits unique opaque cursors and terminates with
+exactly one `completed` or `failed` event. Output deltas flow through the ordinary durable Viby
+event cursor. Aborting the attempt invokes `cancel` when supplied. Remote metadata must remain
+credential-free.
+
 ## From prompt to live URL
 
 A generation engine produces source; it does not produce the preview URL directly. The complete
@@ -211,10 +241,9 @@ work, but no live preview URL is promised.
 
 ## Deliberate follow-up boundaries
 
-The current contract covers synchronous embedded calls and durable Viby workers. Broader harness
+The current contract covers embedded calls, remote event streams, and durable Viby workers. Broader harness
 support should be added as small provider-neutral contracts rather than provider switches:
 
-- remote execution handles with `start`, `poll`, `reconnect`, and `cancel`;
 - opaque engine checkpoints for crash-safe continuation inside one attempt;
 - structured delegation records for parent/child agent work;
 - engine health and capability negotiation before a worker claims an attempt;

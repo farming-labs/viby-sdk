@@ -5,7 +5,7 @@ import type {
   GeneratorOutput,
   ProjectGenerator,
 } from "./generator.js";
-import type { FrameworkId, GenerationOperation } from "./types.js";
+import type { FrameworkId, GenerationOperation, JsonValue } from "./types.js";
 
 export type GenerationEngineInput<Framework extends FrameworkId = FrameworkId> =
   GeneratorInput<Framework>;
@@ -76,6 +76,61 @@ export interface DefineGenerationEngineInput<Framework extends FrameworkId = Fra
   close?(): Promise<void>;
 }
 
+/** Opaque provider-owned identity for one idempotently started remote run. */
+export interface RemoteGenerationEngineRun {
+  /** Stable external identity returned for the same Viby attempt ID. */
+  readonly id: string;
+  /** Credential-free provider metadata safe to retain in a host process. */
+  readonly metadata?: Readonly<Record<string, JsonValue>>;
+}
+
+export interface RemoteGenerationEngineEventBase {
+  /** Opaque resumable provider cursor. Cursors must be non-empty and unique within a run. */
+  readonly cursor: string;
+}
+
+export type RemoteGenerationEngineEvent =
+  | (RemoteGenerationEngineEventBase & {
+      readonly type: "output.delta";
+      readonly delta: string;
+    })
+  | (RemoteGenerationEngineEventBase & {
+      readonly type: "completed";
+      readonly output: GeneratorOutput;
+    })
+  | (RemoteGenerationEngineEventBase & {
+      readonly type: "failed";
+      readonly error: string;
+      readonly retryable?: boolean;
+    });
+
+export interface RemoteGenerationEngineEventInput {
+  /** Resume strictly after this provider cursor. `null` starts from the beginning. */
+  readonly after: string | null;
+  readonly signal?: AbortSignal;
+}
+
+/**
+ * Remote harness boundary adapted to the ordinary GenerationEngine contract.
+ *
+ * `start` must be idempotent for `context.run.attemptId`. A reclaimed worker may
+ * call it again for the same attempt and must receive the same external run.
+ */
+export interface DefineRemoteGenerationEngineInput<Framework extends FrameworkId = FrameworkId> {
+  readonly identity: GenerationEngineIdentity;
+  readonly capabilities?: GenerationEngineCapabilitiesInput;
+  start(
+    input: GeneratorInput<Framework>,
+    context: GeneratorOptions,
+  ): Promise<RemoteGenerationEngineRun>;
+  events(
+    run: RemoteGenerationEngineRun,
+    input: RemoteGenerationEngineEventInput,
+  ): AsyncIterable<RemoteGenerationEngineEvent>;
+  cancel?(run: RemoteGenerationEngineRun, context: GeneratorOptions): Promise<void>;
+  close?(): Promise<void>;
+}
+
 /** Defines and validates a custom generation engine without coupling it to an AI SDK model. */
 export function defineGenerationEngine<Framework extends FrameworkId = FrameworkId>(
   input: DefineGenerationEngineInput<Framework>,
@@ -91,6 +146,96 @@ export function defineGenerationEngine<Framework extends FrameworkId = Framework
     generate: input.generate.bind(input),
     ...(typeof input.close === "function" ? { close: input.close.bind(input) } : {}),
   });
+}
+
+/** Adapts an asynchronous remote run into Viby's validated generation result boundary. */
+export function defineRemoteGenerationEngine<Framework extends FrameworkId = FrameworkId>(
+  input: DefineRemoteGenerationEngineInput<Framework>,
+): GenerationEngine<Framework> {
+  if (typeof input?.start !== "function" || typeof input?.events !== "function") {
+    throw new ConfigurationError("A remote generation engine must implement start and events.");
+  }
+  if (input.cancel !== undefined && typeof input.cancel !== "function") {
+    throw new ConfigurationError("A remote generation engine cancel hook must be a function.");
+  }
+  return defineGenerationEngine({
+    identity: input.identity,
+    capabilities: {
+      ...input.capabilities,
+      streaming: input.capabilities?.streaming ?? true,
+    },
+    async generate(generationInput, context = {}) {
+      context.signal?.throwIfAborted();
+      const run = normalizeRemoteRun(await input.start(generationInput, context));
+      let cursor: string | null = null;
+      const cursors = new Set<string>();
+      try {
+        for await (const event of input.events(run, {
+          after: cursor,
+          ...(context.signal ? { signal: context.signal } : {}),
+        })) {
+          context.signal?.throwIfAborted();
+          const normalizedCursor = normalizeRemoteCursor(event?.cursor);
+          if (cursors.has(normalizedCursor)) {
+            throw new RemoteGenerationEngineError(
+              run.id,
+              `Remote generation engine repeated cursor ${normalizedCursor}.`,
+              false,
+            );
+          }
+          cursors.add(normalizedCursor);
+          cursor = normalizedCursor;
+          if (event.type === "output.delta") {
+            if (typeof event.delta !== "string") {
+              throw new RemoteGenerationEngineError(
+                run.id,
+                "Remote generation output deltas must be strings.",
+                false,
+              );
+            }
+            await context.onDelta?.(event.delta);
+            continue;
+          }
+          if (event.type === "failed") {
+            throw new RemoteGenerationEngineError(
+              run.id,
+              normalizeRemoteError(event.error),
+              event.retryable ?? false,
+            );
+          }
+          if (event.type === "completed") return event.output;
+          throw new RemoteGenerationEngineError(
+            run.id,
+            "Remote generation engine emitted an unknown event.",
+            false,
+          );
+        }
+        throw new RemoteGenerationEngineError(
+          run.id,
+          "Remote generation engine ended without a completed or failed event.",
+          true,
+        );
+      } catch (error) {
+        if (context.signal?.aborted && input.cancel) {
+          await input.cancel(run, context).catch(() => undefined);
+        }
+        throw error;
+      }
+    },
+    ...(typeof input.close === "function" ? { close: input.close } : {}),
+  });
+}
+
+export class RemoteGenerationEngineError extends Error {
+  override readonly name = "RemoteGenerationEngineError";
+
+  constructor(
+    readonly runId: string,
+    message: string,
+    readonly retryable: boolean,
+  ) {
+    super(message);
+  }
 }
 
 export function normalizeGenerationEngineCapabilities(
@@ -149,4 +294,31 @@ function booleanCapability(value: boolean | undefined, name: string): boolean {
     throw new ConfigurationError(`Generation engine capability ${name} must be a boolean.`);
   }
   return value ?? false;
+}
+
+function normalizeRemoteRun(run: RemoteGenerationEngineRun): RemoteGenerationEngineRun {
+  if (!run || typeof run !== "object") {
+    throw new ConfigurationError("A remote generation engine must return a run handle.");
+  }
+  const id = normalizeIdentityPart(run.id, "remote run id");
+  if (run.metadata !== undefined && (!run.metadata || typeof run.metadata !== "object")) {
+    throw new ConfigurationError("Remote generation engine metadata must be an object.");
+  }
+  return Object.freeze({ id, ...(run.metadata === undefined ? {} : { metadata: run.metadata }) });
+}
+
+function normalizeRemoteCursor(cursor: string): string {
+  if (typeof cursor !== "string" || cursor.trim().length === 0 || cursor.length > 2_000) {
+    throw new ConfigurationError(
+      "Remote generation engine cursors must contain between 1 and 2000 characters.",
+    );
+  }
+  return cursor;
+}
+
+function normalizeRemoteError(error: string): string {
+  if (typeof error !== "string" || error.trim().length === 0) {
+    return "Remote generation engine failed without an error message.";
+  }
+  return error.trim().slice(0, 8_000);
 }

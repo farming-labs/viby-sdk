@@ -4,6 +4,8 @@ import type { LanguageModelUsage } from "ai";
 import { createVibyWithDependencies } from "../src/client.js";
 import {
   defineGenerationEngine,
+  defineRemoteGenerationEngine,
+  RemoteGenerationEngineError,
   type GenerationEngine,
 } from "../src/generation-engine.js";
 import {
@@ -189,5 +191,74 @@ test("validates custom generation engine identities", () => {
       async generate() { return projectOutput(); },
     }),
     /operations cannot be empty/,
+  );
+});
+
+test("adapts a resumable remote run into the generation engine contract", async () => {
+  const deltas: string[] = [];
+  const starts: unknown[] = [];
+  const after: Array<string | null> = [];
+  const engine = defineRemoteGenerationEngine<"farm">({
+    identity: { provider: "remote-runtime", model: "frontend-agent-v2" },
+    async start(_input, context) {
+      starts.push(context.run);
+      return { id: "remote-run-1", metadata: { region: "iad1" } };
+    },
+    async *events(_run, input) {
+      after.push(input.after);
+      yield { type: "output.delta", cursor: "event-1", delta: "Designing" };
+      yield { type: "completed", cursor: "event-2", output: projectOutput() };
+    },
+  });
+  const run = {
+    tenantId: "tenant",
+    userId: "user",
+    chatId: "chat",
+    generationId: "generation",
+    attemptId: "attempt",
+  };
+  const output = await engine.generate(input, {
+    run,
+    onDelta(delta) { deltas.push(delta); },
+  });
+
+  assert.equal(output.kind, "project");
+  assert.deepEqual(starts, [run]);
+  assert.deepEqual(after, [null]);
+  assert.deepEqual(deltas, ["Designing"]);
+  assert.equal(engine.capabilities?.streaming, true);
+});
+
+test("rejects invalid remote event streams and cancels an aborted run", async () => {
+  const controller = new AbortController();
+  let cancelled = 0;
+  const engine = defineRemoteGenerationEngine<"farm">({
+    identity: { provider: "remote-runtime", model: "broken-agent" },
+    async start() { return { id: "remote-run-2" }; },
+    async *events() {
+      yield { type: "output.delta", cursor: "same", delta: "one" } as const;
+      controller.abort();
+      yield { type: "output.delta", cursor: "same", delta: "two" } as const;
+    },
+    async cancel() { cancelled += 1; },
+  });
+
+  await assert.rejects(
+    () => engine.generate(input, { signal: controller.signal }),
+    (error: unknown) => error instanceof DOMException && error.name === "AbortError",
+  );
+  assert.equal(cancelled, 1);
+
+  const repeated = defineRemoteGenerationEngine<"farm">({
+    identity: { provider: "remote-runtime", model: "repeated-cursor" },
+    async start() { return { id: "remote-run-3" }; },
+    async *events() {
+      yield { type: "output.delta", cursor: "same", delta: "one" } as const;
+      yield { type: "completed", cursor: "same", output: projectOutput() } as const;
+    },
+  });
+  await assert.rejects(
+    () => repeated.generate(input),
+    (error: unknown) => error instanceof RemoteGenerationEngineError && !error.retryable,
   );
 });
