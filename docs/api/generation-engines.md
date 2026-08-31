@@ -194,6 +194,35 @@ The suite validates identity, advertised operations, output shape, usage, finish
 cancellation, and steering when advertised. Provider live tests should additionally verify remote
 authentication, reconnect behavior, timeouts, and cleanup.
 
+## Authorized engine tools
+
+An engine that advertises `toolCalls: true` receives `context.tools` when the host configured tool
+sources. The descriptors are provider-neutral JSON Schema values, so a harness can translate them
+to its native tool format:
+
+```ts
+const engine = defineGenerationEngine({
+  identity: { provider: "acme-runtime", model: "coding-agent-v2" },
+  capabilities: { toolCalls: true },
+  async generate(input, context) {
+    const tools = await context.tools?.list();
+    const result = await context.tools?.invoke({
+      name: "github__create_issue",
+      providerCallId: "provider-call-42",
+      arguments: { title: "Generated follow-up" },
+    });
+    return finishProject(input, result);
+  },
+});
+```
+
+Viby applies the host's tool selection and policy before invocation. Read-only inspection exposes
+only read tools. Approved calls use the existing durable tool-call record, redaction, exact
+idempotency key, and attempt ownership. An approval-required call automatically pauses the
+generation with a typed permission task; after the host resolves it, the next attempt sees that
+decision and can safely invoke the exact proposed action. Credentials remain inside tool-source
+adapter closures and are never placed in an engine descriptor or result.
+
 ## Remote runs
 
 `defineRemoteGenerationEngine()` adapts an asynchronous provider run to the same validated output
@@ -266,8 +295,7 @@ support should be added as small provider-neutral contracts rather than provider
 
 - structured delegation records for parent/child agent work;
 - engine health and capability negotiation before a worker claims an attempt;
-- engine-reported cost estimates and provider request IDs;
-- host-authorized tool catalog projection into an engine-native tool format.
+- engine-reported cost estimates and provider request IDs.
 
 These are roadmap boundaries, not shipped behavior. They can be added without moving chat,
 version, preview, or storage ownership out of Viby.

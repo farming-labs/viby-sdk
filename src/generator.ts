@@ -209,6 +209,8 @@ export interface GeneratorOptions {
   readonly toolCalls?: AgentToolCallWriter;
   /** Opaque credential-free engine state scoped to this exact durable attempt. */
   readonly checkpoint?: GenerationEngineCheckpointChannel;
+  /** Host-selected, policy-authorized tools projected without provider-specific types. */
+  readonly tools?: GenerationEngineToolChannel;
   /** Durable, provider-neutral steering consumed at safe agent boundaries. */
   readonly steering?: GenerationSteeringChannel;
 }
@@ -240,6 +242,30 @@ export interface GenerationEngineCheckpointChannel {
   load(): Promise<GenerationEngineCheckpointData | null>;
   save(input: SaveGenerationEngineCheckpointInput): Promise<GenerationEngineCheckpointData>;
   clear(): Promise<void>;
+}
+
+export interface GenerationEngineToolDescriptor {
+  /** Stable engine-facing key in `source__tool` form. */
+  readonly name: string;
+  readonly source: string;
+  readonly tool: string;
+  readonly title?: string;
+  readonly description: string;
+  readonly inputSchema: Readonly<Record<string, JsonValue>>;
+  readonly effect: ToolCallEffect;
+  readonly permissions: readonly string[];
+}
+
+export interface InvokeGenerationEngineToolInput {
+  readonly name: string;
+  /** Provider-native call identity retained in the durable tool record. */
+  readonly providerCallId: string;
+  readonly arguments: Readonly<Record<string, JsonValue>>;
+}
+
+export interface GenerationEngineToolChannel {
+  list(): Promise<readonly GenerationEngineToolDescriptor[]>;
+  invoke(input: InvokeGenerationEngineToolInput): Promise<JsonValue>;
 }
 
 export interface GenerationSteeringChannel {
