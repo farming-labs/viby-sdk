@@ -92,6 +92,10 @@
       "types": "./dist/testing.d.ts",
       "import": "./dist/testing.js"
     },
+    "./schema": {
+      "types": "./dist/api-schema.d.ts",
+      "import": "./dist/api-schema.js"
+    },
     "./artifact/filesystem": {
       "types": "./dist/artifact-filesystem.d.ts",
       "import": "./dist/artifact-filesystem.js"

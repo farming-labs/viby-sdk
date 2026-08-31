@@ -47,6 +47,8 @@ try {
     "dist/health.d.ts",
     "dist/doctor.js",
     "dist/doctor.d.ts",
+    "dist/api-schema.js",
+    "dist/api-schema.d.ts",
     "dist/mcp.js",
     "dist/mcp.d.ts",
     "dist/sandbox-e2b.js",
@@ -185,6 +187,20 @@ try {
         'if (skillRead("./skills").source !== "file") throw new Error("skillRead export is invalid");',
         'if (!builtInFrameworks.includes("farmjs") || builtInFrameworks.includes("farm")) throw new Error("framework IDs are invalid");',
         'if (frameworkSkill("nextjs").files[0].path !== "SKILL.md") throw new Error("framework skill is invalid");',
+      ].join("\n"),
+    ],
+    { cwd: consumer },
+  );
+  await execute(
+    node,
+    [
+      "--input-type=module",
+      "--eval",
+      [
+        'import { createVibyOpenApiDocument, VIBY_API_OPERATIONS, vibyJsonSchemas } from "@viby/sdk/schema";',
+        'if (createVibyOpenApiDocument().openapi !== "3.1.0") throw new Error("OpenAPI builder is invalid");',
+        'if (VIBY_API_OPERATIONS.length < 80) throw new Error("operation inventory is incomplete");',
+        'if (!vibyJsonSchemas.$defs.Generation) throw new Error("JSON Schema bundle is invalid");',
       ].join("\n"),
     ],
     { cwd: consumer },

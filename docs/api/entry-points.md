@@ -19,6 +19,7 @@ filesystem, process, PostgreSQL, Docker, browser-driver, or provider SDK depende
 | `@viby/sdk/node/skills` | Local filesystem and skills.sh/GitHub skill resolution. |
 | `@viby/sdk/package.json` | Package metadata for tooling. |
 | `@viby/sdk/testing` | Aggregated provider-neutral conformance suites and deterministic scripted generation fixtures for host tests. |
+| `@viby/sdk/schema` | Portable OpenAPI 3.1 builder, complete Web API operation inventory, and JSON Schema Draft 2020-12 bundle. |
 
 The portable core uses Web `Request`, `Response`, `Headers`, `ReadableStream`, `AbortSignal`,
 `Uint8Array`, text encoding, structured cloning, and Web Crypto-compatible shapes.
