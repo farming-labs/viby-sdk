@@ -18,6 +18,7 @@ export interface PersistenceConformanceReport {
     | "chat-metadata"
     | "durable-generation"
     | "message-feedback"
+    | "message-ordering"
     | "generation-steering"
     | "generation-checkpoints"
     | "event-cursors"
@@ -167,6 +168,16 @@ export async function verifyPersistenceAdapter(
       "Message feedback was not isolated by owner.",
     );
     checks.push("message-feedback");
+
+    const orderedMessages = await chat.listMessages();
+    for (let index = 1; index < orderedMessages.items.length; index += 1) {
+      assertConformance(
+        orderedMessages.items[index]!.createdAt.getTime() >
+          orderedMessages.items[index - 1]!.createdAt.getTime(),
+        "Message timestamps were not strictly increasing in durable conversation order.",
+      );
+    }
+    checks.push("message-ordering");
 
     const steeringGenerationId = crypto.randomUUID();
     const steeringAttemptId = crypto.randomUUID();

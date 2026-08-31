@@ -5657,12 +5657,31 @@ async function insertMessage(
   },
 ): Promise<void> {
   const messageId = input.id ?? createId();
+  const [chat] = await sql<{ id: string }[]>`
+    SELECT id FROM viby.chats
+    WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+      AND id = ${input.chatId} AND deleted_at IS NULL
+    FOR UPDATE
+  `;
+  if (!chat) throw new NotFoundError("Chat");
   await sql`
     INSERT INTO viby.messages (
-      id, tenant_id, user_id, chat_id, generation_id, role, content, finish_reason
+      id, tenant_id, user_id, chat_id, generation_id, role, content, finish_reason, created_at
     ) VALUES (
       ${messageId}, ${scope.tenantId}, ${scope.userId}, ${input.chatId},
-      ${input.generationId}, ${input.role}, ${input.content}, ${input.finishReason ?? null}
+      ${input.generationId}, ${input.role}, ${input.content}, ${input.finishReason ?? null},
+      GREATEST(
+        clock_timestamp(),
+        COALESCE(
+          (
+            SELECT date_trunc('milliseconds', MAX(created_at)) + INTERVAL '1 millisecond'
+            FROM viby.messages
+            WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+              AND chat_id = ${input.chatId}
+          ),
+          clock_timestamp()
+        )
+      )
     )
   `;
   for (const [position, part] of input.parts.entries()) {
