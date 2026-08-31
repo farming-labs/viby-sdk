@@ -65,7 +65,11 @@ export type {
 export { DownloadArtifact } from "./download.js";
 export { AgentWorkspace } from "./agent-workspace.js";
 export { AgentProjectGenerator } from "./agent-runner.js";
-export { defineGenerationEngine } from "./generation-engine.js";
+export {
+  defineGenerationEngine,
+  defineRemoteGenerationEngine,
+  RemoteGenerationEngineError,
+} from "./generation-engine.js";
 export { normalizeGenerationQuality, verifyGenerationQuality } from "./generation-quality.js";
 export type * from "./generation-quality.js";
 export { createVibyApi, vibyApi } from "./api-host.js";
@@ -277,6 +281,7 @@ export type {
 } from "./artifact-store.js";
 export type {
   DefineGenerationEngineInput,
+  DefineRemoteGenerationEngineInput,
   GenerationEngine,
   GenerationEngineCapabilities,
   GenerationEngineCapabilitiesInput,
@@ -284,6 +289,10 @@ export type {
   GenerationEngineIdentity,
   GenerationEngineInput,
   GenerationEngineOutput,
+  RemoteGenerationEngineEvent,
+  RemoteGenerationEngineEventBase,
+  RemoteGenerationEngineEventInput,
+  RemoteGenerationEngineRun,
 } from "./generation-engine.js";
 export type {
   AgentTraceError,
