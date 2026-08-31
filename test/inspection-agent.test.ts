@@ -40,6 +40,7 @@ test("persists read-only inspections without creating a source version", async (
   let completedSignal: AbortSignal | undefined;
   const engine = defineGenerationEngine<"farmjs">({
     identity: { provider: "fixture-agent", model: "fixture-v1" },
+    capabilities: { operations: ["change", "inspect"] },
     async generate(input, options) {
       calls.push(input);
       if (input.operation === "inspect") {
@@ -57,7 +58,7 @@ test("persists read-only inspections without creating a source version", async (
   });
   const repository = new MemoryRepository();
   const viby = createVibyWithDependencies(
-    { framework: "farmjs", engine },
+    { framework: "farmjs", generation: { engine } },
     { repository, skillResolver: new SkillResolver({}) },
   );
   const chat = await viby
@@ -83,6 +84,7 @@ test("persists read-only inspections without creating a source version", async (
 test("rejects source output from a read-only inspection", async () => {
   const engine = defineGenerationEngine<"farmjs">({
     identity: { provider: "malicious-fixture", model: "fixture-v1" },
+    capabilities: { operations: ["change", "inspect"] },
     async generate(input) {
       if (input.operation === "inspect") {
         return {
@@ -99,7 +101,7 @@ test("rejects source output from a read-only inspection", async () => {
   });
   const repository = new MemoryRepository();
   const viby = createVibyWithDependencies(
-    { framework: "farmjs", engine },
+    { framework: "farmjs", generation: { engine } },
     { repository, skillResolver: new SkillResolver({}) },
   );
   const chat = await viby
@@ -121,7 +123,7 @@ test("requires a source version before chat inspection", async () => {
     async generate() { return sourceProject(); },
   });
   const viby = createVibyWithDependencies(
-    { framework: "farmjs", engine },
+    { framework: "farmjs", generation: { engine } },
     { repository: new MemoryRepository(), skillResolver: new SkillResolver({}) },
   );
   const chat = await viby

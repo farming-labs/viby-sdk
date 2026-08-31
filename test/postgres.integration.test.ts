@@ -292,6 +292,7 @@ test("persists a durable generation, iteration, events, and download in Postgres
     assert.deepEqual(outcome.generation.configuration, {
       model: "default",
       operation: "change",
+      executor: "model",
       instructions: "Use a compact product layout.",
       skills: {
         core: [frameworkSkill("farmjs")],
@@ -358,6 +359,7 @@ test("persists a durable generation, iteration, events, and download in Postgres
     assert.deepEqual(inspectionOutcome.generation.configuration, {
       model: "default",
       operation: "inspect",
+      executor: "model",
       instructions: null,
       skills: { core: [frameworkSkill("farmjs")] },
       metadata: { test: "postgres-inspection" },

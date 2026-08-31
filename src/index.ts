@@ -278,7 +278,12 @@ export type {
 export type {
   DefineGenerationEngineInput,
   GenerationEngine,
+  GenerationEngineCapabilities,
+  GenerationEngineCapabilitiesInput,
+  GenerationEngineContext,
   GenerationEngineIdentity,
+  GenerationEngineInput,
+  GenerationEngineOutput,
 } from "./generation-engine.js";
 export type {
   AgentTraceError,
@@ -292,6 +297,7 @@ export type {
   GeneratorInput,
   GeneratorMessageOutput,
   GeneratorOptions,
+  GenerationEngineRunIdentity,
   GenerationSteeringChannel,
   GenerationSteeringUpdate,
   GeneratorOutput,

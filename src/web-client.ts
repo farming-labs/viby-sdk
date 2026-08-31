@@ -135,6 +135,7 @@ export interface VibyWebAttachmentInput {
 export interface VibyWebGenerationInput {
   readonly prompt: string;
   readonly model?: string;
+  readonly engine?: string;
   readonly instructions?: string;
   readonly skills?: SkillGroups;
   readonly metadata?: ChatMetadata;
@@ -152,6 +153,7 @@ export interface VibyWebCreateChatInput {
   readonly metadata?: ChatMetadata;
   readonly prompt?: string;
   readonly model?: string;
+  readonly engine?: string;
   readonly instructions?: string;
   readonly skills?: SkillGroups;
   readonly attachments?: readonly VibyWebAttachmentInput[];

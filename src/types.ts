@@ -123,16 +123,8 @@ interface VibyBaseConfig<Framework extends FrameworkId = FrameworkId> {
   readonly sandboxPolicy?: SandboxCommandPolicy;
   /** Optional durable sandbox-backed preview lifecycle. */
   readonly preview?: PreviewConfig;
-  readonly agent?: AgentRunnerConfig;
   /** Host-configured tools selected and authorized independently for every chat. */
   readonly tools?: ToolSourcesConfig<Framework>;
-  readonly generation?: {
-    readonly execution?: "embedded" | "worker";
-    /** Optional sandbox checks that must pass before an immutable version is committed. */
-    readonly quality?: GenerationQualityConfig;
-    /** Optional eager, reusable workspace lifecycle for generated projects. */
-    readonly workspace?: GenerationWorkspaceConfig;
-  };
   readonly retention?: {
     readonly deletedChatsMs?: number | null;
   };
@@ -143,21 +135,59 @@ interface VibyBaseConfig<Framework extends FrameworkId = FrameworkId> {
   readonly cost?: GenerationCostConfig;
 }
 
+/** Generation execution, validation, and optional harness replacement. */
+export interface VibyGenerationConfig<Framework extends FrameworkId = FrameworkId> {
+  readonly execution?: "embedded" | "worker";
+  /** Execution limits used by the built-in AI SDK agent runner. */
+  readonly limits?: AgentRunnerConfig;
+  /** Replace Viby's built-in model loop with a provider-neutral generation engine. */
+  readonly engine?: GenerationEngine<Framework>;
+  /** Request-selectable engine aliases. `default` is reserved for `engine`. */
+  readonly engines?: Readonly<Record<string, GenerationEngine<Framework>>>;
+  /** Optional sandbox checks that must pass before an immutable version is committed. */
+  readonly quality?: GenerationQualityConfig;
+  /** Optional eager, reusable workspace lifecycle for generated projects. */
+  readonly workspace?: GenerationWorkspaceConfig;
+}
+
+type ModelGenerationConfig<Framework extends FrameworkId> = VibyGenerationConfig<Framework> & {
+  readonly engine?: never;
+  readonly engines?: never;
+};
+
+type EngineGenerationConfig<Framework extends FrameworkId> = VibyGenerationConfig<Framework> & {
+  readonly engine: GenerationEngine<Framework>;
+};
+
 export type VibyConfig<Framework extends FrameworkId = FrameworkId> = VibyBaseConfig<Framework> &
   (
     | {
         /** Convenient AI SDK shortcut. */
         readonly model: LanguageModel;
         readonly models?: Readonly<Record<string, LanguageModel>>;
+        /** @deprecated Use generation.limits. */
+        readonly agent?: AgentRunnerConfig;
+        readonly generation?: ModelGenerationConfig<Framework>;
         readonly engine?: never;
         readonly engines?: never;
       }
     | {
-        /** Advanced provider-neutral agent, model-runtime, or orchestration boundary. */
-        readonly engine: GenerationEngine<Framework>;
-        readonly engines?: Readonly<Record<string, GenerationEngine<Framework>>>;
+        /** Preferred provider-neutral replacement for Viby’s built-in model loop. */
+        readonly generation: EngineGenerationConfig<Framework>;
+        readonly agent?: never;
         readonly model?: never;
         readonly models?: never;
+        readonly engine?: never;
+        readonly engines?: never;
+      }
+    | {
+        /** @deprecated Move engine and engines under generation. */
+        readonly engine: GenerationEngine<Framework>;
+        readonly engines?: Readonly<Record<string, GenerationEngine<Framework>>>;
+        readonly agent?: never;
+        readonly model?: never;
+        readonly models?: never;
+        readonly generation?: ModelGenerationConfig<Framework>;
       }
   );
 
@@ -327,6 +357,8 @@ export interface GenerateInput {
   readonly prompt: string;
   /** Stable alias from `VibyConfig.models`. Omit to use the default `model`. */
   readonly model?: string;
+  /** Stable alias from `VibyConfig.generation.engines`. */
+  readonly engine?: string;
   readonly instructions?: string;
   readonly skills?: SkillGroups;
   readonly metadata?: ChatMetadata;
@@ -651,6 +683,8 @@ export interface GenerationConfigurationData {
   readonly model: string;
   /** Durable operation kind. Missing on records created before read-only inspection shipped. */
   readonly operation?: GenerationOperation;
+  /** The configured execution surface used to resolve the durable alias. */
+  readonly executor?: "model" | "engine";
   readonly instructions: string | null;
   readonly skills: SkillGroups;
   readonly metadata: ChatMetadata;

@@ -44,13 +44,15 @@ export const viby = createViby({
   framework: "farmjs",
   model: openai("your-model-id"),
   retention: { deletedChatsMs: 30 * 24 * 60 * 60 * 1_000 },
-  agent: {
-    maxSteps: 20,
-    maxDurationMs: 300_000,
-    maxTokens: 200_000,
-    maxCommands: 20,
-    commandTimeoutMs: 60_000,
-    sandboxPorts: [3000],
+  generation: {
+    limits: {
+      maxSteps: 20,
+      maxDurationMs: 300_000,
+      maxTokens: 200_000,
+      maxCommands: 20,
+      commandTimeoutMs: 60_000,
+      sandboxPorts: [3000],
+    },
   },
   skills: {
     core: [skillRead("./skills/company")],
@@ -60,6 +62,11 @@ export const viby = createViby({
   },
 });
 ```
+
+The model path uses Viby's built-in, bounded coding loop. It is the default for products that want
+Viby to own planning, workspace tools, policy, traces, quality repair, and source commits. Advanced
+hosts can replace only that intelligence loop through `generation.engine`; storage, durability,
+permissions, previews, integrations, and immutable history remain Viby-owned.
 
 ```ts
 const answer = await version.inspect({
@@ -483,16 +490,45 @@ import { createViby, defineGenerationEngine } from "@viby/sdk";
 
 const engine = defineGenerationEngine({
   identity: { provider: "company-runtime", model: "frontend-agent-v1" },
+  capabilities: {
+    operations: ["change", "inspect"],
+    streaming: true,
+    steering: true,
+    traces: true,
+  },
   async generate(input, { signal, trace, toolCalls } = {}) {
     signal?.throwIfAborted();
     return companyAgent.generate({ input, signal, trace, toolCalls });
   },
+  async close() {
+    await companyAgent.close();
+  },
 });
 
-export const viby = createViby({ framework: "farmjs", engine });
+export const viby = createViby({
+  framework: "farmjs",
+  generation: {
+    engine,
+    engines: {
+      fast: fastCompanyEngine,
+    },
+  },
+});
 ```
 
-Use `engines` for request-selectable aliases just as the AI SDK shortcut uses `models`. Generation engine authors can run `verifyGenerationEngine` from `@viby/sdk/generation/conformance` against caller-owned deterministic scenarios. The suite validates identity, portable outputs, durable steering consumption, and cancellation without assuming a provider or orchestration design.
+Use `generation.engines` for request-selectable aliases and pass `engine: "fast"` on a generation.
+The former top-level `engine` and `engines` fields remain deprecated compatibility aliases.
+
+An engine receives normalized prompt, immutable source, messages, resolved skills, tasks,
+attachments, optional sandbox access, and a stable run identity containing tenant, user, chat,
+generation, and attempt IDs. It returns exactly one typed project, change set, blocking task, or
+read-only message. Capability discovery prevents Viby from sending inspection or steering work to a
+harness that did not advertise support. `viby.close()` closes every distinct configured engine once.
+
+Generation engine authors can run `verifyGenerationEngine` from
+`@viby/sdk/generation/conformance` against caller-owned deterministic scenarios. The suite validates
+identity, declared operation support, portable outputs, capability-gated steering, and cancellation
+without assuming a provider or orchestration design.
 
 Remote skill strings use the stable skills.sh `owner/repository/slug` form. Local skills can point at a directory containing `SKILL.md` or at the file itself. Remote skills are resolved through the authenticated skills.sh API when Vercel OIDC is available, with public GitHub repositories as the portable fallback. Set `GITHUB_TOKEN` only when you need higher GitHub API limits.
 

@@ -13,6 +13,8 @@ stable public shape; behavior sections explain durability, scope, side effects, 
 
 - [Client and configuration](/docs/api/client) — `createViby`, `VibyConfig`, user scope, workers,
   storage, models, skills, and shutdown.
+- [Generation engines](/docs/api/generation-engines) — replace the built-in model harness with a
+  capability-discovered agent, runtime, or orchestrator while preserving Viby durability.
 - [Chats and projects](/docs/api/chats) — create, import, search, update, delete, restore, messages,
   project environments, and history.
 - [Generations and events](/docs/api/generations) — start, stream, wait, cancel, retry, resume,

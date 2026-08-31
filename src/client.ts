@@ -93,7 +93,12 @@ import type {
   GenerationSteeringUpdate,
   ProjectGenerator,
 } from "./generator.js";
-import { normalizeGenerationEngineIdentity, type GenerationEngine } from "./generation-engine.js";
+import {
+  normalizeGenerationEngineCapabilities,
+  normalizeGenerationEngineIdentity,
+  type GenerationEngineCapabilities,
+  type GenerationEngine,
+} from "./generation-engine.js";
 import {
   normalizeGenerationQuality,
   verifyGenerationQuality,
@@ -330,8 +335,10 @@ interface ClientDependencies<Framework extends FrameworkId> {
 
 interface GenerationModelBinding<Framework extends FrameworkId> {
   readonly alias: string;
+  readonly executor: "model" | "engine";
   readonly provider: string;
   readonly id: string;
+  readonly capabilities: GenerationEngineCapabilities;
   readonly generator: ProjectGenerator<Framework>;
 }
 
@@ -343,17 +350,31 @@ class GenerationModelRegistry<Framework extends FrameworkId> {
     dependencies: ClientDependencies<Framework>,
     tools: ToolSourcesRuntimeConfig<Framework> | undefined,
   ) {
-    if (config.engine) {
-      this.#addEngine("default", config.engine);
-      for (const [alias, engine] of Object.entries(config.engines ?? {})) {
+    const nestedEngine = config.generation?.engine;
+    const legacyEngine = "engine" in config ? config.engine : undefined;
+    if (nestedEngine && legacyEngine) {
+      throw new ConfigurationError(
+        "Configure generation.engine or the deprecated top-level engine, not both.",
+      );
+    }
+    const engine = nestedEngine ?? legacyEngine;
+    const engines = config.generation?.engines ?? ("engines" in config ? config.engines : undefined);
+    if (engine) {
+      this.#addEngine("default", engine);
+      for (const [alias, configuredEngine] of Object.entries(engines ?? {})) {
         if (alias === "default") {
-          throw new ConfigurationError("engines.default is reserved for the top-level engine.");
+          throw new ConfigurationError(
+            "generation.engines.default is reserved for generation.engine.",
+          );
         }
-        this.#addEngine(alias, engine);
+        this.#addEngine(alias, configuredEngine);
       }
       return;
     }
 
+    if (!("model" in config) || !config.model) {
+      throw new ConfigurationError("Configure model or generation.engine.");
+    }
     const defaultGenerator =
       dependencies.generator ?? new AgentProjectGenerator(config.model, config.agent, tools);
     this.#addModel("default", config.model, defaultGenerator);
@@ -404,7 +425,13 @@ class GenerationModelRegistry<Framework extends FrameworkId> {
       throw new ConfigurationError(`Generation model alias is duplicated: ${normalized}`);
     }
     const identity = languageModelIdentity(model);
-    this.#bindings.set(normalized, { alias: normalized, ...identity, generator });
+    this.#bindings.set(normalized, {
+      alias: normalized,
+      executor: "model",
+      ...identity,
+      capabilities: BUILT_IN_GENERATION_CAPABILITIES,
+      generator,
+    });
   }
 
   #addEngine(alias: string, engine: GenerationEngine<Framework>): void {
@@ -418,12 +445,33 @@ class GenerationModelRegistry<Framework extends FrameworkId> {
     }
     this.#bindings.set(normalized, {
       alias: normalized,
+      executor: "engine",
       provider: identity.provider,
       id: identity.model,
+      capabilities: normalizeGenerationEngineCapabilities(engine.capabilities),
       generator: engine,
     });
   }
+
+  async close(): Promise<void> {
+    const engines = new Set<GenerationEngine<Framework>>();
+    for (const binding of this.#bindings.values()) {
+      if (binding.executor === "engine") {
+        engines.add(binding.generator as GenerationEngine<Framework>);
+      }
+    }
+    await Promise.all([...engines].map((engine) => engine.close?.()));
+  }
 }
+
+const BUILT_IN_GENERATION_CAPABILITIES: GenerationEngineCapabilities = Object.freeze({
+  operations: Object.freeze(["change", "inspect"] as const),
+  streaming: true,
+  steering: true,
+  traces: true,
+  toolCalls: true,
+  artifacts: true,
+});
 
 export function createViby<const Framework extends FrameworkId>(
   config: VibyConfig<Framework>,
@@ -667,7 +715,9 @@ class VibyClient<Framework extends FrameworkId> implements Viby<Framework> {
       previews: this.#previews,
       quality,
       workspace,
-      agent: normalizeAgentRunnerConfig(config.agent),
+      agent: normalizeAgentRunnerConfig(
+        config.generation?.limits ?? ("model" in config ? config.agent : undefined),
+      ),
       telemetry: normalizeTelemetry(config.telemetry),
       cost: normalizeCostConfig(config.cost),
     });
@@ -712,9 +762,17 @@ class VibyClient<Framework extends FrameworkId> implements Viby<Framework> {
     const preview = await Promise.allSettled([
       preserveSandboxes ? Promise.resolve() : this.#previews.stopAll(),
     ]);
-    const [sandboxes, toolSources, toolSourceRegistry, environment, integrations, repository] =
-      await Promise.allSettled([
+    const [
+      sandboxes,
+      models,
+      toolSources,
+      toolSourceRegistry,
+      environment,
+      integrations,
+      repository,
+    ] = await Promise.allSettled([
         preserveSandboxes ? Promise.resolve() : this.#sandboxes.stopAll(),
+        this.#models.close(),
         Promise.all(this.#toolSources.map((source) => source.close?.())),
         this.#toolSourceRegistry.close(),
         this.#environment?.close(),
@@ -723,6 +781,7 @@ class VibyClient<Framework extends FrameworkId> implements Viby<Framework> {
       ]);
     if (preview[0]?.status === "rejected") throw preview[0].reason;
     if (sandboxes.status === "rejected") throw sandboxes.reason;
+    if (models.status === "rejected") throw models.reason;
     if (toolSources.status === "rejected") throw toolSources.reason;
     if (toolSourceRegistry.status === "rejected") throw toolSourceRegistry.reason;
     if (environment.status === "rejected") throw environment.reason;
@@ -2999,7 +3058,28 @@ function normalizeGenerationConfiguration<Framework extends FrameworkId>(
   models: GenerationModelRegistry<Framework>,
   operation: GenerationOperation,
 ): { configuration: GenerationConfigurationData; model: GenerationModelBinding<Framework> } {
-  const model = models.resolve(input.model);
+  const selectors = [input.model, input.engine].filter(
+    (value): value is string => value !== undefined,
+  );
+  if (selectors.length > 1) {
+    throw new ConfigurationError("Choose only one generation selector: model or engine.");
+  }
+  const requestedExecutor = input.engine !== undefined
+    ? "engine"
+    : input.model !== undefined
+      ? "model"
+      : null;
+  const model = models.resolve(selectors[0]);
+  if (requestedExecutor && model.executor !== requestedExecutor) {
+    throw new ConfigurationError(
+      `Generation ${requestedExecutor} alias ${model.alias} resolves to a configured ${model.executor}.`,
+    );
+  }
+  if (!model.capabilities.operations.includes(operation)) {
+    throw new ConfigurationError(
+      `Generation engine ${model.alias} does not support ${operation} operations.`,
+    );
+  }
   const instructions = input.instructions?.trim() || null;
   if (instructions && instructions.length > 50_000) {
     throw new ConfigurationError("Generation instructions cannot exceed 50,000 characters.");
@@ -3013,6 +3093,7 @@ function normalizeGenerationConfiguration<Framework extends FrameworkId>(
     configuration: {
       model: model.alias,
       operation,
+      executor: model.executor,
       instructions,
       skills,
       metadata: normalizeChatMetadata(input.metadata),
@@ -3437,6 +3518,12 @@ class GenerationRunner<Framework extends FrameworkId> {
           },
           {
             signal,
+            run: {
+              ...scope,
+              chatId: chat.id,
+              generationId,
+              attemptId,
+            },
             trace,
             toolCalls,
             steering: new DurableGenerationSteering(
