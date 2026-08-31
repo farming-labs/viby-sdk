@@ -18,7 +18,7 @@ This inventory describes the current `@viby/sdk` source on `main`. “Shipped”
 | Categorized skills | skills.sh slugs, `skillRead(...)` directories, inline snapshots, and provider-neutral resolvers | host selects; Viby resolves and snapshots exact content |
 | Categorized storage | `storage.database`, `storage.artifacts`, `storage.connections`, and `storage.secrets`; `DATABASE_URL` remains the PostgreSQL shortcut | host selects each provider-neutral implementation independently |
 | Project environments | chat-scoped development, preview, production, and custom variables; public values plus redacted secret metadata | PostgreSQL is the default metadata store; secret bytes stay in `storage.secrets` and resolve only for runtime operations |
-| Structured database | provider-neutral database factory or raw `PersistenceAdapter` plus conformance suite | host may provide another durable implementation and owns its credentials and migrations |
+| Structured database | provider-neutral database factory or raw `PersistenceAdapter`, PostgreSQL default, embedded SQLite adapter, and conformance suite | host selects its durable implementation; SQLite targets local/single-host use while PostgreSQL remains recommended for multi-service production |
 | Binary artifact storage | provider-neutral `ArtifactStore`, conformance suite, filesystem reference adapter, and S3-compatible adapter for AWS S3, R2, MinIO, and compatible stores | host selects storage and owns its credentials; the database keeps metadata and opaque references |
 | Tenant isolation | `viby.forUser({ tenantId, userId })` | host authenticates; every Viby query enforces both IDs |
 | Viby API key | none | no managed Viby control plane is required |

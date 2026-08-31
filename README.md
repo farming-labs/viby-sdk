@@ -290,6 +290,24 @@ const viby = createViby({
 
 `storage.database` stores structured records: chats, messages, generations, versions, events, histories, and artifact references. `storage.artifacts` stores binary bytes: attachments, generated media, project entries, screenshots, and deployment output. The `DATABASE_URL` shortcut still selects PostgreSQL when `storage.database` is omitted.
 
+For local, desktop, example, and test hosts on Node.js 22.5+, the explicit SQLite adapter provides
+the complete persistence contract without a database service:
+
+```ts
+import { sqlite } from "@viby/sdk/storage/sqlite";
+
+const viby = createViby({
+  framework: "farmjs",
+  model,
+  storage: { database: sqlite({ path: ".viby/viby.sqlite" }) },
+});
+```
+
+The embedded adapter stores one transactionally versioned snapshot, supports WAL and concurrent
+handle refresh, and passes the shared persistence conformance suite. It owns embedded binary bytes
+and therefore rejects a separate `storage.artifacts`. PostgreSQL remains recommended for
+multi-service production and external artifact storage. See [SQLite](docs/storage/sqlite.md).
+
 Custom database implementations can use `defineDatabaseAdapter({ id, open })`; `open({ artifacts })` receives the independently selected artifact store. The durable interface remains exported as `PersistenceAdapter` from `@viby/sdk/persistence`, and its conformance suite remains at `@viby/sdk/persistence/conformance`. The former `persistence`, `artifactStore`, `connectionStore`, and `secretStore` fields remain deprecated compatibility aliases for one release line; configuring an alias and its corresponding `storage.*` category together is rejected.
 
 For production object storage, the S3-compatible adapter fits the same category and works with AWS S3, Cloudflare R2, MinIO, and compatible services:

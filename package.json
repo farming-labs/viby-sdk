@@ -120,6 +120,10 @@
       "types": "./dist/persistence-postgres.d.ts",
       "import": "./dist/persistence-postgres.js"
     },
+    "./persistence/sqlite": {
+      "types": "./dist/persistence-sqlite.d.ts",
+      "import": "./dist/persistence-sqlite.js"
+    },
     "./persistence/conformance": {
       "types": "./dist/persistence-conformance.d.ts",
       "import": "./dist/persistence-conformance.js"
@@ -127,6 +131,10 @@
     "./storage/postgres": {
       "types": "./dist/storage-postgres.d.ts",
       "import": "./dist/storage-postgres.js"
+    },
+    "./storage/sqlite": {
+      "types": "./dist/persistence-sqlite.d.ts",
+      "import": "./dist/persistence-sqlite.js"
     },
     "./browser/conformance": {
       "types": "./dist/browser-conformance.d.ts",
