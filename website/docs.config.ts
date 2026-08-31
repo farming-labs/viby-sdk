@@ -90,6 +90,7 @@ export default {
           { label: "Package entry points", slug: "api/entry-points" },
           { label: "Complete v1 contract", slug: "api/v1" },
           { label: "Web API host", slug: "api-host" },
+          { label: "OpenAPI and JSON Schema", slug: "api/schemas" },
         ],
       },
       {

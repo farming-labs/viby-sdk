@@ -7,6 +7,9 @@ description: "Mount Viby as a framework-neutral Web Request/Response API with a 
 
 `createVibyApi()` turns a configured Viby client into one framework-neutral `fetch(Request): Promise<Response>` handler. It uses only Web `Request`, `Response`, `Headers`, `ReadableStream`, URL, and crypto-compatible SDK surfaces, so the same host can be mounted in Node, Bun, Workers, or a framework route.
 
+Use [`@viby/sdk/schema`](/docs/api/schemas) to generate an OpenAPI 3.1 document for the same
+`basePath`, consume Draft 2020-12 schemas, or inspect the stable operation inventory.
+
 ```ts
 const api = createVibyApi({
   viby,

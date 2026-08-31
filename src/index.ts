@@ -74,6 +74,7 @@ export { GenerationEngineToolApprovalRequiredError } from "./generation-engine-t
 export * from "./message-feedback.js";
 export * from "./health.js";
 export * from "./doctor.js";
+export * from "./api-schema.js";
 export { normalizeGenerationQuality, verifyGenerationQuality } from "./generation-quality.js";
 export type * from "./generation-quality.js";
 export { createVibyApi, vibyApi } from "./api-host.js";

@@ -2,7 +2,7 @@
 
 `@viby/sdk` is a framework-agnostic TypeScript SDK for building persistent, skill-guided vibe coding products. Your application owns authentication, model credentials, and Postgres. Viby owns chats, durable generation attempts and events, typed tasks, immutable source versions, iteration, and source downloads.
 
-See the [shipped capability inventory](./docs/capabilities.md) for the complete core, adapter, integration, verification, and boundary matrix. The [Web API host guide](./docs/api-host.md) documents the ready-to-mount Request/Response surface.
+See the [shipped capability inventory](./docs/capabilities.md) for the complete core, adapter, integration, verification, and boundary matrix. The [Web API host guide](./docs/api-host.md) documents the ready-to-mount Request/Response surface. Generate an OpenAPI 3.1 document or consume frozen Draft 2020-12 schemas from the portable [`@viby/sdk/schema`](./docs/api/schemas.md) entry point.
 
 ## Demo
 
