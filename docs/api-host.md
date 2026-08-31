@@ -25,6 +25,39 @@ const api = createVibyApi({
 
 The host owns authentication. Returning `null` produces a JSON `401`; returning a `Response` preserves a product-specific redirect or denial. Every resource route after authentication uses the returned tenant/user scope. Integration and tool-source callbacks are deliberately public because their hashed, single-use authorization state establishes the original scope.
 
+Authentication establishes identity. Optional `authorize` and `admit` hooks then apply
+product policy to the exact typed operation before Viby reads or mutates durable state:
+
+```ts
+const api = createVibyApi({
+  viby,
+  authenticate,
+  authorize: ({ operationId, params, scope }) => {
+    if (operationId === "deleteChat") {
+      return permissions.canDelete(scope, params.chatId);
+    }
+  },
+  admit: async ({ operationId, scope }) => {
+    if (operationId !== "startGeneration" && operationId !== "startIteration") return;
+    const capacity = await quotas.reserveGeneration(scope);
+    if (capacity.accepted) return true;
+    return Response.json(
+      { error: "Generation limit reached.", code: "generation_limit" },
+      { status: 429, headers: { "Retry-After": String(capacity.retryAfterSeconds) } },
+    );
+  },
+});
+```
+
+Both hooks receive the authenticated `scope`, scoped `viby` client, original `request`, the frozen
+operation descriptor and typed `operationId`, plus decoded path `params`. Return `true` or nothing
+to continue, `false` for the default denial (`403 forbidden` from authorization, `429
+admission_denied` from admission), or a complete `Response` for product-specific roles, plans,
+billing, concurrency, or rate-limit behavior. Authorization always runs before admission. Public
+provider callbacks bypass all three host hooks and continue to authenticate with single-use state.
+Hooks should inspect request metadata; clone the request before reading a body so the route can
+still consume it.
+
 An authenticator that creates or rotates a cookie can return the scope and response headers together.
 The headers are applied to both successful route responses and SDK error responses, and are never
 persisted or exposed to generation code:
@@ -88,7 +121,7 @@ const tools = await viby.toolSources.create({
 await viby.chats.toolSources.set(chat.id, [tools.toolSource.id]);
 ```
 
-Pass `after` to `generations.stream()` when restoring a cursor from application storage. The client sends it as `Last-Event-ID`, updates it after each event, and reconnects a prematurely closed retryable stream without replaying acknowledged events. File, ZIP, and attachment bytes remain `Uint8Array` values in application code; the client owns their base64 HTTP encoding. Authentication remains host-owned: use `headers`, a header factory, or a custom `fetch` implementation to attach the product session.
+Pass `after` to `generations.stream()` when restoring a cursor from application storage. The client sends it as `Last-Event-ID`, updates it after each event, and reconnects a prematurely closed retryable stream without replaying acknowledged events. File, ZIP, and attachment bytes remain `Uint8Array` values in application code; the client owns their base64 HTTP encoding. Authentication, authorization, and admission remain host-owned: use `headers`, a header factory, or a custom `fetch` implementation to attach the product session.
 
 ## Routes
 
