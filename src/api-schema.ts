@@ -127,7 +127,10 @@ const operations = [
   operation("previewVersionAlias", "post", "/versions/{versionId}/preview", "Start a version preview", "Compatibility", 201, "json", undefined, false, true),
 ] as const satisfies readonly VibyApiOperation[];
 
-export const VIBY_API_OPERATIONS: readonly VibyApiOperation[] = deepFreeze([...operations]);
+export type VibyApiOperationId = (typeof operations)[number]["id"];
+export type VibyApiKnownOperation = (typeof operations)[number];
+
+export const VIBY_API_OPERATIONS: readonly VibyApiKnownOperation[] = deepFreeze([...operations]);
 
 const identifier = { type: "string", minLength: 1, maxLength: 200 };
 const jsonObject = { type: "object", additionalProperties: true };
@@ -300,8 +303,8 @@ export function createVibyOpenApiDocument(
   return deepFreeze(document);
 }
 
-function operation(
-  id: string,
+function operation<const Id extends string>(
+  id: Id,
   method: VibyApiMethod,
   path: string,
   summary: string,
@@ -311,7 +314,7 @@ function operation(
   requestSchema?: VibyJsonSchemaName,
   isPublic = false,
   deprecated = false,
-): VibyApiOperation {
+): VibyApiOperation & { readonly id: Id } {
   return {
     id, method, path, summary, tag, status, response,
     ...(requestSchema ? { requestSchema } : {}),

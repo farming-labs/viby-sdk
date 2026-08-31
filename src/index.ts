@@ -90,6 +90,9 @@ export type {
   VibyApiAuthenticatedSession,
   VibyApiAuthenticationResult,
   VibyApiOptions,
+  VibyApiOperationContext,
+  VibyApiPolicy,
+  VibyApiPolicyDecision,
   VibyApiPreviewContext,
   VibyApiPreviewResult,
 } from "./api-host.js";

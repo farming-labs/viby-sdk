@@ -34,6 +34,11 @@ import type {
 import type { PreviewEventListener, PreviewSessionData } from "./preview.js";
 import type { ToolSourceRegistrationStatus } from "./tool-source-registry.js";
 import type { SubmitMessageFeedbackInput } from "./message-feedback.js";
+import {
+  VIBY_API_OPERATIONS,
+  type VibyApiKnownOperation,
+  type VibyApiOperationId,
+} from "./api-schema.js";
 
 const DEFAULT_BASE_PATH = "/api/viby";
 const DEFAULT_BODY_BYTES = 10 * 1024 * 1024;
@@ -56,6 +61,22 @@ export type VibyApiAuthenticationResult =
   | Response
   | null;
 
+export interface VibyApiOperationContext<Framework extends FrameworkId = FrameworkId> {
+  readonly request: Request;
+  readonly scope: UserScope;
+  readonly viby: ScopedViby<Framework>;
+  readonly operation: VibyApiKnownOperation;
+  readonly operationId: VibyApiOperationId;
+  readonly params: Readonly<Record<string, string>>;
+}
+
+/** `false` uses Viby's default denial; a Response lets the host define status, headers, and body. */
+export type VibyApiPolicyDecision = boolean | Response | void;
+
+export type VibyApiPolicy<Framework extends FrameworkId = FrameworkId> = (
+  context: VibyApiOperationContext<Framework>,
+) => VibyApiPolicyDecision | Promise<VibyApiPolicyDecision>;
+
 export interface VibyApiPreviewContext<Framework extends FrameworkId = FrameworkId> {
   readonly request: Request;
   readonly scope: UserScope;
@@ -72,6 +93,10 @@ export interface VibyApiOptions<Framework extends FrameworkId = FrameworkId> {
   readonly authenticate: (
     request: Request,
   ) => VibyApiAuthenticationResult | Promise<VibyApiAuthenticationResult>;
+  /** Decide whether the authenticated scope may invoke the matched API operation. */
+  readonly authorize?: VibyApiPolicy<Framework>;
+  /** Apply quota, concurrency, billing, or rate-limit admission before an effect runs. */
+  readonly admit?: VibyApiPolicy<Framework>;
   /** Defaults to /api/viby. */
   readonly basePath?: string;
   readonly maxBodyBytes?: number;
@@ -127,6 +152,43 @@ export function createVibyApi<Framework extends FrameworkId>(
         const session = authenticationSession(authenticated);
         authenticationHeaders = session.headers;
         const user = options.viby.forUser(session.scope);
+        const matched = matchApiOperation(request, path);
+        if (matched) {
+          const context: VibyApiOperationContext<Framework> = {
+            request,
+            scope: session.scope,
+            viby: user,
+            operation: matched.operation,
+            operationId: matched.operation.id,
+            params: matched.params,
+          };
+          const authorization = await options.authorize?.(context);
+          const authorizationResponse = policyResponse(
+            authorization,
+            403,
+            "Authorization denied.",
+            "forbidden",
+          );
+          if (authorizationResponse) {
+            return withHeaders(
+              withHeaders(authorizationResponse, authenticationHeaders),
+              options.headers,
+            );
+          }
+          const admission = await options.admit?.(context);
+          const admissionResponse = policyResponse(
+            admission,
+            429,
+            "Request admission denied.",
+            "admission_denied",
+          );
+          if (admissionResponse) {
+            return withHeaders(
+              withHeaders(admissionResponse, authenticationHeaders),
+              options.headers,
+            );
+          }
+        }
         const response = await route(
           request,
           path,
@@ -151,6 +213,40 @@ function authenticationSession(
 ): VibyApiAuthenticatedSession {
   if ("scope" in result) return result;
   return { scope: result };
+}
+
+function policyResponse(
+  decision: VibyApiPolicyDecision | undefined,
+  status: number,
+  error: string,
+  code: string,
+) {
+  if (decision instanceof Response) return decision;
+  return decision === false ? json({ error, code }, status) : null;
+}
+
+function matchApiOperation(request: Request, path: string) {
+  const method = request.method.toLowerCase();
+  const segments = path.split("/").filter(Boolean).map(decodeSegment);
+  for (const operation of VIBY_API_OPERATIONS) {
+    if (operation.public || operation.method !== method) continue;
+    const template = operation.path.split("/").filter(Boolean);
+    if (template.length !== segments.length) continue;
+    const params: Record<string, string> = {};
+    let matches = true;
+    for (let index = 0; index < template.length; index += 1) {
+      const expected = template[index]!;
+      const actual = segments[index]!;
+      const parameter = /^\{([^}]+)\}$/.exec(expected)?.[1];
+      if (parameter) params[parameter] = actual;
+      else if (expected !== actual) {
+        matches = false;
+        break;
+      }
+    }
+    if (matches) return { operation, params: Object.freeze(params) };
+  }
+  return null;
 }
 
 async function route<Framework extends FrameworkId>(

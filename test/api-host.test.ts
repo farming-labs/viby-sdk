@@ -436,8 +436,81 @@ test("adds authenticated session headers to successful and failed API responses"
   }
 });
 
+test("applies typed authorization and admission before matched operation effects", async () => {
+  const calls: string[] = [];
+  let listCalls = 0;
+  const api = createVibyApi({
+    viby: {
+      framework: "farm",
+      integrations: { callback: async () => ({}) },
+      toolSources: { callback: async () => ({}) },
+      forUser: () => ({
+        chats: {
+          list: async () => {
+            listCalls += 1;
+            return { items: [], nextCursor: null };
+          },
+        },
+      }),
+      worker: () => {
+        throw new Error("not used");
+      },
+      close: async () => {},
+    } as never,
+    authenticate: () => ({ scope, headers: { "X-Session": "active" } }),
+    authorize: (context) => {
+      calls.push(`authorize:${context.operationId}`);
+      assert.equal(context.operation.id, context.operationId);
+      assert.deepEqual(context.scope, scope);
+      if (context.operationId === "getChat") {
+        assert.equal(context.params.chatId, "chat-denied");
+        return false;
+      }
+    },
+    admit: (context) => {
+      calls.push(`admit:${context.operationId}`);
+      if (context.operationId === "createChat") {
+        return new Response(JSON.stringify({ error: "Plan limit reached." }), {
+          status: 402,
+          headers: { "Content-Type": "application/json", "Retry-After": "60" },
+        });
+      }
+    },
+  });
+
+  const listed = await api.fetch(new Request("https://app.example/api/viby/chats"));
+  assert.equal(listed.status, 200);
+  assert.equal(listed.headers.get("x-session"), "active");
+  assert.equal(listCalls, 1);
+
+  const forbidden = await api.fetch(
+    new Request("https://app.example/api/viby/chats/chat-denied"),
+  );
+  assert.equal(forbidden.status, 403);
+  assert.deepEqual(await forbidden.json(), {
+    error: "Authorization denied.",
+    code: "forbidden",
+  });
+
+  const planLimited = await api.fetch(
+    new Request("https://app.example/api/viby/chats", { method: "POST" }),
+  );
+  assert.equal(planLimited.status, 402);
+  assert.equal(planLimited.headers.get("retry-after"), "60");
+  assert.deepEqual(await planLimited.json(), { error: "Plan limit reached." });
+  assert.equal(listCalls, 1);
+  assert.deepEqual(calls, [
+    "authorize:listChats",
+    "admit:listChats",
+    "authorize:getChat",
+    "authorize:createChat",
+    "admit:createChat",
+  ]);
+});
+
 test("handles public integration callbacks before product authentication", async () => {
   let authCalls = 0;
+  let policyCalls = 0;
   const api = createVibyApi({
     viby: {
       framework: "farm",
@@ -455,6 +528,12 @@ test("handles public integration callbacks before product authentication", async
       authCalls += 1;
       return null;
     },
+    authorize: () => {
+      policyCalls += 1;
+    },
+    admit: () => {
+      policyCalls += 1;
+    },
   });
   const response = await api.fetch(new Request(
     "https://app.example/api/viby/integrations/callback?provider=vercel",
@@ -462,6 +541,7 @@ test("handles public integration callbacks before product authentication", async
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), { provider: "vercel", connected: true });
   assert.equal(authCalls, 0);
+  assert.equal(policyCalls, 0);
 });
 
 test("hosts integration discovery, repository workflows, deployment workflows, and history", async () => {
