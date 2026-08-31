@@ -19,6 +19,7 @@ import type { ToolSourcesConfig, ToolSourceProposedAction } from "./tool-source.
 import type { ToolSourceRegistrationSnapshot } from "./tool-source-registry.js";
 import type { PreviewConfig } from "./preview.js";
 import type { FrameworkId } from "./frameworks.js";
+import type { VibyHealthConfig } from "./health.js";
 
 export type { BuiltInFrameworkId, FrameworkId } from "./frameworks.js";
 
@@ -133,6 +134,8 @@ interface VibyBaseConfig<Framework extends FrameworkId = FrameworkId> {
   };
   readonly telemetry?: VibyTelemetry;
   readonly cost?: GenerationCostConfig;
+  /** Product readiness probes. Probe failures never expose their underlying exception text. */
+  readonly health?: VibyHealthConfig;
 }
 
 /** Generation execution, validation, and optional harness replacement. */

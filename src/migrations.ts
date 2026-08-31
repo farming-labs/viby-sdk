@@ -66,6 +66,35 @@ export async function getMigrationStatus(
   }
 }
 
+/** Inspect migration state without creating schemas, tables, or applying migrations. */
+export async function inspectMigrationStatus(
+  databaseUrl = process.env.DATABASE_URL,
+): Promise<MigrationStatus[]> {
+  if (!databaseUrl) {
+    throw new ConfigurationError("DATABASE_URL is required to inspect Viby migrations.");
+  }
+  const sql = postgres(databaseUrl, { max: 1, onnotice: () => undefined });
+  try {
+    const migrations = await readMigrations();
+    const [table] = await sql<{ relation: string | null }[]>`
+      SELECT to_regclass('viby.schema_migrations')::text AS relation
+    `;
+    if (!table?.relation) {
+      return migrations.map((migration) => ({ version: migration.version, applied: false }));
+    }
+    const appliedRows = await sql<{ version: string }[]>`
+      SELECT version FROM viby.schema_migrations
+    `;
+    const applied = new Set(appliedRows.map((row) => row.version));
+    return migrations.map((migration) => ({
+      version: migration.version,
+      applied: applied.has(migration.version),
+    }));
+  } finally {
+    await sql.end({ timeout: 5 });
+  }
+}
+
 async function ensureMigrationTable(sql: ReturnType<typeof postgres>): Promise<void> {
   await sql`CREATE SCHEMA IF NOT EXISTS viby`;
   await sql`

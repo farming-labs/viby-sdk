@@ -153,6 +153,7 @@ import {
 } from "./cursors.js";
 import { normalizeDesignEvaluation } from "./design-evaluations.js";
 import { normalizeChatMetadata } from "./metadata.js";
+import { VibyHealthService, type VibyHealth } from "./health.js";
 import {
   normalizeMessageFeedback,
   type MessageFeedbackData,
@@ -303,6 +304,7 @@ export interface Viby<Framework extends FrameworkId = FrameworkId> {
   readonly framework: Framework;
   readonly integrations: IntegrationClient;
   readonly toolSources: ToolSourceAuthorizationCallbacks;
+  readonly health: VibyHealth;
   forUser(scope: UserScope): ScopedViby<Framework>;
   worker(options: GenerationWorkerOptions): GenerationWorker<Framework>;
   close(options?: VibyCloseOptions): Promise<void>;
@@ -648,6 +650,7 @@ class VibyClient<Framework extends FrameworkId> implements Viby<Framework> {
   readonly framework: Framework;
   readonly integrations: IntegrationClient;
   readonly toolSources: ToolSourceAuthorizationCallbacks;
+  readonly health: VibyHealth;
   readonly #repository: Repository;
   readonly #environment: EnvironmentManager | undefined;
   readonly #skillResolver: SkillResolver;
@@ -698,6 +701,23 @@ class VibyClient<Framework extends FrameworkId> implements Viby<Framework> {
         }
       : undefined;
     this.#models = new GenerationModelRegistry(config, dependencies, tools);
+    const integrationDescriptors = configuredIntegrations(config.integrations);
+    this.health = new VibyHealthService({
+      repository: this.#repository,
+      framework: this.framework,
+      modelCount: this.#models.identities.length,
+      sandbox: config.sandbox !== undefined,
+      preview: config.preview !== undefined,
+      browser: config.browser !== undefined,
+      environment: config.environment !== undefined,
+      repositoryIntegrations: integrationDescriptors.filter(
+        (integration) => integration.category === "repository",
+      ).length,
+      deploymentIntegrations: integrationDescriptors.filter(
+        (integration) => integration.category === "deployment",
+      ).length,
+      ...(config.health === undefined ? {} : { config: config.health }),
+    });
     this.#skills = normalizeSkillGroups(withFrameworkSkill(config.framework, config.skills));
     const quality = normalizeGenerationQuality(config.generation?.quality);
     const workspace = normalizeGenerationWorkspace(config.generation?.workspace);

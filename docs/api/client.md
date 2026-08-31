@@ -63,6 +63,7 @@ Configuration failures throw `ConfigurationError` before work begins.
 | `events.sinks`             | `OutboundEventSink[]`                   | Named outbound delivery targets. Delivery is explicit and durable.                                                                                                |
 | `telemetry`                | `VibyTelemetry`                         | Provider-neutral spans and metrics. Telemetry failures are fail-open.                                                                                             |
 | `cost`                     | `GenerationCostConfig`                  | Host-owned cost calculator stored in integer micro-units.                                                                                                         |
+| `health`                   | `VibyHealthConfig`                      | Optional product-owned readiness probes with bounded timeouts and credential-safe failures.                                                                       |
 
 The deprecated top-level `persistence`, `artifactStore`, `connectionStore`, `secretStore`, `engine`,
 and `engines` aliases remain for compatibility. Do not configure an alias and its categorized field
@@ -105,6 +106,14 @@ and may return a project, immutable change set, blocking task, inspection messag
 reason, and generated artifacts. Viby retains persistence, retries, permissions, validation,
 preview lifecycle, and source commits. See [Generation engines](/docs/api/generation-engines) for
 the complete ownership, capability, lifecycle, and conformance contract.
+
+## `viby.health`
+
+`await viby.health.check()` verifies persistence readiness and reports the configured generation,
+sandbox, preview, browser, environment, and integration capabilities. It does not call models or
+create provider resources. Configure `health.checks` for product-owned dependencies such as a
+queue or gateway. See [Health and diagnostics](/docs/operations/health) for status semantics,
+timeouts, redaction, and the read-only `viby doctor` command.
 
 ### Multiple models from one provider
 

@@ -26,6 +26,14 @@ Run the Viby-owned migrations:
 npx viby db migrate
 ```
 
+Inspect runtime, connectivity, pending migrations, and secret-store configuration without changing
+the database or contacting providers:
+
+```bash
+npx viby doctor
+npx viby doctor --json
+```
+
 Viby creates and maintains a dedicated `viby` Postgres schema. Your existing authentication and user tables remain the source of truth.
 
 ## Runtime boundaries
@@ -62,6 +70,18 @@ export const viby = createViby({
   },
 });
 ```
+
+Mount a credential-safe readiness endpoint from the same configured client:
+
+```ts
+const report = await viby.health.check();
+return Response.json(report, { status: report.ok ? 200 : 503 });
+```
+
+The active database adapter is probed. Optional provider capabilities are reported from
+configuration without calling models, creating sandboxes, or changing integrations. Add
+product-owned queue or gateway probes through `health.checks`; thrown errors are redacted from the
+public report. See [Health and diagnostics](docs/operations/health.md).
 
 The model path uses Viby's built-in, bounded coding loop. It is the default for products that want
 Viby to own planning, workspace tools, policy, traces, quality repair, and source commits. Advanced
