@@ -75,6 +75,10 @@ const agentResponseSchema = z.object({
   }).nullable(),
 });
 
+const inspectionResponseSchema = z.object({
+  response: z.string().min(1).max(50_000),
+});
+
 export function normalizeAgentRunnerConfig(
   config: AgentRunnerConfig | undefined,
 ): NormalizedAgentRunnerConfig {
@@ -157,6 +161,36 @@ implements ProjectGenerator<Framework> {
       approval,
       this.#tools,
     );
+    if (input.operation === "inspect") {
+      const inspector = new ToolLoopAgent({
+        model: this.#model,
+        instructions: createAgentInstructions(input),
+        tools,
+        output: Output.object({
+          name: "viby_read_only_inspection",
+          description: "A read-only answer grounded in the immutable source workspace.",
+          schema: inspectionResponseSchema,
+        }),
+        maxOutputTokens: Math.min(this.#config.maxTokens, this.#config.maxOutputTokens),
+        stopWhen: isStepCount(this.#config.maxSteps),
+      });
+      const result = await inspector.generate({
+        ...createMultimodalPrompt(createAgentPrompt(input), input.attachments),
+        ...(options.signal ? { abortSignal: options.signal } : {}),
+        timeout: {
+          totalMs: this.#config.maxDurationMs,
+          toolMs: this.#config.commandTimeoutMs,
+        },
+      });
+      await options.onDelta?.(result.output.response);
+      return {
+        kind: "message",
+        content: result.output.response,
+        usage: result.totalUsage,
+        finishReason: result.finishReason,
+        artifacts: generatedFileOutputs(result.files),
+      };
+    }
     const agent = new ToolLoopAgent({
       model: this.#model,
       instructions: createAgentInstructions(input),
@@ -459,10 +493,23 @@ async function createAgentTools<Framework extends FrameworkId>(
     }),
   };
 
+  const selectedWorkspaceTools = input.operation === "inspect"
+    ? {
+        workspace_list_files: workspaceTools.workspace_list_files,
+        workspace_read_file: workspaceTools.workspace_read_file,
+        workspace_search: workspaceTools.workspace_search,
+      }
+    : workspaceTools;
   const inboundTools = input.toolContext && toolSources
-    ? await createInboundAgentTools(input.toolContext, toolSources, options, approval)
+    ? await createInboundAgentTools(
+        input.toolContext,
+        toolSources,
+        options,
+        approval,
+        input.operation === "inspect",
+      )
     : {};
-  if (!input.sandbox) return { ...workspaceTools, ...inboundTools };
+  if (!input.sandbox) return { ...selectedWorkspaceTools, ...inboundTools };
   const sandboxTools = {
     ...(input.sandbox.supports("files") ? {
       sandbox_read_file: tool({
@@ -479,7 +526,7 @@ async function createAgentTools<Framework extends FrameworkId>(
         ),
       }),
     } : {}),
-    ...(input.sandbox.supports("commands") ? {
+    ...(input.operation !== "inspect" && input.sandbox.supports("commands") ? {
       sandbox_run_command: tool({
         description: `Run one bounded argv command in the ${input.sandbox.provider} sandbox. Shell strings and environment values are not accepted.`,
         inputSchema: z.object({
@@ -565,7 +612,7 @@ async function createAgentTools<Framework extends FrameworkId>(
       }),
     } : {}),
   };
-  return { ...workspaceTools, ...sandboxTools, ...inboundTools };
+  return { ...selectedWorkspaceTools, ...sandboxTools, ...inboundTools };
 }
 
 async function createInboundAgentTools<Framework extends FrameworkId>(
@@ -573,9 +620,12 @@ async function createInboundAgentTools<Framework extends FrameworkId>(
   config: ToolSourcesConfig<Framework>,
   options: GeneratorOptions,
   approval: AgentApprovalState,
+  readOnly = false,
 ) {
   const definitions = await resolveToolSources(config, context);
-  return Object.fromEntries(definitions.map(({ key, source, tool: definition }) => [
+  return Object.fromEntries(definitions
+    .filter(({ tool: definition }) => !readOnly || definition.effect === "read")
+    .map(({ key, source, tool: definition }) => [
     key,
     tool({
       description: definition.description,
@@ -782,6 +832,19 @@ function createAgentInstructions<Framework extends FrameworkId>(input: Generator
         )).join("\n");
         return `<skill category="${skill.category}" name="${skill.name}" hash="${skill.contentHash}">\n${files}\n</skill>`;
       }).join("\n\n");
+  if (input.operation === "inspect") {
+    return [
+      "You are Viby performing a strictly read-only source inspection.",
+      `Inspect only the immutable ${input.framework} project snapshot.`,
+      "Use only the provided read and search tools. You cannot write, move, delete, run commands, or invoke effectful external tools.",
+      "Ground every answer in inspected source, cite relevant paths, and distinguish evidence from inference.",
+      "Never claim that a file or external system was changed.",
+      "Return one complete response to the user's inspection request.",
+      "\nResolved skills:\n",
+      skills,
+      input.instructions ? `\nInspection-specific host instructions:\n${input.instructions}` : "",
+    ].join("\n");
+  }
   return [
     "You are Viby, an expert product engineer operating a typed mutable source workspace.",
     `Build only a ${input.framework} project and follow its native conventions.`,

@@ -262,6 +262,26 @@ export function registerVibyMcpTools<Framework extends FrameworkId>(
     });
   });
 
+  server.registerTool(name("version_inspect"), {
+    title: "Inspect Viby version",
+    description: "Start a durable read-only inspection of one exact immutable source version.",
+    inputSchema: z.object({
+      chatId: z.string().min(1),
+      versionId: z.string().min(1),
+      prompt: z.string().min(1),
+    }),
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false },
+  }, async ({ chatId, versionId, prompt }) => {
+    const version = await (await options.viby.chats.get(chatId)).getVersion(versionId);
+    const generation = await version.startInspection({ prompt });
+    return resultValue({
+      chatId,
+      baseVersionId: versionId,
+      generationId: generation.id,
+      generation: await generation.data(),
+    });
+  });
+
   server.registerTool(name("version_download"), {
     title: "Download Viby version",
     description: "Build a ZIP artifact from one immutable source version and return it as base64.",

@@ -24,6 +24,14 @@ test("exposes scoped durable Viby operations through a real MCP connection", asy
   let generationNumber = 0;
   const generator: ProjectGenerator<"farm"> = {
     async generate(input): Promise<GeneratorOutput> {
+      if (input.operation === "inspect") {
+        return {
+          kind: "message",
+          content: "The immutable module exports a version number.",
+          usage,
+          finishReason: "stop",
+        };
+      }
       generationNumber += 1;
       const content = `export const version = ${generationNumber};\n`;
       const file: VersionFile = {
@@ -69,7 +77,7 @@ test("exposes scoped durable Viby operations through a real MCP connection", asy
   try {
     const listed = await client.listTools();
     assert.deepEqual(listed.tools.map((tool) => tool.name), registration.names);
-    assert.equal(registration.names.length, 13);
+    assert.equal(registration.names.length, 14);
 
     const created = await call(client, "viby_chat_create", {
       title: "MCP dashboard",
@@ -104,6 +112,15 @@ test("exposes scoped durable Viby operations through a real MCP connection", asy
       versionId: firstOutcome.version.id,
     });
     assert.equal(object(array(fileResult.files)[0]).content, "export const version = 1;\n");
+
+    const inspection = await call(client, "viby_version_inspect", {
+      chatId,
+      versionId: firstOutcome.version.id,
+      prompt: "What does this module export?",
+    });
+    const inspectionGeneration = await scoped.generations.get(string(inspection.generationId));
+    const inspectionOutcome = await inspectionGeneration.wait({ pollIntervalMs: 10 });
+    assert.equal(inspectionOutcome.status, "responded");
 
     const iteration = await call(client, "viby_version_iterate", {
       chatId,

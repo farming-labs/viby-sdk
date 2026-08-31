@@ -40,6 +40,7 @@ import type {
   ClaimGenerationAttemptRecord,
   ClaimOutboundEventDeliveryRecord,
   CompleteGenerationRecord,
+  CompleteGenerationResponseRecord,
   CompleteToolCallRecord,
   CreateAttemptRecord,
   CreatedGeneration,
@@ -1117,6 +1118,12 @@ export class MemoryRepository implements Repository {
     input: CompleteGenerationRecord<Framework>,
   ): Promise<VersionData<Framework>> {
     const generation = this.#requireGeneration(scope, input.generationId);
+    if (generation.configuration.operation === "inspect") {
+      throw new GenerationStateError(
+        generation.id,
+        "A read-only inspection cannot create a source version.",
+      );
+    }
     const attempt = this.#requireAttempt(scope, input.attemptId);
     if (
       generation.status !== "running" ||
@@ -1209,6 +1216,85 @@ export class MemoryRepository implements Repository {
       versionId: version.id,
     });
     return version;
+  }
+
+  async completeGenerationResponse(
+    scope: UserScope,
+    input: CompleteGenerationResponseRecord,
+  ): Promise<MessageData> {
+    const generation = this.#requireGeneration(scope, input.generationId);
+    const attempt = this.#requireAttempt(scope, input.attemptId);
+    if (generation.configuration.operation !== "inspect") {
+      throw new GenerationStateError(
+        generation.id,
+        "Only a read-only inspection can complete without a source version.",
+      );
+    }
+    if (
+      generation.status !== "running" ||
+      generation.activeAttemptId !== input.attemptId ||
+      !this.#hasWorkerLease(attempt, input.leaseToken)
+    ) {
+      throw new GenerationStateError(generation.id, `Generation ${generation.id} is not running.`);
+    }
+    if (
+      [...this.steering.values()].some(
+        (entry) =>
+          inScope(entry, scope) &&
+          entry.generationId === generation.id &&
+          entry.status === "queued",
+      )
+    ) throw new GenerationSteeringPendingError(generation.id);
+    const completedAt = new Date();
+    this.attempts.set(attempt.id, {
+      ...attempt,
+      status: "succeeded",
+      inputTokens: input.inputTokens,
+      outputTokens: input.outputTokens,
+      totalTokens: input.totalTokens,
+      cost: input.cost,
+      finishReason: input.finishReason,
+      completedAt,
+    });
+    this.generations.set(generation.id, {
+      ...generation,
+      status: "succeeded",
+      inputTokens: input.inputTokens,
+      outputTokens: input.outputTokens,
+      totalTokens: input.totalTokens,
+      cost: addCost(generation.cost, input.cost),
+      error: null,
+      completedAt,
+    });
+    const message = this.#addMessage(scope, {
+      chatId: generation.chatId,
+      generationId: generation.id,
+      attemptId: input.attemptId,
+      role: "assistant",
+      content: input.assistantMessage,
+      finishReason: input.finishReason,
+      parts: input.assistantParts,
+      createdAt: completedAt,
+    });
+    this.#addGeneratedArtifacts(
+      scope,
+      generation.chatId,
+      generation.id,
+      attempt.id,
+      null,
+      input.artifacts ?? [],
+      completedAt,
+    );
+    this.#append(scope, generation.id, attempt.id, "attempt.succeeded", {
+      number: attempt.number,
+      versionId: null,
+      responseMessageId: message.id,
+    });
+    this.#append(scope, generation.id, attempt.id, "generation.succeeded", {
+      versionId: null,
+      responseMessageId: message.id,
+    });
+    return message;
   }
 
   async pauseGeneration(

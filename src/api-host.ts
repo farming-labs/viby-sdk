@@ -319,6 +319,14 @@ async function route<Framework extends FrameworkId>(
       return methodNotAllowed("GET, POST");
     }
 
+    if (segments[2] === "inspections" && segments.length === 3) {
+      if (request.method !== "POST") return methodNotAllowed("POST");
+      const generation = await chat.startInspection(
+        generateInput(await requestObject(request, maxBodyBytes)),
+      );
+      return json({ generation: generationValue(generation) }, 202);
+    }
+
     if (segments[2] === "versions") {
       if (segments.length === 3 && request.method === "GET") {
         const page = await chat.listVersions(pageOptions(url));
@@ -435,6 +443,12 @@ async function route<Framework extends FrameworkId>(
       }
       if (segments[4] === "messages" && segments.length === 5 && request.method === "POST") {
         const generation = await version.startIteration(
+          generateInput(await requestObject(request, maxBodyBytes)),
+        );
+        return json({ generation: generationValue(generation) }, 202);
+      }
+      if (segments[4] === "inspections" && segments.length === 5 && request.method === "POST") {
+        const generation = await version.startInspection(
           generateInput(await requestObject(request, maxBodyBytes)),
         );
         return json({ generation: generationValue(generation) }, 202);
@@ -585,6 +599,10 @@ async function route<Framework extends FrameworkId>(
     const version = await chat.getVersion(segments[1]);
     if (segments[2] === "iterations" && request.method === "POST") {
       const generation = await version.startIteration(generateInput(body));
+      return json({ generation: generationValue(generation) }, 202);
+    }
+    if (segments[2] === "inspections" && request.method === "POST") {
+      const generation = await version.startInspection(generateInput(body));
       return json({ generation: generationValue(generation) }, 202);
     }
     if (segments[2] === "download" && request.method === "GET") {

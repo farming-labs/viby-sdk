@@ -113,6 +113,51 @@ test("reserves a completion turn after the token budget is reached", async () =>
   assert.equal(model.doGenerateCalls[1]?.toolChoice?.type, "none");
 });
 
+test("limits built-in inspections to read-only workspace tools", async () => {
+  const model = new MockLanguageModelV4({
+    doGenerate: {
+      content: [{
+        type: "text" as const,
+        text: JSON.stringify({ response: "`src/index.ts` exports a finalized value." }),
+      }],
+      finishReason: { unified: "stop" as const, raw: undefined },
+      usage,
+      warnings: [],
+    },
+  });
+  const generator = new AgentProjectGenerator<"farmjs">(model, {
+    maxSteps: 2,
+    maxDurationMs: 10_000,
+    maxTokens: 10_000,
+  });
+
+  const output = await generator.generate({
+    framework: "farmjs",
+    operation: "inspect",
+    prompt: "What does this file do?",
+    messages: [],
+    previousFiles: [{
+      path: "src/index.ts",
+      content: "export const finalized = true;\n",
+      mediaType: "text/typescript",
+      size: 31,
+      checksum: "fixture",
+      locked: false,
+    }],
+    skills: [],
+    tasks: [],
+  });
+
+  assert.equal(output.kind, "message");
+  assert.match(output.kind === "message" ? output.content : "", /src\/index\.ts/);
+  const toolNames = model.doGenerateCalls[0]?.tools?.map((tool) => tool.name) ?? [];
+  assert.deepEqual(toolNames.sort(), [
+    "workspace_list_files",
+    "workspace_read_file",
+    "workspace_search",
+  ]);
+});
+
 function completion(title: string, summary: string) {
   return {
     content: [
