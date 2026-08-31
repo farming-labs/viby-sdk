@@ -18,6 +18,7 @@ export interface PersistenceConformanceReport {
     | "chat-metadata"
     | "durable-generation"
     | "generation-steering"
+    | "generation-checkpoints"
     | "event-cursors"
     | "source-history"
     | "preview-sessions"
@@ -183,6 +184,54 @@ export async function verifyPersistenceAdapter(
       "Steering was not durably consumed.",
     );
     checks.push("generation-steering");
+    const firstCheckpoint = await persistence.saveGenerationEngineCheckpoint(scope, {
+      generationId: steeringGenerationId,
+      attemptId: steeringAttemptId,
+      leaseToken: lease!.leaseToken,
+      cursor: "provider-event-1",
+      state: { runId: "remote-run-1", apiKey: "must-not-persist" },
+    });
+    const secondCheckpoint = await persistence.saveGenerationEngineCheckpoint(scope, {
+      generationId: steeringGenerationId,
+      attemptId: steeringAttemptId,
+      leaseToken: lease!.leaseToken,
+      cursor: "provider-event-2",
+      state: { runId: "remote-run-1", phase: "generating" },
+    });
+    assertConformance(
+      firstCheckpoint.revision === 1 &&
+        secondCheckpoint.revision === 2 &&
+        secondCheckpoint.cursor === "provider-event-2",
+      "Generation checkpoint revisions were not durable.",
+    );
+    assertConformance(
+      (firstCheckpoint.state as { apiKey?: string }).apiKey === "[REDACTED]",
+      "Generation checkpoint secrets were not redacted.",
+    );
+    assertConformance(
+      (await persistence.getGenerationEngineCheckpoint(scope, steeringGenerationId, steeringAttemptId))
+        ?.revision === 2 &&
+        (await persistence.getGenerationEngineCheckpoint(
+          { tenantId: scope.tenantId, userId: `outsider-${suffix}` },
+          steeringGenerationId,
+          steeringAttemptId,
+        )) === null,
+      "Generation checkpoints were not isolated by owner.",
+    );
+    await persistence.clearGenerationEngineCheckpoint(scope, {
+      generationId: steeringGenerationId,
+      attemptId: steeringAttemptId,
+      leaseToken: lease!.leaseToken,
+    });
+    assertConformance(
+      (await persistence.getGenerationEngineCheckpoint(
+        scope,
+        steeringGenerationId,
+        steeringAttemptId,
+      )) === null,
+      "Generation checkpoint cleanup was not durable.",
+    );
+    checks.push("generation-checkpoints");
     await persistence.cancelGeneration(scope, steeringGenerationId, "Conformance check complete");
 
     const firstEvents = await generation.events({ limit: 2 });

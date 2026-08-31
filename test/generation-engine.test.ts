@@ -8,6 +8,10 @@ import {
   RemoteGenerationEngineError,
   type GenerationEngine,
 } from "../src/generation-engine.js";
+import type {
+  GenerationEngineCheckpointData,
+  GenerationEngineCheckpointChannel,
+} from "../src/generator.js";
 import {
   GenerationEngineConformanceError,
   verifyGenerationEngine,
@@ -261,4 +265,56 @@ test("rejects invalid remote event streams and cancels an aborted run", async ()
     () => repeated.generate(input),
     (error: unknown) => error instanceof RemoteGenerationEngineError && !error.retryable,
   );
+});
+
+test("resumes a remote run from a durable engine checkpoint", async () => {
+  let checkpoint: GenerationEngineCheckpointData | null = null;
+  let revision = 0;
+  let starts = 0;
+  const after: Array<string | null> = [];
+  const channel: GenerationEngineCheckpointChannel = {
+    async load() { return checkpoint; },
+    async save(input) {
+      revision += 1;
+      const now = new Date();
+      checkpoint = {
+        generationId: "generation",
+        attemptId: "attempt",
+        revision,
+        cursor: input.cursor ?? null,
+        state: input.state,
+        createdAt: checkpoint?.createdAt ?? now,
+        updatedAt: now,
+      };
+      return checkpoint;
+    },
+    async clear() { checkpoint = null; },
+  };
+  const engine = defineRemoteGenerationEngine<"farm">({
+    identity: { provider: "remote-runtime", model: "resumable-agent" },
+    async start() {
+      starts += 1;
+      return { id: "remote-run-resume", metadata: { region: "iad1" } };
+    },
+    async *events(_run, input) {
+      after.push(input.after);
+      if (input.after === null) {
+        yield { type: "output.delta", cursor: "event-1", delta: "Designing" } as const;
+        return;
+      }
+      yield { type: "completed", cursor: "event-2", output: projectOutput() } as const;
+    },
+  });
+
+  await assert.rejects(
+    () => engine.generate(input, { checkpoint: channel }),
+    (error: unknown) => error instanceof RemoteGenerationEngineError && error.retryable,
+  );
+  assert.equal((await channel.load())?.cursor, "event-1");
+
+  const output = await engine.generate(input, { checkpoint: channel });
+  assert.equal(output.kind, "project");
+  assert.equal(starts, 1);
+  assert.deepEqual(after, [null, "event-1"]);
+  assert.equal(checkpoint, null);
 });

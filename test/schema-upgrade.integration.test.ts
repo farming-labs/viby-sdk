@@ -99,6 +99,7 @@ test(
         "0032_generation_quality_events",
         "0033_generation_steering",
         "0034_generation_workspace_events",
+        "0035_generation_engine_checkpoints",
       ]);
       assert.equal(
         (await getMigrationStatus(databaseUrl.toString())).every((entry) => entry.applied),

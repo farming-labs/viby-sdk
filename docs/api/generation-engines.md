@@ -224,6 +224,26 @@ exactly one `completed` or `failed` event. Output deltas flow through the ordina
 event cursor. Aborting the attempt invokes `cancel` when supplied. Remote metadata must remain
 credential-free.
 
+When the configured persistence adapter supports the Viby contract, the wrapper stores the remote
+run identity and latest provider cursor through `context.checkpoint`. A reclaimed worker loads that
+checkpoint, skips `start`, and calls `events` with the last durable cursor. Completion, provider
+failure, and cancellation clear the checkpoint. An interrupted stream retains it for recovery.
+
+Custom engines use the same attempt-scoped API directly:
+
+```ts
+const previous = await context.checkpoint?.load();
+await context.checkpoint?.save({
+  cursor: providerCursor,
+  state: { phase: "editing", providerRunId },
+});
+await context.checkpoint?.clear();
+```
+
+Checkpoint writes are accepted only from the active fenced worker lease. State is JSON, capped at
+256 KB, and secret-looking values are redacted before persistence. Store credential references,
+never credentials, in engine state.
+
 ## From prompt to live URL
 
 A generation engine produces source; it does not produce the preview URL directly. The complete
@@ -244,7 +264,6 @@ work, but no live preview URL is promised.
 The current contract covers embedded calls, remote event streams, and durable Viby workers. Broader harness
 support should be added as small provider-neutral contracts rather than provider switches:
 
-- opaque engine checkpoints for crash-safe continuation inside one attempt;
 - structured delegation records for parent/child agent work;
 - engine health and capability negotiation before a worker claims an attempt;
 - engine-reported cost estimates and provider request IDs;

@@ -39,6 +39,7 @@ import type {
   ChatPageCursor,
   ClaimGenerationAttemptRecord,
   ClaimOutboundEventDeliveryRecord,
+  ClearGenerationEngineCheckpointRecord,
   CompleteGenerationRecord,
   CompleteGenerationResponseRecord,
   CompleteToolCallRecord,
@@ -68,6 +69,7 @@ import type {
   RepairGenerationAttemptRecord,
   ResolveGenerationTaskRecord,
   RestoreVersionRecord,
+  SaveGenerationEngineCheckpointRecord,
   UpdateChatRecord,
   VersionPageCursor,
 } from "../../src/repository.js";
@@ -123,6 +125,7 @@ import type {
   UpdateToolSourceConnectionRecord,
   UpsertToolSourceConnectionRecord,
 } from "../../src/tool-source-authorization.js";
+import type { GenerationEngineCheckpointData } from "../../src/generator.js";
 
 interface ScopedRecord {
   tenantId: string;
@@ -152,6 +155,8 @@ type MemoryOutboundEventDelivery = OutboundEventDeliveryData &
     leaseToken: string | null;
     leaseExpiresAt: Date | null;
   };
+
+type MemoryGenerationEngineCheckpoint = GenerationEngineCheckpointData & ScopedRecord;
 
 export class MemoryRepository implements Repository {
   readonly chats = new Map<string, MemoryChatRecord>();
@@ -187,6 +192,7 @@ export class MemoryRepository implements Repository {
   readonly deployments = new Map<string, DeploymentRecordData & ScopedRecord>();
   readonly deploymentArtifacts = new Map<string, DeploymentArtifactContent & ScopedRecord>();
   readonly workerLeaseTokens = new Map<string, string>();
+  readonly generationEngineCheckpoints = new Map<string, MemoryGenerationEngineCheckpoint>();
   closed = false;
   #cursor = 0;
 
@@ -753,6 +759,71 @@ export class MemoryRepository implements Repository {
       });
       return applied;
     });
+  }
+
+  async getGenerationEngineCheckpoint(
+    scope: UserScope,
+    generationId: string,
+    attemptId: string,
+  ): Promise<GenerationEngineCheckpointData | null> {
+    const generation = this.generations.get(generationId);
+    const attempt = this.attempts.get(attemptId);
+    if (!generation || !attempt || !inScope(generation, scope) || !inScope(attempt, scope)) {
+      return null;
+    }
+    const checkpoint = this.generationEngineCheckpoints.get(attemptId);
+    if (!checkpoint || !inScope(checkpoint, scope) || checkpoint.generationId !== generationId) {
+      return null;
+    }
+    return publicGenerationEngineCheckpoint(checkpoint);
+  }
+
+  async saveGenerationEngineCheckpoint(
+    scope: UserScope,
+    input: SaveGenerationEngineCheckpointRecord,
+  ): Promise<GenerationEngineCheckpointData> {
+    const generation = this.#requireGeneration(scope, input.generationId);
+    const attempt = this.#requireAttempt(scope, input.attemptId);
+    if (generation.activeAttemptId !== attempt.id || !this.#hasWorkerLease(attempt, input.leaseToken)) {
+      throw new GenerationStateError(
+        generation.id,
+        "The generation worker lease is no longer active.",
+      );
+    }
+    const state = normalizeAndRedactToolPayload(input.state);
+    if (JSON.stringify(state).length > 256_000) {
+      throw new ConfigurationError("Generation engine checkpoint state cannot exceed 256 KB.");
+    }
+    const cursor = normalizeMemoryCheckpointCursor(input.cursor);
+    const existing = this.generationEngineCheckpoints.get(attempt.id);
+    const now = new Date();
+    const checkpoint: MemoryGenerationEngineCheckpoint = {
+      generationId: generation.id,
+      attemptId: attempt.id,
+      revision: (existing?.revision ?? 0) + 1,
+      cursor,
+      state,
+      createdAt: existing?.createdAt ?? now,
+      updatedAt: now,
+      ...scope,
+    };
+    this.generationEngineCheckpoints.set(attempt.id, checkpoint);
+    return publicGenerationEngineCheckpoint(checkpoint);
+  }
+
+  async clearGenerationEngineCheckpoint(
+    scope: UserScope,
+    input: ClearGenerationEngineCheckpointRecord,
+  ): Promise<void> {
+    const generation = this.#requireGeneration(scope, input.generationId);
+    const attempt = this.#requireAttempt(scope, input.attemptId);
+    if (generation.activeAttemptId !== attempt.id || !this.#hasWorkerLease(attempt, input.leaseToken)) {
+      throw new GenerationStateError(
+        generation.id,
+        "The generation worker lease is no longer active.",
+      );
+    }
+    this.generationEngineCheckpoints.delete(attempt.id);
   }
 
   async startGenerationAttempt(
@@ -2993,6 +3064,26 @@ export class MemoryRepository implements Repository {
 
 function inScope(record: ScopedRecord, scope: UserScope): boolean {
   return record.tenantId === scope.tenantId && record.userId === scope.userId;
+}
+
+function normalizeMemoryCheckpointCursor(value: string | null | undefined): string | null {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== "string" || value.trim().length === 0 || value.length > 2_000) {
+    throw new ConfigurationError(
+      "Generation engine checkpoint cursors must contain between 1 and 2000 characters.",
+    );
+  }
+  return value;
+}
+
+function publicGenerationEngineCheckpoint(
+  record: MemoryGenerationEngineCheckpoint,
+): GenerationEngineCheckpointData {
+  const { tenantId: _tenantId, userId: _userId, ...checkpoint } = record;
+  return {
+    ...checkpoint,
+    state: JSON.parse(JSON.stringify(checkpoint.state)) as JsonValue,
+  };
 }
 
 function publicRepositoryLink(record: RepositoryLinkData & ScopedRecord): RepositoryLinkData {

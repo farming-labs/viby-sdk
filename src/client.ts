@@ -88,7 +88,10 @@ import type {
   AgentToolCall,
   AgentToolCallInput,
   AgentToolCallWriter,
+  GenerationEngineCheckpointChannel,
+  GenerationEngineCheckpointData,
   GeneratorOutput,
+  SaveGenerationEngineCheckpointInput,
   GenerationSteeringChannel,
   GenerationSteeringUpdate,
   ProjectGenerator,
@@ -3526,6 +3529,13 @@ class GenerationRunner<Framework extends FrameworkId> {
             },
             trace,
             toolCalls,
+            checkpoint: new DurableGenerationEngineCheckpoint(
+              this.#dependencies.repository,
+              scope,
+              generationId,
+              attemptId,
+              leaseToken,
+            ),
             steering: new DurableGenerationSteering(
               this.#dependencies.repository,
               scope,
@@ -3946,6 +3956,53 @@ interface TraceEntry<Type extends MessagePartType = MessagePartType> {
   readonly type: Type;
   state: "active" | "completed" | "failed";
   data?: MessagePartDataMap[Type];
+}
+
+class DurableGenerationEngineCheckpoint implements GenerationEngineCheckpointChannel {
+  readonly #repository: Repository;
+  readonly #scope: UserScope;
+  readonly #generationId: string;
+  readonly #attemptId: string;
+  readonly #leaseToken: string;
+
+  constructor(
+    repository: Repository,
+    scope: UserScope,
+    generationId: string,
+    attemptId: string,
+    leaseToken: string,
+  ) {
+    this.#repository = repository;
+    this.#scope = scope;
+    this.#generationId = generationId;
+    this.#attemptId = attemptId;
+    this.#leaseToken = leaseToken;
+  }
+
+  load(): Promise<GenerationEngineCheckpointData | null> {
+    return this.#repository.getGenerationEngineCheckpoint(
+      this.#scope,
+      this.#generationId,
+      this.#attemptId,
+    );
+  }
+
+  save(input: SaveGenerationEngineCheckpointInput): Promise<GenerationEngineCheckpointData> {
+    return this.#repository.saveGenerationEngineCheckpoint(this.#scope, {
+      ...input,
+      generationId: this.#generationId,
+      attemptId: this.#attemptId,
+      leaseToken: this.#leaseToken,
+    });
+  }
+
+  clear(): Promise<void> {
+    return this.#repository.clearGenerationEngineCheckpoint(this.#scope, {
+      generationId: this.#generationId,
+      attemptId: this.#attemptId,
+      leaseToken: this.#leaseToken,
+    });
+  }
 }
 
 class DurableGenerationSteering implements GenerationSteeringChannel {

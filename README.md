@@ -534,6 +534,9 @@ Remote harnesses can use `defineRemoteGenerationEngine({ start, events, cancel }
 idempotent on `context.run.attemptId`; `events` resumes from opaque provider cursors, forwards text
 deltas into Viby's durable stream, and ends with one typed completed or failed result. Cancellation
 is propagated without making the remote provider, queue, or transport part of the core SDK.
+The remote wrapper stores its run identity and cursor in an attempt-scoped durable checkpoint, so a
+reclaimed worker resumes the same provider stream. Custom engines can use
+`context.checkpoint.load()`, `.save()`, and `.clear()` for their own credential-free JSON state.
 
 Remote skill strings use the stable skills.sh `owner/repository/slug` form. Local skills can point at a directory containing `SKILL.md` or at the file itself. Remote skills are resolved through the authenticated skills.sh API when Vercel OIDC is available, with public GitHub repositories as the portable fallback. Set `GITHUB_TOKEN` only when you need higher GitHub API limits.
 

@@ -66,6 +66,7 @@ import type {
   ChatPageCursor,
   ClaimGenerationAttemptRecord,
   ClaimOutboundEventDeliveryRecord,
+  ClearGenerationEngineCheckpointRecord,
   CompleteGenerationRecord,
   CompleteGenerationResponseRecord,
   CompleteToolCallRecord,
@@ -98,9 +99,11 @@ import type {
   RepositoryPage,
   ResolveGenerationTaskRecord,
   RestoreVersionRecord,
+  SaveGenerationEngineCheckpointRecord,
   UpdateChatRecord,
   VersionPageCursor,
 } from "./repository.js";
+import type { GenerationEngineCheckpointData } from "./generator.js";
 import type {
   BeginRepositoryPushRecord,
   CompleteRepositoryPushRecord,
@@ -218,6 +221,16 @@ interface GenerationAttemptRow {
 interface GenerationAttemptClaimRow extends GenerationAttemptRow {
   tenant_id: string;
   user_id: string;
+}
+
+interface GenerationEngineCheckpointRow {
+  generation_id: string;
+  attempt_id: string;
+  revision: number;
+  cursor: string | null;
+  state: JsonValue;
+  created_at: Date;
+  updated_at: Date;
 }
 
 interface GenerationEventRow {
@@ -676,6 +689,7 @@ export class PostgresRepository implements Repository {
       SELECT
         to_regclass('viby.chats') IS NOT NULL
         AND to_regclass('viby.generation_attempts') IS NOT NULL
+        AND to_regclass('viby.generation_engine_checkpoints') IS NOT NULL
         AND to_regclass('viby.generation_events') IS NOT NULL
         AND to_regclass('viby.generation_tasks') IS NOT NULL
         AND to_regclass('viby.generation_steering') IS NOT NULL
@@ -1517,6 +1531,97 @@ export class PostgresRepository implements Repository {
       return applied;
     });
     return rows.map(mapGenerationSteering);
+  }
+
+  async getGenerationEngineCheckpoint(
+    scope: UserScope,
+    generationId: string,
+    attemptId: string,
+  ): Promise<GenerationEngineCheckpointData | null> {
+    await this.assertReady();
+    const [row] = await this.#sql<GenerationEngineCheckpointRow[]>`
+      SELECT checkpoint.* FROM viby.generation_engine_checkpoints AS checkpoint
+      JOIN viby.generations AS generation ON generation.id = checkpoint.generation_id
+      JOIN viby.generation_attempts AS attempt ON attempt.id = checkpoint.attempt_id
+      WHERE checkpoint.tenant_id = ${scope.tenantId} AND checkpoint.user_id = ${scope.userId}
+        AND checkpoint.generation_id = ${generationId} AND checkpoint.attempt_id = ${attemptId}
+        AND generation.tenant_id = checkpoint.tenant_id
+        AND generation.user_id = checkpoint.user_id
+        AND attempt.generation_id = checkpoint.generation_id
+      LIMIT 1
+    `;
+    return row ? mapGenerationEngineCheckpoint(row) : null;
+  }
+
+  async saveGenerationEngineCheckpoint(
+    scope: UserScope,
+    input: SaveGenerationEngineCheckpointRecord,
+  ): Promise<GenerationEngineCheckpointData> {
+    await this.assertReady();
+    const state = normalizeGenerationCheckpointState(input.state);
+    const cursor = normalizeGenerationCheckpointCursor(input.cursor);
+    const [row] = await this.#sql<GenerationEngineCheckpointRow[]>`
+      INSERT INTO viby.generation_engine_checkpoints AS checkpoint (
+        tenant_id, user_id, generation_id, attempt_id, cursor, state
+      )
+      SELECT ${scope.tenantId}, ${scope.userId}, generation.id, attempt.id, ${cursor},
+        ${this.#sql.json(state)}
+      FROM viby.generations AS generation
+      JOIN viby.generation_attempts AS attempt ON attempt.id = generation.active_attempt_id
+      WHERE generation.tenant_id = ${scope.tenantId} AND generation.user_id = ${scope.userId}
+        AND generation.id = ${input.generationId} AND generation.status = 'running'
+        AND attempt.id = ${input.attemptId} AND attempt.status = 'running'
+        AND attempt.lease_token = ${input.leaseToken} AND attempt.lease_expires_at > now()
+      ON CONFLICT (tenant_id, user_id, generation_id, attempt_id)
+      DO UPDATE SET
+        revision = checkpoint.revision + 1,
+        cursor = EXCLUDED.cursor,
+        state = EXCLUDED.state,
+        updated_at = now()
+      RETURNING *
+    `;
+    if (!row) {
+      throw new GenerationStateError(
+        input.generationId,
+        "The generation worker lease is no longer active.",
+      );
+    }
+    return mapGenerationEngineCheckpoint(row);
+  }
+
+  async clearGenerationEngineCheckpoint(
+    scope: UserScope,
+    input: ClearGenerationEngineCheckpointRecord,
+  ): Promise<void> {
+    await this.assertReady();
+    const rows = await this.#sql<{ attempt_id: string }[]>`
+      DELETE FROM viby.generation_engine_checkpoints AS checkpoint
+      USING viby.generations AS generation, viby.generation_attempts AS attempt
+      WHERE checkpoint.tenant_id = ${scope.tenantId} AND checkpoint.user_id = ${scope.userId}
+        AND checkpoint.generation_id = ${input.generationId}
+        AND checkpoint.attempt_id = ${input.attemptId}
+        AND generation.id = checkpoint.generation_id AND generation.status = 'running'
+        AND generation.active_attempt_id = attempt.id
+        AND attempt.id = checkpoint.attempt_id AND attempt.status = 'running'
+        AND attempt.lease_token = ${input.leaseToken} AND attempt.lease_expires_at > now()
+      RETURNING checkpoint.attempt_id
+    `;
+    if (rows.length === 0) {
+      const active = await this.#sql<{ active: boolean }[]>`
+        SELECT true AS active FROM viby.generations AS generation
+        JOIN viby.generation_attempts AS attempt ON attempt.id = generation.active_attempt_id
+        WHERE generation.tenant_id = ${scope.tenantId} AND generation.user_id = ${scope.userId}
+          AND generation.id = ${input.generationId} AND generation.status = 'running'
+          AND attempt.id = ${input.attemptId} AND attempt.status = 'running'
+          AND attempt.lease_token = ${input.leaseToken} AND attempt.lease_expires_at > now()
+      `;
+      if (active.length === 0) {
+        throw new GenerationStateError(
+          input.generationId,
+          "The generation worker lease is no longer active.",
+        );
+      }
+    }
   }
 
   async startGenerationAttempt(
@@ -5517,6 +5622,38 @@ function normalizeToolCallText(value: string, label: string, maxLength: number):
     throw new ConfigurationError(`The ${label} must contain 1-${maxLength} characters.`);
   }
   return normalized;
+}
+
+function normalizeGenerationCheckpointState(value: JsonValue): JsonValue {
+  const normalized = normalizeAndRedactToolPayload(value);
+  if (JSON.stringify(normalized).length > 256_000) {
+    throw new ConfigurationError("Generation engine checkpoint state cannot exceed 256 KB.");
+  }
+  return normalized;
+}
+
+function normalizeGenerationCheckpointCursor(value: string | null | undefined): string | null {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== "string" || value.trim().length === 0 || value.length > 2_000) {
+    throw new ConfigurationError(
+      "Generation engine checkpoint cursors must contain between 1 and 2000 characters.",
+    );
+  }
+  return value;
+}
+
+function mapGenerationEngineCheckpoint(
+  row: GenerationEngineCheckpointRow,
+): GenerationEngineCheckpointData {
+  return {
+    generationId: row.generation_id,
+    attemptId: row.attempt_id,
+    revision: row.revision,
+    cursor: row.cursor,
+    state: row.state,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
 }
 
 function mapSandboxLease<Framework extends FrameworkId>(
