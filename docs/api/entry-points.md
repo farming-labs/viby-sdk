@@ -33,12 +33,14 @@ runtime-specific APIs.
 | `@viby/sdk/storage/postgres` | `postgres(...)`, the explicit structured-database adapter using PostgreSQL. |
 | `@viby/sdk/persistence` | Provider-neutral durable `PersistenceAdapter` contract. |
 | `@viby/sdk/persistence/postgres` | Low-level PostgreSQL persistence implementation. |
+| `@viby/sdk/persistence/sqlite` | Embedded SQLite persistence implementation for Node.js 22.5+. |
 | `@viby/sdk/persistence/conformance` | Reusable durable adapter lifecycle and isolation tests. |
 | `@viby/sdk/artifact/filesystem` | Local filesystem artifact store for development and single-host deployments. |
 | `@viby/sdk/storage/s3` | S3-compatible artifact store for AWS S3, Cloudflare R2, MinIO, and compatible services. |
 | `@viby/sdk/artifact/s3` | Alias of the same S3-compatible artifact adapter. |
 | `@viby/sdk/artifact/conformance` | Reusable artifact-store immutability, checksum, scope, and deletion tests. |
 | `@viby/sdk/environment/postgres` | PostgreSQL project-environment metadata store. Secret bytes still use `SecretStore`. |
+| `@viby/sdk/storage/sqlite` | Categorized embedded SQLite database factory for local, desktop, example, and test hosts. |
 
 The S3 adapter requires optional peer `@aws-sdk/client-s3`.
 

@@ -13,6 +13,7 @@ export * from "./persistence-conformance.js";
 export * from "./repository-integration-conformance.js";
 export * from "./sandbox-conformance.js";
 export * from "./tool-source-conformance.js";
+export { MemoryRepository, type MemoryRepositoryState } from "./memory-repository.js";
 
 import { ConfigurationError } from "./errors.js";
 import {

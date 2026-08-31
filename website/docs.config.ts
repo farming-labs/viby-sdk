@@ -103,6 +103,12 @@ export default {
         ],
       },
       {
+        label: "Storage",
+        children: [
+          { label: "SQLite", slug: "storage/sqlite" },
+        ],
+      },
+      {
         label: "Operations",
         children: [
           { label: "Health and diagnostics", slug: "operations/health" },
