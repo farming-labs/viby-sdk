@@ -18,6 +18,7 @@ filesystem, process, PostgreSQL, Docker, browser-driver, or provider SDK depende
 | `@viby/sdk/node/migrations` | Programmatic PostgreSQL migration helpers. The `viby db migrate` CLI is the usual deploy-time path. |
 | `@viby/sdk/node/skills` | Local filesystem and skills.sh/GitHub skill resolution. |
 | `@viby/sdk/package.json` | Package metadata for tooling. |
+| `@viby/sdk/testing` | Aggregated provider-neutral conformance suites and deterministic scripted generation fixtures for host tests. |
 
 The portable core uses Web `Request`, `Response`, `Headers`, `ReadableStream`, `AbortSignal`,
 `Uint8Array`, text encoding, structured cloning, and Web Crypto-compatible shapes.
@@ -64,6 +65,33 @@ Provider SDK types stay inside their adapter configuration and never enter `Sand
 
 The Playwright adapter requires `playwright`; accessibility scans additionally use optional
 `@axe-core/playwright`.
+
+## Testing hosts and adapters
+
+`@viby/sdk/testing` collects every public conformance suite behind one stable import and includes a
+queue-driven engine for deterministic API, worker, and UI tests:
+
+```ts
+import {
+  createScriptedGenerationEngine,
+  verifyPersistenceAdapter,
+  verifySandboxAdapter,
+} from "@viby/sdk/testing";
+
+const scripted = createScriptedGenerationEngine({
+  steps: [{ kind: "project", title, summary, files, usage, finishReason: "stop" }],
+});
+
+const viby = createViby({
+  framework: "farmjs",
+  generation: { engine: scripted.engine },
+});
+```
+
+Each call consumes exactly one step. An unexpected extra attempt throws
+`ScriptedGenerationEngineExhaustedError` instead of inventing fallback output. `calls`, `remaining`,
+`enqueue()`, and `clear()` let tests assert retries and prepare later outcomes. Conformance suites may
+create external disposable resources; use dedicated test accounts and provider cleanup hooks.
 
 ## Integration entry points
 

@@ -61,6 +61,8 @@ try {
     "dist/sandbox-conformance.d.ts",
     "dist/generation-engine-conformance.js",
     "dist/generation-engine-conformance.d.ts",
+    "dist/testing.js",
+    "dist/testing.d.ts",
     "dist/artifact-filesystem.js",
     "dist/artifact-filesystem.d.ts",
     "dist/artifact-s3.js",
@@ -177,6 +179,21 @@ try {
         'if (skillRead("./skills").source !== "file") throw new Error("skillRead export is invalid");',
         'if (!builtInFrameworks.includes("farmjs") || builtInFrameworks.includes("farm")) throw new Error("framework IDs are invalid");',
         'if (frameworkSkill("nextjs").files[0].path !== "SKILL.md") throw new Error("framework skill is invalid");',
+      ].join("\n"),
+    ],
+    { cwd: consumer },
+  );
+  await execute(
+    node,
+    [
+      "--input-type=module",
+      "--eval",
+      [
+        'import { createScriptedGenerationEngine, verifyGenerationEngine, verifyPersistenceAdapter, verifySandboxAdapter } from "@viby/sdk/testing";',
+        'if (typeof createScriptedGenerationEngine !== "function") throw new Error("scripted engine helper is missing");',
+        'if (typeof verifyGenerationEngine !== "function") throw new Error("generation conformance export is missing");',
+        'if (typeof verifyPersistenceAdapter !== "function") throw new Error("persistence conformance export is missing");',
+        'if (typeof verifySandboxAdapter !== "function") throw new Error("sandbox conformance export is missing");',
       ].join("\n"),
     ],
     { cwd: consumer },

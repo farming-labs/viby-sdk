@@ -833,6 +833,11 @@ The resumed attempt can execute only the approved action fingerprint. Agent comm
 
 Adapter authors can import `verifySandboxAdapter` from `@viby/sdk/sandbox/conformance` in their own test suite. The caller supplies a harmless runtime-specific command and fixture credentials; Viby verifies capability declarations, text and binary file roundtrips, commands, streaming, port URLs, and idempotent cleanup without assuming a framework, image, or provider.
 
+All public adapter conformance suites are also available from `@viby/sdk/testing`. The same entry
+point exports `createScriptedGenerationEngine()`, a queue-driven engine for deterministic host API,
+worker, and UI tests. Every call consumes one explicit output, function, or error; unexpected extra
+attempts fail visibly instead of returning a hidden mock result.
+
 ### E2B
 
 Install E2B only when that is the provider your product uses:
