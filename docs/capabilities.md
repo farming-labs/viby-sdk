@@ -114,7 +114,7 @@ Product authentication, provider-app registration, public callback routes, event
 
 | Gate | Coverage |
 | --- | --- |
-| Unit suite | durable generation, source, generation engines, policy, adapters, MCP, SSE, telemetry, cost, delivery, and errors |
+| Unit suite | durable generation, source, generation engines, policy, adapters, MCP, SSE, telemetry, cost, delivery, errors, and a published `@viby/sdk/testing` entry point |
 | PostgreSQL integration | real migrations plus the complete persisted generation/iteration/download lifecycle |
 | Schema upgrade fixture | upgrades a disposable historical `0001`–`0004` database through the current schema and preserves data |
 | Migration immutability | published migration SHA-256 checksums; changes require a new migration |
