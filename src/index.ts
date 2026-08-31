@@ -70,6 +70,7 @@ export {
   defineRemoteGenerationEngine,
   RemoteGenerationEngineError,
 } from "./generation-engine.js";
+export { GenerationEngineToolApprovalRequiredError } from "./generation-engine-tools.js";
 export { normalizeGenerationQuality, verifyGenerationQuality } from "./generation-quality.js";
 export type * from "./generation-quality.js";
 export { createVibyApi, vibyApi } from "./api-host.js";
@@ -308,7 +309,10 @@ export type {
   GeneratorOptions,
   GenerationEngineCheckpointChannel,
   GenerationEngineCheckpointData,
+  GenerationEngineToolChannel,
+  GenerationEngineToolDescriptor,
   GenerationEngineRunIdentity,
+  InvokeGenerationEngineToolInput,
   SaveGenerationEngineCheckpointInput,
   GenerationSteeringChannel,
   GenerationSteeringUpdate,

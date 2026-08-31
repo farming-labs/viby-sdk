@@ -537,6 +537,9 @@ is propagated without making the remote provider, queue, or transport part of th
 The remote wrapper stores its run identity and cursor in an attempt-scoped durable checkpoint, so a
 reclaimed worker resumes the same provider stream. Custom engines can use
 `context.checkpoint.load()`, `.save()`, and `.clear()` for their own credential-free JSON state.
+Engines advertising `toolCalls: true` also receive `context.tools.list()` and `.invoke()`. Viby
+projects only host-selected tools and preserves policy decisions, approval tasks, durable call
+records, redaction, and external-effect idempotency across custom harnesses.
 
 Remote skill strings use the stable skills.sh `owner/repository/slug` form. Local skills can point at a directory containing `SKILL.md` or at the file itself. Remote skills are resolved through the authenticated skills.sh API when Vercel OIDC is available, with public GitHub repositories as the portable fallback. Set `GITHUB_TOKEN` only when you need higher GitHub API limits.
 

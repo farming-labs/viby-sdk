@@ -20,6 +20,7 @@ import type { GeneratorInput, GeneratorOutput } from "../src/generator.js";
 import { SkillResolver } from "../src/skills.js";
 import { sha256 } from "../src/utils.js";
 import { MemoryRepository } from "./helpers/memory-repository.js";
+import { defineToolSource } from "../src/tool-source.js";
 
 const usage: LanguageModelUsage = {
   inputTokens: 1,
@@ -317,4 +318,81 @@ test("resumes a remote run from a durable engine checkpoint", async () => {
   assert.equal(starts, 1);
   assert.deepEqual(after, [null, "event-1"]);
   assert.equal(checkpoint, null);
+});
+
+test("projects authorized durable tools into a custom generation engine", async () => {
+  let externalCalls = 0;
+  const issues = defineToolSource<"farm">({
+    id: "issues",
+    async list() {
+      return [{
+        name: "create",
+        description: "Create an issue.",
+        inputSchema: {
+          type: "object",
+          properties: { title: { type: "string" } },
+          required: ["title"],
+        },
+        effect: "external",
+        permissions: ["issues.create"],
+      }];
+    },
+    async call({ arguments: arguments_ }) {
+      externalCalls += 1;
+      return { id: "issue-1", title: arguments_.title ?? null };
+    },
+  });
+  const engine = defineGenerationEngine<"farm">({
+    identity: { provider: "custom-runtime", model: "tool-agent-v1" },
+    capabilities: { toolCalls: true },
+    async generate(_generationInput, options) {
+      const [definition] = await options?.tools?.list() ?? [];
+      assert.equal(definition?.name, "issues__create");
+      const result = await options!.tools!.invoke({
+        name: definition!.name,
+        providerCallId: "custom-call-1",
+        arguments: { title: "Fix navigation" },
+      });
+      assert.deepEqual(result, { id: "issue-1", title: "Fix navigation" });
+      return projectOutput();
+    },
+  });
+  const repository = new MemoryRepository();
+  const viby = createVibyWithDependencies(
+    {
+      framework: "farm",
+      generation: { engine },
+      tools: { sources: { issues } },
+    },
+    { repository, skillResolver: new SkillResolver({}) },
+  );
+  try {
+    const chat = await viby
+      .forUser({ tenantId: "tenant-tools", userId: "user-tools" })
+      .chats.create();
+    const generation = await chat.start({ prompt: "Create an issue and build the project" });
+    let outcome = await generation.wait({ pollIntervalMs: 10 });
+    assert.equal(outcome.status, "waiting");
+    if (outcome.status !== "waiting") throw new Error("Expected a tool approval task.");
+    const [task] = outcome.tasks;
+    assert.equal(task?.kind, "permission");
+    if (!task || task.kind !== "permission") throw new Error("Expected a permission task.");
+    assert.equal(task.proposedToolAction?.source, "issues");
+    assert.equal(task.proposedToolAction?.tool, "create");
+    assert.equal(externalCalls, 0);
+
+    await generation.resolve({
+      taskId: task.id,
+      resolution: { kind: "permission", decision: "allow" },
+    });
+    outcome = await generation.wait({ pollIntervalMs: 10 });
+    assert.equal(outcome.status, "succeeded");
+    assert.equal(externalCalls, 1);
+    const [toolCall] = await generation.toolCalls();
+    assert.equal(toolCall?.name, "tool-source.issues.create");
+    assert.equal(toolCall?.status, "succeeded");
+    assert.equal(toolCall?.idempotencyKey, task.proposedToolAction?.idempotencyKey);
+  } finally {
+    await viby.close();
+  }
 });

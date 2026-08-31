@@ -210,6 +210,10 @@ import {
 import type { SecretStore, SecretStorePutInput } from "./integration-store.js";
 import type { ToolSource, ToolSourcesRuntimeConfig } from "./tool-source.js";
 import {
+  AuthorizedGenerationEngineTools,
+  GenerationEngineToolApprovalRequiredError,
+} from "./generation-engine-tools.js";
+import {
   ToolSourceRegistry,
   type CreateToolSourceInput,
   type ToolSourceRegistrationData,
@@ -682,16 +686,13 @@ class VibyClient<Framework extends FrameworkId> implements Viby<Framework> {
       config.preview,
     );
     this.#skillResolver = dependencies.skillResolver;
-    this.#models = new GenerationModelRegistry(
-      config,
-      dependencies,
-      config.tools
-        ? {
-            ...config.tools,
-            registry: this.#toolSourceRegistry,
-          }
-        : undefined,
-    );
+    const tools = config.tools
+      ? {
+          ...config.tools,
+          registry: this.#toolSourceRegistry,
+        }
+      : undefined;
+    this.#models = new GenerationModelRegistry(config, dependencies, tools);
     this.#skills = normalizeSkillGroups(withFrameworkSkill(config.framework, config.skills));
     const quality = normalizeGenerationQuality(config.generation?.quality);
     const workspace = normalizeGenerationWorkspace(config.generation?.workspace);
@@ -710,6 +711,7 @@ class VibyClient<Framework extends FrameworkId> implements Viby<Framework> {
       repository: this.#repository,
       models: this.#models,
       skillResolver: this.#skillResolver,
+      tools,
       registry: this.#registry,
       automatic: normalizeGenerationExecution(config.generation) === "embedded",
       sandbox: this.#sandbox,
@@ -3131,6 +3133,7 @@ interface RunnerDependencies<Framework extends FrameworkId> {
   readonly repository: Repository;
   readonly models: GenerationModelRegistry<Framework>;
   readonly skillResolver: SkillResolver;
+  readonly tools: ToolSourcesRuntimeConfig<Framework> | undefined;
   readonly registry: GenerationRunRegistry;
   readonly automatic: boolean;
   readonly sandbox: SandboxAdapter | undefined;
@@ -3481,9 +3484,29 @@ class GenerationRunner<Framework extends FrameworkId> {
         }
       }
 
-      const output = await this.#dependencies.models
-        .resolveGeneration(generation)
-        .generator.generate(
+      const toolContext = {
+        ...scope,
+        chatId: chat.id,
+        generationId,
+        attemptId,
+        framework: chat.framework,
+        metadata: chat.metadata,
+        ...(generation.configuration.toolSources === undefined
+          ? {}
+          : { toolSourceSnapshots: generation.configuration.toolSources }),
+        signal,
+      };
+      const binding = this.#dependencies.models.resolveGeneration(generation);
+      const engineTools = binding.capabilities.toolCalls && this.#dependencies.tools
+        ? new AuthorizedGenerationEngineTools({
+            config: this.#dependencies.tools,
+            context: toolContext,
+            tasks,
+            toolCalls,
+            readOnly: generation.configuration.operation === "inspect",
+          })
+        : undefined;
+      const output = await binding.generator.generate(
           {
             framework: chat.framework,
             operation: generation.configuration.operation ?? "change",
@@ -3505,18 +3528,7 @@ class GenerationRunner<Framework extends FrameworkId> {
             attachments: attachments.filter(
               (attachment) => !queuedSteeringMessageIds.has(attachment.messageId),
             ),
-            toolContext: {
-              ...scope,
-              chatId: chat.id,
-              generationId,
-              attemptId,
-              framework: chat.framework,
-              metadata: chat.metadata,
-              ...(generation.configuration.toolSources === undefined
-                ? {}
-                : { toolSourceSnapshots: generation.configuration.toolSources }),
-              signal,
-            },
+            toolContext,
             ...(sandbox ? { sandbox } : {}),
           },
           {
@@ -3536,6 +3548,7 @@ class GenerationRunner<Framework extends FrameworkId> {
               attemptId,
               leaseToken,
             ),
+            ...(engineTools ? { tools: engineTools } : {}),
             steering: new DurableGenerationSteering(
               this.#dependencies.repository,
               scope,
@@ -3818,7 +3831,32 @@ class GenerationRunner<Framework extends FrameworkId> {
       );
       safeSetSpanStatus(telemetrySpan, "ok");
     } catch (error) {
-      if (error instanceof GenerationSteeringPendingError) {
+      if (error instanceof GenerationEngineToolApprovalRequiredError) {
+        await trace.finish().catch(() => undefined);
+        const task = error.task();
+        await this.#dependencies.repository.pauseGeneration(scope, {
+          generationId,
+          attemptId,
+          leaseToken,
+          taskId: createId(),
+          task,
+          assistantParts: [
+            ...trace.completedParts(),
+            { type: "status", data: { message: task.message, state: "waiting" } },
+            { type: "text", data: { text: task.message } },
+            usageMessagePart(null, null, null, null, elapsedAttemptMs(attemptStartedAt)),
+          ],
+          inputTokens: null,
+          outputTokens: null,
+          totalTokens: null,
+          finishReason: "tool-approval-required",
+          cost: null,
+          artifacts: [],
+        });
+        telemetryOutcome = "waiting";
+        safeSetSpanStatus(telemetrySpan, "ok");
+        return;
+      } else if (error instanceof GenerationSteeringPendingError) {
         if (steeringRestarts >= MAX_STEERING_SETTLEMENT_RESTARTS) {
           await this.#dependencies.repository
             .failGenerationAttempt(
