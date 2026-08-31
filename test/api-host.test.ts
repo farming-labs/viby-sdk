@@ -238,6 +238,29 @@ test("hosts chat, message, stream, task, preview, and download flows with Web AP
     const messages = await requestJson(api, `/chats/${chatId}/messages?limit=10`);
     const firstMessageId = string(object(array(messages.messages)[0]).id);
     assert.equal(object((await requestJson(api, `/chats/${chatId}/messages/${firstMessageId}`)).message).id, firstMessageId);
+    const assistantMessageId = string(object(array(messages.messages).find(
+      (value) => object(value).role === "assistant",
+    )).id);
+    const submittedFeedback = await requestJson(
+      api,
+      `/chats/${chatId}/messages/${assistantMessageId}/feedback`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          rating: "positive",
+          reasons: ["helpful"],
+          comment: "Clear result",
+          idempotencyKey: "api-feedback-1",
+        }),
+      },
+      201,
+    );
+    assert.equal(object(submittedFeedback.feedback).messageId, assistantMessageId);
+    const feedback = await requestJson(
+      api,
+      `/chats/${chatId}/messages/${assistantMessageId}/feedback`,
+    );
+    assert.equal(array(feedback.feedback).length, 1);
 
     const preview = await requestJson(api, `/chats/${chatId}/versions/${versionId}/preview`, {
       method: "POST",

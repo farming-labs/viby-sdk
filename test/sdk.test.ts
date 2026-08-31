@@ -409,6 +409,58 @@ test("persists typed ordered message parts with message, generation, and attempt
   await viby.close();
 });
 
+test("records immutable tenant-scoped feedback for generated assistant messages", async () => {
+  const { viby } = setup();
+  const chat = await viby
+    .forUser({ tenantId: "tenant-feedback", userId: "user-feedback" })
+    .chats.create({ title: "Feedback" });
+  await chat.generate({ prompt: "Build a dashboard" });
+  const messages = (await chat.listMessages()).items;
+  const assistant = messages.find((message) => message.role === "assistant")!;
+  const user = messages.find((message) => message.role === "user")!;
+
+  const feedback = await chat.submitFeedback(assistant.id, {
+    rating: "positive",
+    reasons: ["helpful", "well-designed", "helpful"],
+    comment: "  Strong information hierarchy.  ",
+    metadata: { surface: "chat" },
+    idempotencyKey: "thumb-up-v1",
+  });
+  assert.equal(feedback.messageId, assistant.id);
+  assert.equal(feedback.generationId, assistant.generationId);
+  assert.equal(feedback.versionId !== null, true);
+  assert.equal(feedback.modelProvider, "test");
+  assert.deepEqual(feedback.reasons, ["helpful", "well-designed"]);
+  assert.equal(feedback.comment, "Strong information hierarchy.");
+
+  const replay = await chat.submitFeedback(assistant.id, {
+    rating: "positive",
+    reasons: ["helpful", "well-designed", "helpful"],
+    comment: "Strong information hierarchy.",
+    metadata: { surface: "chat" },
+    idempotencyKey: "thumb-up-v1",
+  });
+  assert.equal(replay.id, feedback.id);
+  assert.deepEqual(await chat.listFeedback(assistant.id), [feedback]);
+  await assert.rejects(
+    () => chat.submitFeedback(assistant.id, {
+      rating: "negative",
+      idempotencyKey: "thumb-up-v1",
+    }),
+    ConfigurationError,
+  );
+  await assert.rejects(
+    () => chat.submitFeedback(user.id, { rating: "positive" }),
+    NotFoundError,
+  );
+
+  const other = await viby
+    .forUser({ tenantId: "tenant-feedback", userId: "other-user" })
+    .chats.create({ title: "Other" });
+  assert.deepEqual(await other.listFeedback(assistant.id), []);
+  await viby.close();
+});
+
 test("delivers resumable durable events as signed provider-neutral envelopes", async () => {
   const repository = new MemoryRepository();
   const generator = new FakeGenerator<"farm">();

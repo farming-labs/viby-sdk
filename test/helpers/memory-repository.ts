@@ -126,6 +126,10 @@ import type {
   UpsertToolSourceConnectionRecord,
 } from "../../src/tool-source-authorization.js";
 import type { GenerationEngineCheckpointData } from "../../src/generator.js";
+import type {
+  CreateMessageFeedbackRecord,
+  MessageFeedbackData,
+} from "../../src/message-feedback.js";
 
 interface ScopedRecord {
   tenantId: string;
@@ -157,6 +161,7 @@ type MemoryOutboundEventDelivery = OutboundEventDeliveryData &
   };
 
 type MemoryGenerationEngineCheckpoint = GenerationEngineCheckpointData & ScopedRecord;
+type MemoryMessageFeedback = MessageFeedbackData & ScopedRecord;
 
 export class MemoryRepository implements Repository {
   readonly chats = new Map<string, MemoryChatRecord>();
@@ -165,6 +170,7 @@ export class MemoryRepository implements Repository {
   readonly versions = new Map<string, VersionData & ScopedRecord>();
   readonly designEvaluations = new Map<string, DesignEvaluationData & ScopedRecord>();
   readonly messages: Array<MessageData & ScopedRecord> = [];
+  readonly messageFeedback = new Map<string, MemoryMessageFeedback>();
   readonly attachments = new Map<string, AttachmentContent & ScopedRecord>();
   readonly generatedArtifacts = new Map<string, GeneratedArtifactContent & ScopedRecord>();
   readonly visualArtifacts = new Map<string, VisualArtifactContent & ScopedRecord>();
@@ -1979,6 +1985,85 @@ export class MemoryRepository implements Repository {
         (message) => message.id === id && message.chatId === chatId && inScope(message, scope),
       ) ?? null
     );
+  }
+
+  async createMessageFeedback(
+    scope: UserScope,
+    input: CreateMessageFeedbackRecord,
+  ): Promise<MessageFeedbackData> {
+    const message = this.messages.find(
+      (candidate) =>
+        candidate.id === input.messageId &&
+        candidate.chatId === input.chatId &&
+        candidate.role === "assistant" &&
+        candidate.generationId !== null &&
+        inScope(candidate, scope),
+    );
+    const attemptId = message?.parts.find((part) => part.attemptId !== null)?.attemptId ?? null;
+    if (attemptId === null) throw new NotFoundError("Assistant message");
+    const attempt = attemptId ? this.attempts.get(attemptId) : null;
+    if (!message?.generationId || !attempt || !inScope(attempt, scope)) {
+      throw new NotFoundError("Assistant message");
+    }
+    if (input.idempotencyKey) {
+      const existing = [...this.messageFeedback.values()].find(
+        (feedback) =>
+          feedback.messageId === input.messageId &&
+          feedback.idempotencyKey === input.idempotencyKey &&
+          inScope(feedback, scope),
+      );
+      if (existing) {
+        if (
+          existing.rating !== input.rating ||
+          existing.comment !== input.comment ||
+          JSON.stringify(existing.reasons) !== JSON.stringify(input.reasons) ||
+          JSON.stringify(existing.metadata) !== JSON.stringify(input.metadata)
+        ) {
+          throw new ConfigurationError(
+            "Message feedback idempotency key was already used with different input.",
+          );
+        }
+        return existing;
+      }
+    }
+    const version = [...this.versions.values()].find(
+      (candidate) => candidate.generationId === message.generationId && inScope(candidate, scope),
+    );
+    const feedback: MemoryMessageFeedback = {
+      id: input.id,
+      chatId: input.chatId,
+      messageId: input.messageId,
+      generationId: message.generationId,
+      attemptId,
+      versionId: version?.id ?? null,
+      modelProvider: attempt.modelProvider,
+      modelId: attempt.modelId,
+      rating: input.rating,
+      reasons: [...input.reasons],
+      comment: input.comment,
+      metadata: JSON.parse(JSON.stringify(input.metadata)) as ChatMetadata,
+      idempotencyKey: input.idempotencyKey,
+      createdAt: new Date(),
+      ...scope,
+    };
+    this.messageFeedback.set(feedback.id, feedback);
+    return feedback;
+  }
+
+  async listMessageFeedback(
+    scope: UserScope,
+    chatId: string,
+    messageId: string,
+  ): Promise<MessageFeedbackData[]> {
+    return [...this.messageFeedback.values()]
+      .filter(
+        (feedback) =>
+          feedback.chatId === chatId && feedback.messageId === messageId && inScope(feedback, scope),
+      )
+      .sort(
+        (left, right) =>
+          left.createdAt.getTime() - right.createdAt.getTime() || left.id.localeCompare(right.id),
+      );
   }
 
   async getAttachment(

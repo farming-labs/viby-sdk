@@ -33,6 +33,7 @@ import type {
 } from "./integrations.js";
 import type { PreviewEventListener, PreviewSessionData } from "./preview.js";
 import type { ToolSourceRegistrationStatus } from "./tool-source-registry.js";
+import type { SubmitMessageFeedbackInput } from "./message-feedback.js";
 
 const DEFAULT_BASE_PATH = "/api/viby";
 const DEFAULT_BODY_BYTES = 10 * 1024 * 1024;
@@ -315,6 +316,16 @@ async function route<Framework extends FrameworkId>(
       }
       if (segments.length === 4 && request.method === "GET") {
         return json({ message: await chat.getMessage(segments[3]!) });
+      }
+      if (segments.length === 5 && segments[4] === "feedback") {
+        if (request.method === "GET") {
+          return json({ feedback: await chat.listFeedback(segments[3]!) });
+        }
+        if (request.method === "POST") {
+          const body = await requestObject(request, maxBodyBytes);
+          return json({ feedback: await chat.submitFeedback(segments[3]!, feedbackInput(body)) }, 201);
+        }
+        return methodNotAllowed("GET, POST");
       }
       return methodNotAllowed("GET, POST");
     }
@@ -1356,6 +1367,27 @@ function booleanValue(value: unknown, name: string): boolean {
 function stringArray(value: unknown, name: string, itemMax: number): readonly string[] {
   if (!Array.isArray(value)) throw new ConfigurationError(`${name} must be an array of strings.`);
   return value.map((item, index) => requiredString(item, `${name}[${index}]`, itemMax));
+}
+
+function feedbackInput(body: Readonly<Record<string, unknown>>): SubmitMessageFeedbackInput {
+  if (body.rating !== "positive" && body.rating !== "negative") {
+    throw new ConfigurationError("rating must be positive or negative.");
+  }
+  return {
+    rating: body.rating,
+    ...(body.reasons === undefined
+      ? {}
+      : { reasons: stringArray(body.reasons, "reasons", 100) }),
+    ...(body.comment === undefined
+      ? {}
+      : { comment: body.comment === null ? null : stringValue(body.comment, "comment", 4_000) }),
+    ...(body.metadata === undefined
+      ? {}
+      : { metadata: jsonObject(body.metadata, "metadata") }),
+    ...(body.idempotencyKey === undefined
+      ? {}
+      : { idempotencyKey: requiredString(body.idempotencyKey, "idempotencyKey", 200) }),
+  };
 }
 
 function sourceChanges(value: unknown): readonly SourceChange[] {

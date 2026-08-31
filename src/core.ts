@@ -13,6 +13,7 @@ export * from "./environment.js";
 export * from "./artifact-store.js";
 export * from "./generation-engine.js";
 export { GenerationEngineToolApprovalRequiredError } from "./generation-engine-tools.js";
+export * from "./message-feedback.js";
 export type * from "./generation-quality.js";
 export * from "./http.js";
 export * from "./skill-resolver.js";

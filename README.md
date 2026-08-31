@@ -1400,6 +1400,25 @@ for (const message of messages) {
 
 The durable part types are `text`, `status`, `reasoning-summary`, `file-read`, `file-edit`, `search`, `command`, `tool-call`, `error`, and `usage`. File edits distinguish `create`, `update`, `delete`, and `move`; the legacy `write` value remains readable for records persisted by older releases. Each part is linked to its message and, when applicable, the logical generation and immutable attempt. `reasoning-summary` is provider-safe summary text; Viby does not expose or promise hidden model reasoning.
 
+Collect durable product feedback without coupling the SDK to an analytics or model provider:
+
+```ts
+const feedback = await chat.submitFeedback(assistantMessage.id, {
+  rating: "positive",
+  reasons: ["helpful", "well-designed"],
+  comment: "The generated hierarchy matches the brief.",
+  metadata: { surface: "preview" },
+  idempotencyKey: `thumb:${assistantMessage.id}`,
+});
+
+const feedbackHistory = await chat.listFeedback(assistantMessage.id);
+```
+
+Each immutable record retains the exact message, generation, attempt, model identity, and nullable
+generated version. Idempotency keys prevent duplicate votes, and every operation remains scoped by
+tenant and user. The Web client exposes the same behavior through
+`client.chats.messages.submitFeedback()` and `listFeedback()`.
+
 ## Skill categories
 
 Built-in categories are `core`, `product`, `design`, `frontend`, `backend`, `data`, `ai`, `testing`, `security`, `accessibility`, `performance`, and `delivery`. Custom category names are accepted.
