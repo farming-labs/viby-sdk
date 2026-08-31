@@ -129,7 +129,7 @@ checksum-verified before later attempts reuse them.
 | `latestVersion()` | Returns the newest version or `null` when the chat has no source yet. |
 | `getVersion(id)` | Loads one version from this chat. |
 | `listVersions({ limit?, after? })` | Returns a cursor page of immutable versions. |
-| `listMessages({ limit?, after? })` | Returns durable user and assistant messages in stable order. |
+| `listMessages({ limit?, after? })` | Returns durable user and assistant messages in strict chronological creation order. |
 | `getMessage(id)` | Loads one message by ID without scanning pages. |
 | `submitFeedback(messageId, input)` | Appends immutable, idempotent feedback for a generated assistant message. |
 | `listFeedback(messageId)` | Lists durable feedback for one assistant message in creation order. |
@@ -138,6 +138,10 @@ checksum-verified before later attempts reuse them.
 Assistant messages include an optional provider-neutral finish reason and ordered typed parts such as
 text, status, reasoning summary, file activity, search, command, tool calls, errors, and usage.
 Incomplete trace parts never become final message parts.
+
+Message timestamps are strictly increasing within a chat. This keeps creation order and opaque
+cursor pagination deterministic even when a user message and its assistant response are committed
+within the same clock millisecond.
 
 Feedback records retain the message, generation, attempt, model, and nullable version attribution.
 See [Message feedback](/docs/api/message-feedback) for rating, reason, metadata, idempotency, and Web

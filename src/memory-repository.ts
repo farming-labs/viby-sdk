@@ -3060,7 +3060,11 @@ export class MemoryRepository implements Repository {
   }
 
   #addMessage(scope: UserScope, input: MemoryMessageInput): MessageData & ScopedRecord {
-    const message = createMemoryMessage(scope, input);
+    const previousCreatedAt = this.messages
+      .filter((message) => message.chatId === input.chatId && inScope(message, scope))
+      .reduce((latest, message) => Math.max(latest, message.createdAt.getTime()), -1);
+    const createdAt = new Date(Math.max(input.createdAt.getTime(), previousCreatedAt + 1));
+    const message = createMemoryMessage(scope, { ...input, createdAt });
     this.messages.push(message);
     for (const [index, attachment] of (input.attachments ?? []).entries()) {
       const data = message.attachments[index]!;
