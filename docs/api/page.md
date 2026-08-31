@@ -17,6 +17,8 @@ stable public shape; behavior sections explain durability, scope, side effects, 
   capability-discovered agent, runtime, or orchestrator while preserving Viby durability.
 - [Chats and projects](/docs/api/chats) — create, import, search, update, delete, restore, messages,
   project environments, and history.
+- [Message feedback](/docs/api/message-feedback) — durable ratings and product feedback attributed
+  to exact assistant messages, attempts, models, and versions.
 - [Generations and events](/docs/api/generations) — start, stream, wait, cancel, retry, resume,
   tasks, artifacts, outbound delivery, and workers.
 - [Versions and artifacts](/docs/api/versions) — source inspection, immutable changes, iteration,

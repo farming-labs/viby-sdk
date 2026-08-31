@@ -153,6 +153,11 @@ import {
 } from "./cursors.js";
 import { normalizeDesignEvaluation } from "./design-evaluations.js";
 import { normalizeChatMetadata } from "./metadata.js";
+import {
+  normalizeMessageFeedback,
+  type MessageFeedbackData,
+  type SubmitMessageFeedbackInput,
+} from "./message-feedback.js";
 import { SandboxRegistry, type SandboxSession } from "./sandbox.js";
 import { isDatabaseAdapter } from "./storage.js";
 import { EnvironmentManager, type EnvironmentVariableCollection } from "./environment.js";
@@ -1570,6 +1575,31 @@ export class Chat<Framework extends FrameworkId = FrameworkId> {
     );
     if (!message) throw new NotFoundError("Message");
     return message;
+  }
+
+  /** Records immutable, tenant-scoped feedback for a generated assistant message. */
+  async submitFeedback(
+    messageId: string,
+    input: SubmitMessageFeedbackInput,
+  ): Promise<MessageFeedbackData> {
+    await this.#assertActive();
+    const normalized = normalizeMessageFeedback(input);
+    return this.#dependencies.repository.createMessageFeedback(this.#dependencies.scope, {
+      id: createId(),
+      chatId: this.id,
+      messageId: assertIdentifier(messageId, "message id"),
+      ...normalized,
+    });
+  }
+
+  /** Lists feedback records in creation order for one generated assistant message. */
+  async listFeedback(messageId: string): Promise<readonly MessageFeedbackData[]> {
+    await this.#assertActive();
+    return this.#dependencies.repository.listMessageFeedback(
+      this.#dependencies.scope,
+      this.id,
+      assertIdentifier(messageId, "message id"),
+    );
   }
 
   async getAttachment(id: string): Promise<AttachmentContent> {

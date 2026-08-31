@@ -17,6 +17,7 @@ export interface PersistenceConformanceReport {
     | "readiness"
     | "chat-metadata"
     | "durable-generation"
+    | "message-feedback"
     | "generation-steering"
     | "generation-checkpoints"
     | "event-cursors"
@@ -133,6 +134,39 @@ export async function verifyPersistenceAdapter(
       "Version files changed.",
     );
     checks.push("durable-generation");
+
+    const assistant = (await chat.listMessages()).items.find(
+      (message) => message.role === "assistant",
+    );
+    assertConformance(assistant !== undefined, "Generated assistant message was missing.");
+    const feedback = await chat.submitFeedback(assistant!.id, {
+      rating: "positive",
+      reasons: ["helpful"],
+      metadata: { conformance: true },
+      idempotencyKey: `feedback-${suffix}`,
+    });
+    const replayedFeedback = await chat.submitFeedback(assistant!.id, {
+      rating: "positive",
+      reasons: ["helpful"],
+      metadata: { conformance: true },
+      idempotencyKey: `feedback-${suffix}`,
+    });
+    assertConformance(
+      replayedFeedback.id === feedback.id &&
+        (await chat.listFeedback(assistant!.id))[0]?.id === feedback.id &&
+        feedback.versionId === outcome.version.id,
+      "Message feedback was not durable or idempotent.",
+    );
+    const feedbackOutsider = viby.forUser({
+      tenantId: scope.tenantId,
+      userId: `outsider-${suffix}`,
+    });
+    const outsiderChat = await feedbackOutsider.chats.create({ title: "Feedback isolation" });
+    assertConformance(
+      (await outsiderChat.listFeedback(assistant!.id)).length === 0,
+      "Message feedback was not isolated by owner.",
+    );
+    checks.push("message-feedback");
 
     const steeringGenerationId = crypto.randomUUID();
     const steeringAttemptId = crypto.randomUUID();

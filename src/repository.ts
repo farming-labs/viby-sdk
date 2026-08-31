@@ -64,6 +64,10 @@ import type {
   GenerationEngineCheckpointData,
   SaveGenerationEngineCheckpointInput,
 } from "./generator.js";
+import type {
+  CreateMessageFeedbackRecord,
+  MessageFeedbackData,
+} from "./message-feedback.js";
 
 export interface ImportChatRecord<Framework extends FrameworkId = FrameworkId> {
   readonly chatId: string;
@@ -684,6 +688,15 @@ extends DeploymentHistoryStore, PreviewSessionStore, ToolSourceRegistryStore, To
   ): Promise<RepositoryPage<DesignEvaluationData>>;
   listMessages(scope: UserScope, chatId: string): Promise<MessageData[]>;
   getMessage(scope: UserScope, chatId: string, id: string): Promise<MessageData | null>;
+  createMessageFeedback(
+    scope: UserScope,
+    input: CreateMessageFeedbackRecord,
+  ): Promise<MessageFeedbackData>;
+  listMessageFeedback(
+    scope: UserScope,
+    chatId: string,
+    messageId: string,
+  ): Promise<MessageFeedbackData[]>;
   getAttachment(scope: UserScope, chatId: string, id: string): Promise<AttachmentContent | null>;
   listGenerationAttachments(
     scope: UserScope,

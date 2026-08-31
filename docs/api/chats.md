@@ -131,11 +131,17 @@ checksum-verified before later attempts reuse them.
 | `listVersions({ limit?, after? })` | Returns a cursor page of immutable versions. |
 | `listMessages({ limit?, after? })` | Returns durable user and assistant messages in stable order. |
 | `getMessage(id)` | Loads one message by ID without scanning pages. |
+| `submitFeedback(messageId, input)` | Appends immutable, idempotent feedback for a generated assistant message. |
+| `listFeedback(messageId)` | Lists durable feedback for one assistant message in creation order. |
 | `getAttachment(id)` | Reads scoped attachment bytes and verified metadata from the artifact store. |
 
 Assistant messages include an optional provider-neutral finish reason and ordered typed parts such as
 text, status, reasoning summary, file activity, search, command, tool calls, errors, and usage.
 Incomplete trace parts never become final message parts.
+
+Feedback records retain the message, generation, attempt, model, and nullable version attribution.
+See [Message feedback](/docs/api/message-feedback) for rating, reason, metadata, idempotency, and Web
+API behavior.
 
 ### Repository and deployment history
 

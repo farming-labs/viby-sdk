@@ -69,6 +69,10 @@ import type {
   DeploymentProjectLinkData,
   DeploymentRecordData,
 } from "./deployment-history.js";
+import type {
+  MessageFeedbackData,
+  SubmitMessageFeedbackInput,
+} from "./message-feedback.js";
 
 const DEFAULT_BASE_URL = "/api/viby";
 const DEFAULT_MAX_RECONNECTS = 5;
@@ -88,6 +92,7 @@ export type VibyApiVersion<Framework extends FrameworkId = FrameworkId> = VibyAp
   VersionData<Framework>
 >;
 export type VibyApiMessage = VibyApiJson<MessageData>;
+export type VibyApiMessageFeedback = VibyApiJson<MessageFeedbackData>;
 export type VibyApiGeneration = VibyApiJson<GenerationData>;
 export type VibyApiGenerationAttempt = VibyApiJson<GenerationAttemptData>;
 export type VibyApiGenerationTask = VibyApiJson<GenerationTaskData>;
@@ -428,6 +433,17 @@ export interface VibyWebChatsClient<Framework extends FrameworkId = FrameworkId>
       input: VibyWebGenerationInput,
       options?: VibyWebRequestOptions,
     ): Promise<{ readonly generation: VibyWebGenerationReference }>;
+    submitFeedback(
+      chatId: string,
+      messageId: string,
+      input: SubmitMessageFeedbackInput,
+      options?: VibyWebRequestOptions,
+    ): Promise<{ readonly feedback: VibyApiMessageFeedback }>;
+    listFeedback(
+      chatId: string,
+      messageId: string,
+      options?: VibyWebRequestOptions,
+    ): Promise<{ readonly feedback: readonly VibyApiMessageFeedback[] }>;
   };
   readonly versions: {
     list(chatId: string, options?: VibyWebPageOptions): Promise<VibyWebVersionPage<Framework>>;
@@ -874,6 +890,29 @@ export function createVibyWebClient<Framework extends FrameworkId = FrameworkId>
           undefined,
           request,
         )
+      ),
+      submitFeedback: (
+        chatId: string,
+        messageId: string,
+        input: SubmitMessageFeedbackInput,
+        request: VibyWebRequestOptions = {},
+      ) => transport.json<{ readonly feedback: VibyApiMessageFeedback }>(
+        "POST",
+        `/chats/${segment(chatId)}/messages/${segment(messageId)}/feedback`,
+        input,
+        undefined,
+        request,
+      ),
+      listFeedback: (
+        chatId: string,
+        messageId: string,
+        request: VibyWebRequestOptions = {},
+      ) => transport.json<{ readonly feedback: readonly VibyApiMessageFeedback[] }>(
+        "GET",
+        `/chats/${segment(chatId)}/messages/${segment(messageId)}/feedback`,
+        undefined,
+        undefined,
+        request,
       ),
     }),
     versions: {

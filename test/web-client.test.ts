@@ -131,6 +131,21 @@ test("consumes the Web API host through typed chat, stream, preview, and downloa
     const detail = await client.chats.get(created.chat.id);
     assert.equal(detail.messages.length, 2);
     assert.equal(detail.versions.length, 1);
+    const assistant = detail.messages.find((message) => message.role === "assistant")!;
+    const submittedFeedback = await client.chats.messages.submitFeedback(
+      created.chat.id,
+      assistant.id,
+      {
+        rating: "positive",
+        reasons: ["accurate"],
+        idempotencyKey: "web-feedback-1",
+      },
+    );
+    assert.equal(submittedFeedback.feedback.messageId, assistant.id);
+    assert.equal(
+      (await client.chats.messages.listFeedback(created.chat.id, assistant.id)).feedback.length,
+      1,
+    );
 
     const inspection = await client.chats.versions.inspect(
       created.chat.id,

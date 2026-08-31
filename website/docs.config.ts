@@ -79,6 +79,7 @@ export default {
           { label: "Client and configuration", slug: "api/client" },
           { label: "Generation engines", slug: "api/generation-engines" },
           { label: "Chats and projects", slug: "api/chats" },
+          { label: "Message feedback", slug: "api/message-feedback" },
           { label: "Generations and events", slug: "api/generations" },
           { label: "Versions and artifacts", slug: "api/versions" },
           { label: "Previews and sandboxes", slug: "api/previews" },

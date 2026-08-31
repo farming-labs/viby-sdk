@@ -105,6 +105,12 @@ import type {
 } from "./repository.js";
 import type { GenerationEngineCheckpointData } from "./generator.js";
 import type {
+  CreateMessageFeedbackRecord,
+  MessageFeedbackData,
+  MessageFeedbackRating,
+  MessageFeedbackReason,
+} from "./message-feedback.js";
+import type {
   BeginRepositoryPushRecord,
   CompleteRepositoryPushRecord,
   FailRepositoryPushRecord,
@@ -170,6 +176,31 @@ interface ChatRow {
   updated_at: Date;
   deleted_at: Date | null;
   purge_after: Date | null;
+}
+
+interface MessageFeedbackRow {
+  id: string;
+  chat_id: string;
+  message_id: string;
+  generation_id: string;
+  attempt_id: string;
+  version_id: string | null;
+  model_provider: string;
+  model_id: string;
+  rating: MessageFeedbackRating;
+  reasons: MessageFeedbackReason[];
+  comment: string | null;
+  metadata: ChatMetadata;
+  idempotency_key: string | null;
+  created_at: Date;
+}
+
+interface MessageFeedbackContextRow {
+  generation_id: string;
+  attempt_id: string;
+  version_id: string | null;
+  model_provider: string;
+  model_id: string;
 }
 
 interface GenerationRow {
@@ -690,6 +721,7 @@ export class PostgresRepository implements Repository {
         to_regclass('viby.chats') IS NOT NULL
         AND to_regclass('viby.generation_attempts') IS NOT NULL
         AND to_regclass('viby.generation_engine_checkpoints') IS NOT NULL
+        AND to_regclass('viby.message_feedback') IS NOT NULL
         AND to_regclass('viby.generation_events') IS NOT NULL
         AND to_regclass('viby.generation_tasks') IS NOT NULL
         AND to_regclass('viby.generation_steering') IS NOT NULL
@@ -3275,6 +3307,97 @@ export class PostgresRepository implements Repository {
     return (await this.#messagesWithParts(scope, rows))[0] ?? null;
   }
 
+  async createMessageFeedback(
+    scope: UserScope,
+    input: CreateMessageFeedbackRecord,
+  ): Promise<MessageFeedbackData> {
+    await this.assertReady();
+    const [context] = await this.#sql<MessageFeedbackContextRow[]>`
+      SELECT message.generation_id, part.attempt_id, version.id AS version_id,
+        attempt.model_provider, attempt.model_id
+      FROM viby.messages AS message
+      JOIN viby.chats AS chat ON chat.id = message.chat_id
+      JOIN LATERAL (
+        SELECT candidate.attempt_id
+        FROM viby.message_parts AS candidate
+        WHERE candidate.tenant_id = message.tenant_id
+          AND candidate.user_id = message.user_id
+          AND candidate.message_id = message.id
+          AND candidate.attempt_id IS NOT NULL
+        ORDER BY candidate.position
+        LIMIT 1
+      ) AS part ON true
+      JOIN viby.generation_attempts AS attempt ON attempt.id = part.attempt_id
+      LEFT JOIN viby.versions AS version ON version.generation_id = message.generation_id
+      WHERE message.tenant_id = ${scope.tenantId} AND message.user_id = ${scope.userId}
+        AND message.chat_id = ${input.chatId} AND message.id = ${input.messageId}
+        AND message.role = 'assistant' AND message.generation_id IS NOT NULL
+        AND chat.deleted_at IS NULL
+      LIMIT 1
+    `;
+    if (!context) throw new NotFoundError("Assistant message");
+
+    const inserted = await this.#sql<MessageFeedbackRow[]>`
+      INSERT INTO viby.message_feedback (
+        id, tenant_id, user_id, chat_id, message_id, generation_id, attempt_id,
+        version_id, model_provider, model_id, rating, reasons, comment, metadata,
+        idempotency_key
+      ) VALUES (
+        ${input.id}, ${scope.tenantId}, ${scope.userId}, ${input.chatId}, ${input.messageId},
+        ${context.generation_id}, ${context.attempt_id}, ${context.version_id},
+        ${context.model_provider}, ${context.model_id}, ${input.rating},
+        ${this.#sql.json([...input.reasons])}, ${input.comment},
+        ${this.#sql.json(JSON.parse(JSON.stringify(input.metadata)))}, ${input.idempotencyKey}
+      )
+      ON CONFLICT (tenant_id, user_id, message_id, idempotency_key) DO NOTHING
+      RETURNING id, chat_id, message_id, generation_id, attempt_id, version_id,
+        model_provider, model_id, rating, reasons, comment, metadata, idempotency_key, created_at
+    `;
+    if (inserted[0]) return mapMessageFeedback(inserted[0]);
+
+    const [existing] = await this.#sql<MessageFeedbackRow[]>`
+      SELECT id, chat_id, message_id, generation_id, attempt_id, version_id,
+        model_provider, model_id, rating, reasons, comment, metadata, idempotency_key, created_at
+      FROM viby.message_feedback
+      WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+        AND message_id = ${input.messageId} AND idempotency_key = ${input.idempotencyKey}
+      LIMIT 1
+    `;
+    if (!existing) throw new Error("Message feedback idempotency conflict could not be resolved.");
+    if (
+      existing.rating !== input.rating ||
+      existing.comment !== input.comment ||
+      JSON.stringify(existing.reasons) !== JSON.stringify(input.reasons) ||
+      JSON.stringify(existing.metadata) !== JSON.stringify(input.metadata)
+    ) {
+      throw new ConfigurationError(
+        "Message feedback idempotency key was already used with different input.",
+      );
+    }
+    return mapMessageFeedback(existing);
+  }
+
+  async listMessageFeedback(
+    scope: UserScope,
+    chatId: string,
+    messageId: string,
+  ): Promise<MessageFeedbackData[]> {
+    await this.assertReady();
+    const rows = await this.#sql<MessageFeedbackRow[]>`
+      SELECT feedback.id, feedback.chat_id, feedback.message_id, feedback.generation_id,
+        feedback.attempt_id, feedback.version_id, feedback.model_provider, feedback.model_id,
+        feedback.rating, feedback.reasons, feedback.comment, feedback.metadata,
+        feedback.idempotency_key, feedback.created_at
+      FROM viby.message_feedback AS feedback
+      JOIN viby.chats AS chat ON chat.id = feedback.chat_id
+      WHERE feedback.tenant_id = ${scope.tenantId} AND feedback.user_id = ${scope.userId}
+        AND feedback.chat_id = ${chatId} AND feedback.message_id = ${messageId}
+        AND chat.deleted_at IS NULL
+      ORDER BY feedback.created_at, feedback.id
+    `;
+    return rows.map(mapMessageFeedback);
+  }
+
   async getAttachment(
     scope: UserScope,
     chatId: string,
@@ -5362,6 +5485,25 @@ function mapMessagePart(row: MessagePartRow): MessagePart {
     data: row.data,
     createdAt: row.created_at,
   } as MessagePart;
+}
+
+function mapMessageFeedback(row: MessageFeedbackRow): MessageFeedbackData {
+  return {
+    id: row.id,
+    chatId: row.chat_id,
+    messageId: row.message_id,
+    generationId: row.generation_id,
+    attemptId: row.attempt_id,
+    versionId: row.version_id,
+    modelProvider: row.model_provider,
+    modelId: row.model_id,
+    rating: row.rating,
+    reasons: row.reasons,
+    comment: row.comment,
+    metadata: row.metadata,
+    idempotencyKey: row.idempotency_key,
+    createdAt: row.created_at,
+  };
 }
 
 async function insertGeneratedArtifacts(
