@@ -102,7 +102,7 @@ Preview URLs exist only when the configured adapter exposes port URLs and backgr
 | Repository workflows | connected provider handles for owners, repositories, branches, source import, complete immutable snapshot pushes, optimistic conflicts, pull requests, and optional merges |
 | Repository history | durable chat-to-repository links plus version-bound pending, pushed, conflict, and failed records with commits, pull requests, errors, timestamps, and idempotent replay |
 | Repository conformance | reusable disposable-repository suite covering discovery, source round-trips, pushes, stale-head conflicts, and pull requests |
-| Included repository adapters | GitHub App installation/user verification, short-lived token refresh and revocation, and exact Git Data pushes; Bitbucket Cloud OAuth, rotating refresh tokens, workspace discovery, binary-safe source commits, branches, and pull requests |
+| Included repository adapters | GitHub App installation/user verification and exact Git Data pushes; GitLab OAuth for GitLab.com or self-managed instances with namespace discovery and commit/merge-request APIs; Bitbucket Cloud OAuth with workspace discovery and source commits |
 | Deployment workflows | connected provider handles for projects, immutable-version deployment, stable retry idempotency, status lookup, URLs, and optional cancellation |
 | Deployment history | durable chat-to-project links, version-bound deployment records, restart-safe idempotency, provider IDs and URLs, failures, and ordered status transitions |
 | Deployment preparation | adapter-declared source/prebuilt input; capability-gated sandbox install/build, immutable external build artifact, artifact reuse on retries, and unchanged raw-source downloads |
@@ -124,7 +124,7 @@ Product authentication, provider-app registration, public callback routes, event
 | Sandbox integration | shared conformance suite plus a real local Docker integration job |
 | Reference E2E | standard API host request-level chat → SSE → preview → iterate → ZIP download through real Viby objects and deterministic adapters |
 | Generated-project quality matrix | Farm, TanStack Start, and a custom framework ID across generation, runtime checks, preview HTTP, iteration, evaluation, and ZIP parity |
-| Live provider verification | explicit, environment-gated GitHub, Bitbucket, Vercel, and Cloudflare tests with disposable resources and failure-safe cleanup |
+| Live provider verification | explicit, environment-gated GitHub, GitLab, Bitbucket, Vercel, and Cloudflare tests with disposable resources and failure-safe cleanup |
 | Package smoke test | packed artifact install, public import, CLI, and exported subpaths |
 | Runtime compatibility | Node 20/22/24, Bun package import, portable dependency-graph guard, and Web Request/Response/streams/crypto behavior |
 

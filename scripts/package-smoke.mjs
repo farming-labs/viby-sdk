@@ -109,6 +109,8 @@ try {
     "dist/integration-github.d.ts",
     "dist/integration-bitbucket.js",
     "dist/integration-bitbucket.d.ts",
+    "dist/integration-gitlab.js",
+    "dist/integration-gitlab.d.ts",
     "dist/integration-vercel.js",
     "dist/integration-vercel.d.ts",
     "dist/integration-cloudflare.js",
@@ -191,6 +193,20 @@ try {
         'if (skillRead("./skills").source !== "file") throw new Error("skillRead export is invalid");',
         'if (!builtInFrameworks.includes("farmjs") || builtInFrameworks.includes("farm")) throw new Error("framework IDs are invalid");',
         'if (frameworkSkill("nextjs").files[0].path !== "SKILL.md") throw new Error("framework skill is invalid");',
+      ].join("\n"),
+    ],
+    { cwd: consumer },
+  );
+  await execute(
+    node,
+    [
+      "--input-type=module",
+      "--eval",
+      [
+        'import { gitlab, gitlabRepository, GitLabRepositoryError } from "@viby/sdk/integrations/gitlab";',
+        'if (typeof gitlab !== "function") throw new Error("GitLab repository adapter export is missing");',
+        'if (gitlabRepository !== gitlab) throw new Error("GitLab repository alias is invalid");',
+        'if (typeof GitLabRepositoryError !== "function") throw new Error("GitLab repository error export is missing");',
       ].join("\n"),
     ],
     { cwd: consumer },

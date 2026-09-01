@@ -41,7 +41,7 @@ const viby = createViby({
 
 `apiUrl`, `authorizationUrl`, `tokenUrl`, `scopes`, `fetch`, and source safety limits can be overridden for compatible gateways or tests. The adapter is for Bitbucket Cloud; provider-specific types do not enter Viby's core repository interfaces.
 
-GitHub and Bitbucket can coexist without changing the calling workflow:
+GitHub, GitLab, and Bitbucket can coexist without changing the calling workflow:
 
 ```ts
 integrations: {
