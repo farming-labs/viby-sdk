@@ -106,6 +106,7 @@ create external disposable resources; use dedicated test accounts and provider c
 | `@viby/sdk/integrations/deployment/conformance` | Disposable project create, deploy, lookup, idempotency, and cancellation tests. |
 | `@viby/sdk/integrations/github` | GitHub repository adapter. |
 | `@viby/sdk/integrations/bitbucket` | Bitbucket Cloud repository adapter. |
+| `@viby/sdk/integrations/gitlab` | GitLab.com and self-managed GitLab repository adapter. |
 | `@viby/sdk/integrations/vercel` | Vercel deployment adapter. |
 | `@viby/sdk/integrations/cloudflare` | Cloudflare Pages deployment adapter. |
 

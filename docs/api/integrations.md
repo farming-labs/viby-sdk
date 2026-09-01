@@ -122,6 +122,7 @@ callback without adding a Viby history record for arbitrary provider work.
 | --- | --- | --- |
 | GitHub repositories | `@viby/sdk/integrations/github` | [GitHub](/docs/integrations/github) |
 | Bitbucket repositories | `@viby/sdk/integrations/bitbucket` | [Bitbucket](/docs/integrations/bitbucket) |
+| GitLab repositories | `@viby/sdk/integrations/gitlab` | [GitLab](/docs/integrations/gitlab) |
 | Vercel deployments | `@viby/sdk/integrations/vercel` | [Vercel](/docs/integrations/vercel) |
 | Cloudflare Pages deployments | `@viby/sdk/integrations/cloudflare` | [Cloudflare](/docs/integrations/cloudflare) |
 

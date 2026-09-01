@@ -1,6 +1,7 @@
 import { bitbucket } from "../src/integration-bitbucket.js";
 import { cloudflare } from "../src/integration-cloudflare.js";
 import { github } from "../src/integration-github.js";
+import { gitlab } from "../src/integration-gitlab.js";
 import type { IntegrationCredential } from "../src/integrations.js";
 import {
   decodedCredential,
@@ -66,6 +67,17 @@ async function cleanupResource(resource: LiveCleanupResource): Promise<void> {
           + `/${encodeURIComponent(resource.name)}`,
         { method: "DELETE", headers: { authorization: `Bearer ${token}` } },
         [204, 404],
+      );
+      return;
+    }
+    case "gitlab": {
+      const token = await gitlabAccessToken();
+      const baseUrl = optionalEnvironment("VIBY_LIVE_GITLAB_BASE_URL") ?? "https://gitlab.com";
+      const project = encodeURIComponent(`${resource.owner}/${resource.name}`);
+      await providerRequest(
+        `${baseUrl.replace(/\/$/, "")}/api/v4/projects/${project}`,
+        { method: "DELETE", headers: { authorization: `Bearer ${token}` } },
+        [202, 204, 404],
       );
       return;
     }
@@ -160,6 +172,37 @@ async function bitbucketAccessToken(): Promise<string> {
     credential = await adapter.connection.refreshCredential!(credential, {
       tenantId: "live-provider-tests",
       userId: "bitbucket-cleanup",
+    });
+  }
+  return String(decodedCredential(credential).accessToken);
+}
+
+async function gitlabAccessToken(): Promise<string> {
+  const accessToken = optionalEnvironment("VIBY_LIVE_GITLAB_ACCESS_TOKEN")
+    ?? "refresh-required";
+  const refreshToken = optionalEnvironment("VIBY_LIVE_GITLAB_REFRESH_TOKEN");
+  if (accessToken === "refresh-required" && !refreshToken) {
+    requiredEnvironment("VIBY_LIVE_GITLAB_ACCESS_TOKEN");
+  }
+  let credential: IntegrationCredential = {
+    secret: encodedCredential({
+      version: 1,
+      accessToken,
+      refreshToken,
+      redirectUri: "https://localhost.invalid/viby-live-gitlab",
+    }),
+    expiresAt: null,
+    scopes: ["api"],
+  };
+  if (refreshToken) {
+    const adapter = gitlab({
+      clientId: requiredEnvironment("VIBY_LIVE_GITLAB_CLIENT_ID"),
+      clientSecret: requiredEnvironment("VIBY_LIVE_GITLAB_CLIENT_SECRET"),
+      baseUrl: optionalEnvironment("VIBY_LIVE_GITLAB_BASE_URL") ?? "https://gitlab.com",
+    });
+    credential = await adapter.connection.refreshCredential!(credential, {
+      tenantId: "live-provider-tests",
+      userId: "gitlab-cleanup",
     });
   }
   return String(decodedCredential(credential).accessToken);

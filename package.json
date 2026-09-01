@@ -168,6 +168,10 @@
       "types": "./dist/integration-bitbucket.d.ts",
       "import": "./dist/integration-bitbucket.js"
     },
+    "./integrations/gitlab": {
+      "types": "./dist/integration-gitlab.d.ts",
+      "import": "./dist/integration-gitlab.js"
+    },
     "./integrations/vercel": {
       "types": "./dist/integration-vercel.d.ts",
       "import": "./dist/integration-vercel.js"

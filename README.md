@@ -468,7 +468,7 @@ if (pushed.status === "conflict") {
 }
 ```
 
-Adapters receive a complete immutable source snapshot, including artifact-backed binary files. `expectedHead` provides portable optimistic concurrency for later iterations. Adapter authors can run `verifyRepositoryIntegration` from `@viby/sdk/integrations/repository/conformance` against a disposable provider repository. Included adapters cover [GitHub App installations](./docs/integrations/github.md) and [Bitbucket Cloud OAuth consumers](./docs/integrations/bitbucket.md).
+Adapters receive a complete immutable source snapshot, including artifact-backed binary files. `expectedHead` provides portable optimistic concurrency for later iterations. Adapter authors can run `verifyRepositoryIntegration` from `@viby/sdk/integrations/repository/conformance` against a disposable provider repository. Included adapters cover [GitHub App installations](./docs/integrations/github.md), [GitLab OAuth applications](./docs/integrations/gitlab.md), and [Bitbucket Cloud OAuth consumers](./docs/integrations/bitbucket.md).
 
 Deployment uses the same connected-handle pattern and exists only when the product configures an adapter:
 
@@ -1524,7 +1524,7 @@ Included now:
 - durable tenant-scoped integration authorization, refresh, reconnect, and disconnect lifecycle
 - encrypted PostgreSQL integration secret storage with custom store overrides
 - provider-neutral repository discovery, source import, immutable pushes, branches, pull requests, and conformance
-- GitHub and Bitbucket provider adapters behind the provider-neutral repository contract
+- GitHub, GitLab, and Bitbucket provider adapters behind the provider-neutral repository contract
 - Vercel and Cloudflare provider adapters behind the provider-neutral deployment contract
 - automatic sandbox preparation and immutable deployment artifacts for prebuilt providers
 - migration immutability plus schema-upgrade and public-API compatibility fixtures

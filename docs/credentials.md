@@ -215,7 +215,7 @@ pull-request, conflict, and source-limit behavior.
 
 ## 4. Configure the optional providers
 
-Cloudflare and Bitbucket use ordinary OAuth clients. Their client secrets are host credentials;
+Cloudflare, GitLab, and Bitbucket use ordinary OAuth clients. Their client secrets are host credentials;
 their returned user tokens stay encrypted behind the Viby secret-store boundary.
 
 ### Cloudflare Pages
@@ -248,6 +248,20 @@ BITBUCKET_CLIENT_SECRET=
 See the [Bitbucket repository integration](/docs/integrations/bitbucket) for workspace discovery,
 imports, pushes, pull requests, and Bitbucket's disconnect limitation.
 
+### GitLab
+
+Create a GitLab OAuth application with the exact callback URL and the `api` scope. Applications can
+be user-, group-, or instance-owned. For self-managed GitLab, retain the instance root URL too.
+
+```bash title=".env.local"
+GITLAB_CLIENT_ID=
+GITLAB_CLIENT_SECRET=
+GITLAB_BASE_URL=https://gitlab.com
+```
+
+See the [GitLab repository integration](/docs/integrations/gitlab) for GitLab.com, self-managed
+instances, namespace discovery, immutable pushes, and merge requests.
+
 ## 5. Configure Viby once
 
 Provider IDs are application-owned keys. The product can rename them, show friendly labels, and
@@ -258,6 +272,7 @@ import { createViby } from "@viby/sdk";
 import { openai } from "@ai-sdk/openai";
 import { github } from "@viby/sdk/integrations/github";
 import { bitbucket } from "@viby/sdk/integrations/bitbucket";
+import { gitlab } from "@viby/sdk/integrations/gitlab";
 import { cloudflare } from "@viby/sdk/integrations/cloudflare";
 import { vercel } from "@viby/sdk/integrations/vercel";
 
@@ -276,6 +291,11 @@ export const viby = createViby({
       bitbucket: bitbucket({
         clientId: env.BITBUCKET_CLIENT_ID,
         clientSecret: env.BITBUCKET_CLIENT_SECRET,
+      }),
+      gitlab: gitlab({
+        clientId: env.GITLAB_CLIENT_ID,
+        clientSecret: env.GITLAB_CLIENT_SECRET,
+        baseUrl: env.GITLAB_BASE_URL,
       }),
     },
     deployment: {

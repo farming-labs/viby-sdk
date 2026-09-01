@@ -9,7 +9,7 @@ import type {
   IntegrationSourceFile,
 } from "../../src/integrations.js";
 
-export type LiveProvider = "github" | "vercel" | "cloudflare" | "bitbucket";
+export type LiveProvider = "github" | "gitlab" | "vercel" | "cloudflare" | "bitbucket";
 
 export type LiveCleanupResource =
   | {
@@ -25,6 +25,12 @@ export type LiveCleanupResource =
       readonly name: string;
     }
   | {
+      readonly provider: "gitlab";
+      readonly kind: "repository";
+      readonly owner: string;
+      readonly name: string;
+    }
+  | {
       readonly provider: "cloudflare";
       readonly kind: "pages-project";
       readonly accountId: string;
@@ -37,7 +43,7 @@ export type LiveCleanupResource =
       readonly idempotencyKey: string;
     };
 
-const providers = new Set<LiveProvider>(["github", "vercel", "cloudflare", "bitbucket"]);
+const providers = new Set<LiveProvider>(["github", "gitlab", "vercel", "cloudflare", "bitbucket"]);
 const liveEnabled = process.env.VIBY_LIVE_PROVIDER_TESTS === "1";
 const selectedProviders = selectedLiveProviders();
 
