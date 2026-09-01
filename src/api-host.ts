@@ -635,6 +635,10 @@ async function route<Framework extends FrameworkId>(
       });
     }
     const generation = await user.generations.get(segments[1]);
+    if (segments[2] === "provider-requests" && segments.length === 3) {
+      if (request.method !== "GET") return methodNotAllowed("GET");
+      return json({ providerRequests: await generation.providerRequests() });
+    }
     if (segments[2] === "artifacts" && segments[3] && segments.length === 4) {
       if (request.method !== "GET") return methodNotAllowed("GET");
       return binaryResponse(await generation.getArtifact(segments[3]));

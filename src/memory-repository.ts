@@ -44,6 +44,7 @@ import type {
   CompleteGenerationResponseRecord,
   CompleteToolCallRecord,
   CreateAttemptRecord,
+  CreateProviderRequestAttributionRecord,
   CreatedGeneration,
   CreateGenerationRecord,
   CreateGenerationSteeringRecord,
@@ -130,6 +131,7 @@ import type {
   CreateMessageFeedbackRecord,
   MessageFeedbackData,
 } from "./message-feedback.js";
+import type { ProviderRequestAttributionData } from "./provider-request-attribution.js";
 
 interface ScopedRecord {
   tenantId: string;
@@ -162,11 +164,13 @@ type MemoryOutboundEventDelivery = OutboundEventDeliveryData &
 
 type MemoryGenerationEngineCheckpoint = GenerationEngineCheckpointData & ScopedRecord;
 type MemoryMessageFeedback = MessageFeedbackData & ScopedRecord;
+type MemoryProviderRequestAttribution = ProviderRequestAttributionData & ScopedRecord;
 
 export class MemoryRepository implements Repository {
   readonly chats = new Map<string, MemoryChatRecord>();
   readonly generations = new Map<string, GenerationData & ScopedRecord>();
   readonly attempts = new Map<string, GenerationAttemptData & ScopedRecord>();
+  readonly providerRequestAttribution = new Map<string, MemoryProviderRequestAttribution>();
   readonly versions = new Map<string, VersionData & ScopedRecord>();
   readonly designEvaluations = new Map<string, DesignEvaluationData & ScopedRecord>();
   readonly messages: Array<MessageData & ScopedRecord> = [];
@@ -499,6 +503,11 @@ export class MemoryRepository implements Repository {
         if (generationIds.includes(attempt.generationId)) {
           this.attempts.delete(attemptId);
           this.workerLeaseTokens.delete(attemptId);
+        }
+      }
+      for (const [requestId, request] of this.providerRequestAttribution) {
+        if (generationIds.includes(request.generationId)) {
+          this.providerRequestAttribution.delete(requestId);
         }
       }
       for (const [taskId, task] of this.tasks) {
@@ -1045,6 +1054,82 @@ export class MemoryRepository implements Repository {
       reason: input.reason,
     });
     return attempt;
+  }
+
+  async createProviderRequestAttribution(
+    scope: UserScope,
+    input: CreateProviderRequestAttributionRecord,
+  ): Promise<ProviderRequestAttributionData> {
+    const generation = this.#requireGeneration(scope, input.generationId);
+    const attempt = this.#requireAttempt(scope, input.attemptId);
+    if (
+      generation.activeAttemptId !== attempt.id ||
+      !this.#hasWorkerLease(attempt, input.leaseToken)
+    ) {
+      throw new GenerationStateError(
+        input.generationId,
+        "The generation worker lease is no longer active.",
+      );
+    }
+    const existing = [...this.providerRequestAttribution.values()].find(
+      (record) =>
+        record.attemptId === input.attemptId &&
+        record.idempotencyKey === input.idempotencyKey &&
+        inScope(record, scope),
+    );
+    const comparable = {
+      providerRequestId: input.providerRequestId,
+      modelProvider: input.modelProvider,
+      modelId: input.modelId,
+      outcome: input.outcome,
+      inputTokens: input.inputTokens,
+      outputTokens: input.outputTokens,
+      totalTokens: input.totalTokens,
+      cacheReadTokens: input.cacheReadTokens,
+      cacheWriteTokens: input.cacheWriteTokens,
+      latencyMs: input.latencyMs,
+      cost: input.cost,
+      modelMetadata: input.modelMetadata,
+    };
+    if (existing) {
+      const { id: _id, generationId: _generationId, attemptId: _attemptId,
+        sequence: _sequence, idempotencyKey: _idempotencyKey, createdAt: _createdAt,
+        tenantId: _tenantId, userId: _userId, ...existingComparable } = existing;
+      if (JSON.stringify(existingComparable) !== JSON.stringify(comparable)) {
+        throw new ConfigurationError(
+          "Provider request idempotency key was already used with different attribution.",
+        );
+      }
+      return existing;
+    }
+    const sequence = [...this.providerRequestAttribution.values()].filter(
+      (record) => record.attemptId === input.attemptId && inScope(record, scope),
+    ).length;
+    const record: MemoryProviderRequestAttribution = {
+      id: input.id,
+      generationId: input.generationId,
+      attemptId: input.attemptId,
+      sequence,
+      idempotencyKey: input.idempotencyKey,
+      ...comparable,
+      modelMetadata: JSON.parse(JSON.stringify(input.modelMetadata)) as ChatMetadata,
+      createdAt: new Date(),
+      ...scope,
+    };
+    this.providerRequestAttribution.set(record.id, record);
+    return record;
+  }
+
+  async listProviderRequestAttribution(
+    scope: UserScope,
+    generationId: string,
+  ): Promise<ProviderRequestAttributionData[]> {
+    this.#requireGeneration(scope, generationId);
+    return [...this.providerRequestAttribution.values()]
+      .filter((record) => record.generationId === generationId && inScope(record, scope))
+      .sort((left, right) =>
+        left.sequence - right.sequence || left.createdAt.getTime() - right.createdAt.getTime()
+      );
   }
 
   async attachGenerationSkills(

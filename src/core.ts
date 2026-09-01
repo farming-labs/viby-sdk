@@ -14,6 +14,7 @@ export * from "./artifact-store.js";
 export * from "./generation-engine.js";
 export { GenerationEngineToolApprovalRequiredError } from "./generation-engine-tools.js";
 export * from "./message-feedback.js";
+export * from "./provider-request-attribution.js";
 export * from "./health.js";
 export * from "./api-schema.js";
 export type * from "./generation-quality.js";

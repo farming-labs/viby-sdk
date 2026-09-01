@@ -159,6 +159,12 @@ import {
   type MessageFeedbackData,
   type SubmitMessageFeedbackInput,
 } from "./message-feedback.js";
+import {
+  normalizeProviderRequestAttribution,
+  type ProviderRequestAttributionData,
+  type ProviderRequestAttributionInput,
+  type ProviderRequestAttributionWriter,
+} from "./provider-request-attribution.js";
 import { SandboxRegistry, type SandboxSession } from "./sandbox.js";
 import { isDatabaseAdapter } from "./storage.js";
 import { EnvironmentManager, type EnvironmentVariableCollection } from "./environment.js";
@@ -1720,6 +1726,15 @@ export class Generation<Framework extends FrameworkId = FrameworkId> {
   async attempts(): Promise<GenerationAttemptData[]> {
     await assertActiveChat(this.#dependencies, this.chatId);
     return this.#dependencies.repository.listGenerationAttempts(this.#dependencies.scope, this.id);
+  }
+
+  /** Lists provider calls in attempt and call order for support and billing. */
+  async providerRequests(): Promise<ProviderRequestAttributionData[]> {
+    await assertActiveChat(this.#dependencies, this.chatId);
+    return this.#dependencies.repository.listProviderRequestAttribution(
+      this.#dependencies.scope,
+      this.id,
+    );
   }
 
   async tasks(): Promise<GenerationTaskData[]> {
@@ -3591,6 +3606,15 @@ class GenerationRunner<Framework extends FrameworkId> {
             },
             trace,
             toolCalls,
+            attribution: new DurableProviderRequestAttribution(
+              this.#dependencies.repository,
+              scope,
+              generationId,
+              attemptId,
+              leaseToken,
+              generation.modelProvider,
+              generation.modelId,
+            ),
             checkpoint: new DurableGenerationEngineCheckpoint(
               this.#dependencies.repository,
               scope,
@@ -4044,6 +4068,47 @@ interface TraceEntry<Type extends MessagePartType = MessagePartType> {
   readonly type: Type;
   state: "active" | "completed" | "failed";
   data?: MessagePartDataMap[Type];
+}
+
+class DurableProviderRequestAttribution implements ProviderRequestAttributionWriter {
+  readonly #repository: Repository;
+  readonly #scope: UserScope;
+  readonly #generationId: string;
+  readonly #attemptId: string;
+  readonly #leaseToken: string;
+  readonly #modelProvider: string;
+  readonly #modelId: string;
+
+  constructor(
+    repository: Repository,
+    scope: UserScope,
+    generationId: string,
+    attemptId: string,
+    leaseToken: string,
+    modelProvider: string,
+    modelId: string,
+  ) {
+    this.#repository = repository;
+    this.#scope = scope;
+    this.#generationId = generationId;
+    this.#attemptId = attemptId;
+    this.#leaseToken = leaseToken;
+    this.#modelProvider = modelProvider;
+    this.#modelId = modelId;
+  }
+
+  record(input: ProviderRequestAttributionInput): Promise<ProviderRequestAttributionData> {
+    const normalized = normalizeProviderRequestAttribution(input);
+    return this.#repository.createProviderRequestAttribution(this.#scope, {
+      id: createId(),
+      generationId: this.#generationId,
+      attemptId: this.#attemptId,
+      leaseToken: this.#leaseToken,
+      ...normalized,
+      modelProvider: normalized.modelProvider ?? this.#modelProvider,
+      modelId: normalized.modelId ?? this.#modelId,
+    });
+  }
 }
 
 class DurableGenerationEngineCheckpoint implements GenerationEngineCheckpointChannel {

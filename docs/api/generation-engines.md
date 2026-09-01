@@ -118,6 +118,7 @@ interface GenerationEngineContext {
   readonly onDelta?: (delta: string) => void | Promise<void>;
   readonly trace?: AgentTraceWriter;
   readonly toolCalls?: AgentToolCallWriter;
+  readonly attribution?: ProviderRequestAttributionWriter;
   readonly steering?: GenerationSteeringChannel;
 }
 ```
@@ -125,6 +126,40 @@ interface GenerationEngineContext {
 Use `run.attemptId` as the idempotency boundary for a remote execution. A retry creates a new
 attempt ID; reconnecting the same attempt keeps the same ID. Honor `signal` promptly. Consume
 steering only at safe boundaries and only when `steering` is advertised.
+
+### Provider request attribution
+
+Report every model-provider call through `context.attribution`. This is a durable, attempt-scoped
+channel rather than a final-run summary, so a multi-step agent can retain each routed request,
+retry, cache result, and latency independently:
+
+```ts
+await context.attribution?.record({
+  idempotencyKey: `${context.run!.attemptId}:model-call:3`,
+  providerRequestId: response.id,
+  modelProvider: response.provider,
+  modelId: response.model,
+  outcome: "succeeded",
+  inputTokens: response.usage.inputTokens,
+  outputTokens: response.usage.outputTokens,
+  totalTokens: response.usage.totalTokens,
+  cacheReadTokens: response.usage.cacheReadTokens,
+  cacheWriteTokens: response.usage.cacheWriteTokens,
+  latencyMs: response.latencyMs,
+  cost: response.estimatedCost,
+  modelMetadata: { region: response.region, serviceTier: response.serviceTier },
+});
+```
+
+`idempotencyKey` must be stable within the durable attempt. Replaying the same key and data returns
+the existing record; using it with different data is rejected. Model metadata must be JSON and
+credential-free. Cost is the engine's own estimate in safe integer micro-units—Viby does not apply
+vendor pricing. The built-in AI SDK engine records the provider response ID, resolved model,
+latency, token/cache usage, and safe provider metadata automatically.
+
+Applications can reload the records with `generation.providerRequests()` or
+`GET /generations/{generationId}/provider-requests`. Records are tenant/user scoped and ordered by
+attempt and per-attempt sequence.
 
 ### Output
 

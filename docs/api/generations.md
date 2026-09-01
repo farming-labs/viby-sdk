@@ -52,6 +52,7 @@ an older attempt.
 | `attempts()` | `GenerationAttemptData[]` | Immutable execution history in order. |
 | `tasks()` | `GenerationTaskData[]` | All proposed and resolved typed tasks for the generation. |
 | `toolCalls()` | `ToolCallData[]` | Redacted durable arguments, results, ownership, status, and idempotency. |
+| `providerRequests()` | `ProviderRequestAttributionData[]` | Ordered provider request IDs, routed model identity, outcome, latency, token/cache usage, engine cost estimate, and credential-free metadata across all attempts. |
 | `artifacts()` | `GeneratedArtifactData[]` | Metadata for generated images, audio, video, documents, or binary outputs. |
 | `getArtifact(id)` | `GeneratedArtifactContent` | Checksum-verifies and returns one scoped artifact's bytes. |
 | `events({ after?, limit? })` | `GenerationEventPage` | Reads one durable event page after an opaque cursor. |
