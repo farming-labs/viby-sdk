@@ -70,6 +70,8 @@ import type {
   DeploymentRecordData,
 } from "./deployment-history.js";
 import type {
+  FeedbackAnalyticsData,
+  FeedbackAnalyticsQuery,
   MessageFeedbackData,
   SubmitMessageFeedbackInput,
 } from "./message-feedback.js";
@@ -445,7 +447,10 @@ export interface VibyWebChatsClient<Framework extends FrameworkId = FrameworkId>
       chatId: string,
       messageId: string,
       options?: VibyWebRequestOptions,
-    ): Promise<{ readonly feedback: readonly VibyApiMessageFeedback[] }>;
+    ): Promise<{
+      readonly feedback: readonly VibyApiMessageFeedback[];
+      readonly selected: VibyApiMessageFeedback | null;
+    }>;
   };
   readonly versions: {
     list(chatId: string, options?: VibyWebPageOptions): Promise<VibyWebVersionPage<Framework>>;
@@ -626,6 +631,13 @@ export interface VibyWebClient<Framework extends FrameworkId = FrameworkId> {
   readonly previews: VibyWebPreviewsClient<Framework>;
   readonly integrations: VibyWebIntegrationsClient;
   readonly toolSources: VibyWebToolSourcesClient;
+  readonly feedback: VibyWebFeedbackClient;
+}
+
+export interface VibyWebFeedbackClient {
+  analytics(
+    input?: FeedbackAnalyticsQuery & VibyWebRequestOptions,
+  ): Promise<{ readonly analytics: VibyApiJson<FeedbackAnalyticsData> }>;
 }
 
 export interface VibyWebPreviewsClient<Framework extends FrameworkId = FrameworkId> {
@@ -913,7 +925,10 @@ export function createVibyWebClient<Framework extends FrameworkId = FrameworkId>
         chatId: string,
         messageId: string,
         request: VibyWebRequestOptions = {},
-      ) => transport.json<{ readonly feedback: readonly VibyApiMessageFeedback[] }>(
+      ) => transport.json<{
+        readonly feedback: readonly VibyApiMessageFeedback[];
+        readonly selected: VibyApiMessageFeedback | null;
+      }>(
         "GET",
         `/chats/${segment(chatId)}/messages/${segment(messageId)}/feedback`,
         undefined,
@@ -1320,6 +1335,15 @@ export function createVibyWebClient<Framework extends FrameworkId = FrameworkId>
     repository: Object.freeze(repositoryIntegrations),
     deployment: Object.freeze(deploymentIntegrations),
   });
+  const feedback: VibyWebFeedbackClient = {
+    analytics: (input = {}) => transport.json(
+      "GET",
+      "/feedback/analytics",
+      undefined,
+      input,
+      input,
+    ),
+  };
   const toolSources: VibyWebToolSourcesClient = {
     list: (input = {}) => transport.json(
       "GET",
@@ -1384,6 +1408,7 @@ export function createVibyWebClient<Framework extends FrameworkId = FrameworkId>
     previews: Object.freeze(previews),
     integrations,
     toolSources: Object.freeze(toolSources),
+    feedback: Object.freeze(feedback),
   });
 }
 

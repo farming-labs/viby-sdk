@@ -133,6 +133,7 @@ checksum-verified before later attempts reuse them.
 | `getMessage(id)` | Loads one message by ID without scanning pages. |
 | `submitFeedback(messageId, input)` | Appends immutable, idempotent feedback for a generated assistant message. |
 | `listFeedback(messageId)` | Lists durable feedback for one assistant message in creation order. |
+| `getSelectedFeedback(messageId)` | Restores the user's current immutable rating selection after reload. |
 | `getAttachment(id)` | Reads scoped attachment bytes and verified metadata from the artifact store. |
 
 Assistant messages include an optional provider-neutral finish reason and ordered typed parts such as
@@ -143,7 +144,9 @@ Message timestamps are strictly increasing within a chat. This keeps creation or
 cursor pagination deterministic even when a user message and its assistant response are committed
 within the same clock millisecond.
 
-Feedback records retain the message, generation, attempt, model, and nullable version attribution.
+Feedback records retain the message, generation, attempt, model, runtime alias, framework, skill
+set, and nullable version attribution. `user.feedback.analytics()` aggregates these durable
+snapshots by any supported dimension.
 See [Message feedback](/docs/api/message-feedback) for rating, reason, metadata, idempotency, and Web
 API behavior.
 

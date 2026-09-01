@@ -1459,12 +1459,18 @@ const feedback = await chat.submitFeedback(assistantMessage.id, {
 });
 
 const feedbackHistory = await chat.listFeedback(assistantMessage.id);
+const selectedFeedback = await chat.getSelectedFeedback(assistantMessage.id);
+
+const analytics = await user.feedback.analytics({
+  groupBy: ["model", "engine", "skill-set", "framework", "generation-version"],
+});
 ```
 
-Each immutable record retains the exact message, generation, attempt, model identity, and nullable
-generated version. Idempotency keys prevent duplicate votes, and every operation remains scoped by
-tenant and user. The Web client exposes the same behavior through
-`client.chats.messages.submitFeedback()` and `listFeedback()`.
+Each immutable record retains the exact message, generation, attempt, model identity, runtime
+alias, framework, skill set, and nullable generated version. New records atomically become the
+current reload-safe selection. Idempotency keys prevent duplicate votes, analytics produce typed
+positive/negative buckets, and every operation remains scoped by tenant and user. The Web client
+exposes the same behavior through `client.chats.messages`, plus `client.feedback.analytics()`.
 
 ## Skill categories
 

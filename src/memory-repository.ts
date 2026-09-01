@@ -129,7 +129,13 @@ import type {
 import type { GenerationEngineCheckpointData } from "./generator.js";
 import type {
   CreateMessageFeedbackRecord,
+  FeedbackAnalyticsData,
   MessageFeedbackData,
+  NormalizedFeedbackAnalyticsQuery,
+} from "./message-feedback.js";
+import {
+  feedbackAnalyticsDimensions,
+  feedbackAnalyticsKey,
 } from "./message-feedback.js";
 import type { ProviderRequestAttributionData } from "./provider-request-attribution.js";
 
@@ -175,6 +181,7 @@ export class MemoryRepository implements Repository {
   readonly designEvaluations = new Map<string, DesignEvaluationData & ScopedRecord>();
   readonly messages: Array<MessageData & ScopedRecord> = [];
   readonly messageFeedback = new Map<string, MemoryMessageFeedback>();
+  readonly messageFeedbackSelections = new Map<string, string>();
   readonly attachments = new Map<string, AttachmentContent & ScopedRecord>();
   readonly generatedArtifacts = new Map<string, GeneratedArtifactContent & ScopedRecord>();
   readonly visualArtifacts = new Map<string, VisualArtifactContent & ScopedRecord>();
@@ -221,6 +228,36 @@ export class MemoryRepository implements Repository {
       throw new ConfigurationError("Memory repository snapshot is invalid.");
     }
     Object.assign(this as unknown as Record<string, unknown>, state.fields);
+    if (!(this.messageFeedbackSelections instanceof Map)) {
+      (this as unknown as { messageFeedbackSelections: Map<string, string> })
+        .messageFeedbackSelections = new Map();
+    }
+    const orderedFeedback = [...this.messageFeedback.values()].sort(
+      (left, right) =>
+        left.createdAt.getTime() - right.createdAt.getTime() || left.id.localeCompare(right.id),
+    );
+    for (const feedback of orderedFeedback) {
+      const generation = this.generations.get(feedback.generationId);
+      const chat = this.chats.get(feedback.chatId);
+      const version = feedback.versionId ? this.versions.get(feedback.versionId) : null;
+      if (
+        feedback.framework === undefined && generation && chat &&
+        inScope(generation, feedback) && inScope(chat, feedback)
+      ) {
+        this.messageFeedback.set(feedback.id, {
+          ...feedback,
+          framework: chat.framework,
+          executor: feedbackExecutor(generation.configuration.executor),
+          runtimeAlias: generation.configuration.model,
+          skills: structuredClone(generation.configuration.skills),
+          versionNumber: version?.number ?? null,
+        });
+      }
+      this.messageFeedbackSelections.set(
+        scopedMessageKey(feedback, feedback.messageId),
+        feedback.id,
+      );
+    }
     this.#cursor = state.cursor;
     this.closed = false;
   }
@@ -536,6 +573,12 @@ export class MemoryRepository implements Repository {
       }
       for (let index = this.messages.length - 1; index >= 0; index -= 1) {
         if (this.messages[index]?.chatId === id) this.messages.splice(index, 1);
+      }
+      for (const [feedbackId, feedback] of this.messageFeedback) {
+        if (feedback.chatId === id && inScope(feedback, scope)) {
+          this.messageFeedback.delete(feedbackId);
+          this.messageFeedbackSelections.delete(scopedMessageKey(scope, feedback.messageId));
+        }
       }
       for (const [attachmentId, attachment] of this.attachments) {
         if (attachment.chatId === id && inScope(attachment, scope)) {
@@ -2133,6 +2176,11 @@ export class MemoryRepository implements Repository {
     const version = [...this.versions.values()].find(
       (candidate) => candidate.generationId === message.generationId && inScope(candidate, scope),
     );
+    const generation = this.generations.get(message.generationId);
+    const chat = this.chats.get(input.chatId);
+    if (!generation || !chat || !inScope(generation, scope) || !inScope(chat, scope)) {
+      throw new NotFoundError("Assistant message");
+    }
     const feedback: MemoryMessageFeedback = {
       id: input.id,
       chatId: input.chatId,
@@ -2142,6 +2190,11 @@ export class MemoryRepository implements Repository {
       versionId: version?.id ?? null,
       modelProvider: attempt.modelProvider,
       modelId: attempt.modelId,
+      framework: chat.framework,
+      executor: feedbackExecutor(generation.configuration.executor),
+      runtimeAlias: generation.configuration.model,
+      skills: structuredClone(generation.configuration.skills),
+      versionNumber: version?.number ?? null,
       rating: input.rating,
       reasons: [...input.reasons],
       comment: input.comment,
@@ -2151,6 +2204,7 @@ export class MemoryRepository implements Repository {
       ...scope,
     };
     this.messageFeedback.set(feedback.id, feedback);
+    this.messageFeedbackSelections.set(scopedMessageKey(scope, input.messageId), feedback.id);
     return feedback;
   }
 
@@ -2168,6 +2222,62 @@ export class MemoryRepository implements Repository {
         (left, right) =>
           left.createdAt.getTime() - right.createdAt.getTime() || left.id.localeCompare(right.id),
       );
+  }
+
+  async getSelectedMessageFeedback(
+    scope: UserScope,
+    chatId: string,
+    messageId: string,
+  ): Promise<MessageFeedbackData | null> {
+    const id = this.messageFeedbackSelections.get(scopedMessageKey(scope, messageId));
+    const feedback = id ? this.messageFeedback.get(id) : null;
+    return feedback && feedback.chatId === chatId && inScope(feedback, scope) ? feedback : null;
+  }
+
+  async queryMessageFeedbackAnalytics(
+    scope: UserScope,
+    input: NormalizedFeedbackAnalyticsQuery,
+  ): Promise<FeedbackAnalyticsData> {
+    const buckets = new Map<string, {
+      dimensions: ReturnType<typeof feedbackAnalyticsDimensions>;
+      positive: number;
+      negative: number;
+    }>();
+    for (const feedback of this.messageFeedback.values()) {
+      if (!inScope(feedback, scope)) continue;
+      if (input.from && feedback.createdAt < input.from) continue;
+      if (input.to && feedback.createdAt > input.to) continue;
+      if (input.framework && feedback.framework !== input.framework) continue;
+      if (input.modelProvider && feedback.modelProvider !== input.modelProvider) continue;
+      if (input.modelId && feedback.modelId !== input.modelId) continue;
+      if (input.runtimeAlias && feedback.runtimeAlias !== input.runtimeAlias) continue;
+      const dimensions = feedbackAnalyticsDimensions(feedback, input.groupBy);
+      const key = feedbackAnalyticsKey(dimensions);
+      const bucket = buckets.get(key) ?? { dimensions, positive: 0, negative: 0 };
+      bucket[feedback.rating] += 1;
+      buckets.set(key, bucket);
+    }
+    const allRecords = [...buckets.entries()]
+      .map(([key, bucket]) => {
+        const total = bucket.positive + bucket.negative;
+        return {
+          key,
+          dimensions: bucket.dimensions,
+          positive: bucket.positive,
+          negative: bucket.negative,
+          total,
+          positiveRate: total === 0 ? null : bucket.positive / total,
+        };
+      })
+      .sort((left, right) => right.total - left.total || left.key.localeCompare(right.key));
+    const positive = allRecords.reduce((total, bucket) => total + bucket.positive, 0);
+    const negative = allRecords.reduce((total, bucket) => total + bucket.negative, 0);
+    const total = positive + negative;
+    return {
+      groupBy: input.groupBy,
+      buckets: allRecords.slice(0, input.limit),
+      totals: { positive, negative, total, positiveRate: total === 0 ? null : positive / total },
+    };
   }
 
   async getAttachment(
@@ -3350,6 +3460,14 @@ function publicToolSourceConnection(
 
 function scopedChatKey(scope: UserScope, chatId: string): string {
   return `${scope.tenantId}\0${scope.userId}\0${chatId}`;
+}
+
+function scopedMessageKey(scope: UserScope, messageId: string): string {
+  return `${scope.tenantId}\u0000${scope.userId}\u0000${messageId}`;
+}
+
+function feedbackExecutor(value: unknown): "model" | "engine" {
+  return value === "engine" || value === "agent" ? "engine" : "model";
 }
 
 function updateMemoryDeployment(

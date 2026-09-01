@@ -40,6 +40,7 @@ import type {
   ProjectArtifactContent,
   ResolvedSkill,
   SourceChange,
+  SkillGroups,
   ToolCallData,
   ToolCallEffect,
   ToolCallStatus,
@@ -107,10 +108,14 @@ import type {
 import type { GenerationEngineCheckpointData } from "./generator.js";
 import type {
   CreateMessageFeedbackRecord,
+  FeedbackAnalyticsData,
+  FeedbackAnalyticsDimensions,
   MessageFeedbackData,
   MessageFeedbackRating,
   MessageFeedbackReason,
+  NormalizedFeedbackAnalyticsQuery,
 } from "./message-feedback.js";
+import { feedbackAnalyticsKey } from "./message-feedback.js";
 import type {
   ProviderRequestAttributionData,
   ProviderRequestOutcome,
@@ -192,6 +197,11 @@ interface MessageFeedbackRow {
   version_id: string | null;
   model_provider: string;
   model_id: string;
+  framework: string;
+  executor: "model" | "engine";
+  runtime_alias: string;
+  skills: SkillGroups;
+  version_number: number | null;
   rating: MessageFeedbackRating;
   reasons: MessageFeedbackReason[];
   comment: string | null;
@@ -206,6 +216,21 @@ interface MessageFeedbackContextRow {
   version_id: string | null;
   model_provider: string;
   model_id: string;
+  framework: string;
+  executor: "model" | "engine";
+  runtime_alias: string;
+  skills: SkillGroups;
+  version_number: number | null;
+}
+
+interface FeedbackAnalyticsBucketRow {
+  dimensions: FeedbackAnalyticsDimensions;
+  positive: string | number;
+  negative: string | number;
+  total: string | number;
+  total_positive: string | number;
+  total_negative: string | number;
+  grand_total: string | number;
 }
 
 interface GenerationRow {
@@ -750,6 +775,7 @@ export class PostgresRepository implements Repository {
         AND to_regclass('viby.provider_request_attribution') IS NOT NULL
         AND to_regclass('viby.generation_engine_checkpoints') IS NOT NULL
         AND to_regclass('viby.message_feedback') IS NOT NULL
+        AND to_regclass('viby.message_feedback_selections') IS NOT NULL
         AND to_regclass('viby.generation_events') IS NOT NULL
         AND to_regclass('viby.generation_tasks') IS NOT NULL
         AND to_regclass('viby.generation_steering') IS NOT NULL
@@ -3428,69 +3454,93 @@ export class PostgresRepository implements Repository {
     input: CreateMessageFeedbackRecord,
   ): Promise<MessageFeedbackData> {
     await this.assertReady();
-    const [context] = await this.#sql<MessageFeedbackContextRow[]>`
-      SELECT message.generation_id, part.attempt_id, version.id AS version_id,
-        attempt.model_provider, attempt.model_id
-      FROM viby.messages AS message
-      JOIN viby.chats AS chat ON chat.id = message.chat_id
-      JOIN LATERAL (
-        SELECT candidate.attempt_id
-        FROM viby.message_parts AS candidate
-        WHERE candidate.tenant_id = message.tenant_id
-          AND candidate.user_id = message.user_id
-          AND candidate.message_id = message.id
-          AND candidate.attempt_id IS NOT NULL
-        ORDER BY candidate.position
+    return this.#sql.begin(async (sql) => {
+      const [context] = await sql<MessageFeedbackContextRow[]>`
+        SELECT message.generation_id, part.attempt_id, version.id AS version_id,
+          attempt.model_provider, attempt.model_id, chat.framework,
+          CASE
+            WHEN generation.configuration->>'executor' IN ('engine', 'agent') THEN 'engine'
+            ELSE 'model'
+          END AS executor,
+          COALESCE(generation.configuration->>'model', 'default') AS runtime_alias,
+          COALESCE(generation.configuration->'skills', '{}'::jsonb) AS skills,
+          version.number AS version_number
+        FROM viby.messages AS message
+        JOIN viby.chats AS chat ON chat.id = message.chat_id
+        JOIN viby.generations AS generation ON generation.id = message.generation_id
+        JOIN LATERAL (
+          SELECT candidate.attempt_id
+          FROM viby.message_parts AS candidate
+          WHERE candidate.tenant_id = message.tenant_id
+            AND candidate.user_id = message.user_id
+            AND candidate.message_id = message.id
+            AND candidate.attempt_id IS NOT NULL
+          ORDER BY candidate.position
+          LIMIT 1
+        ) AS part ON true
+        JOIN viby.generation_attempts AS attempt ON attempt.id = part.attempt_id
+        LEFT JOIN viby.versions AS version ON version.generation_id = message.generation_id
+        WHERE message.tenant_id = ${scope.tenantId} AND message.user_id = ${scope.userId}
+          AND message.chat_id = ${input.chatId} AND message.id = ${input.messageId}
+          AND message.role = 'assistant' AND message.generation_id IS NOT NULL
+          AND chat.deleted_at IS NULL
         LIMIT 1
-      ) AS part ON true
-      JOIN viby.generation_attempts AS attempt ON attempt.id = part.attempt_id
-      LEFT JOIN viby.versions AS version ON version.generation_id = message.generation_id
-      WHERE message.tenant_id = ${scope.tenantId} AND message.user_id = ${scope.userId}
-        AND message.chat_id = ${input.chatId} AND message.id = ${input.messageId}
-        AND message.role = 'assistant' AND message.generation_id IS NOT NULL
-        AND chat.deleted_at IS NULL
-      LIMIT 1
-    `;
-    if (!context) throw new NotFoundError("Assistant message");
+      `;
+      if (!context) throw new NotFoundError("Assistant message");
 
-    const inserted = await this.#sql<MessageFeedbackRow[]>`
-      INSERT INTO viby.message_feedback (
-        id, tenant_id, user_id, chat_id, message_id, generation_id, attempt_id,
-        version_id, model_provider, model_id, rating, reasons, comment, metadata,
-        idempotency_key
-      ) VALUES (
-        ${input.id}, ${scope.tenantId}, ${scope.userId}, ${input.chatId}, ${input.messageId},
-        ${context.generation_id}, ${context.attempt_id}, ${context.version_id},
-        ${context.model_provider}, ${context.model_id}, ${input.rating},
-        ${this.#sql.json([...input.reasons])}, ${input.comment},
-        ${this.#sql.json(JSON.parse(JSON.stringify(input.metadata)))}, ${input.idempotencyKey}
-      )
-      ON CONFLICT (tenant_id, user_id, message_id, idempotency_key) DO NOTHING
-      RETURNING id, chat_id, message_id, generation_id, attempt_id, version_id,
-        model_provider, model_id, rating, reasons, comment, metadata, idempotency_key, created_at
-    `;
-    if (inserted[0]) return mapMessageFeedback(inserted[0]);
-
-    const [existing] = await this.#sql<MessageFeedbackRow[]>`
-      SELECT id, chat_id, message_id, generation_id, attempt_id, version_id,
-        model_provider, model_id, rating, reasons, comment, metadata, idempotency_key, created_at
-      FROM viby.message_feedback
-      WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
-        AND message_id = ${input.messageId} AND idempotency_key = ${input.idempotencyKey}
-      LIMIT 1
-    `;
-    if (!existing) throw new Error("Message feedback idempotency conflict could not be resolved.");
-    if (
-      existing.rating !== input.rating ||
-      existing.comment !== input.comment ||
-      JSON.stringify(existing.reasons) !== JSON.stringify(input.reasons) ||
-      JSON.stringify(existing.metadata) !== JSON.stringify(input.metadata)
-    ) {
-      throw new ConfigurationError(
-        "Message feedback idempotency key was already used with different input.",
-      );
-    }
-    return mapMessageFeedback(existing);
+      const inserted = await sql<MessageFeedbackRow[]>`
+        INSERT INTO viby.message_feedback (
+          id, tenant_id, user_id, chat_id, message_id, generation_id, attempt_id,
+          version_id, model_provider, model_id, framework, executor, runtime_alias,
+          skills, version_number, rating, reasons, comment, metadata, idempotency_key
+        ) VALUES (
+          ${input.id}, ${scope.tenantId}, ${scope.userId}, ${input.chatId}, ${input.messageId},
+          ${context.generation_id}, ${context.attempt_id}, ${context.version_id},
+          ${context.model_provider}, ${context.model_id}, ${context.framework}, ${context.executor},
+          ${context.runtime_alias},
+          ${sql.json(JSON.parse(JSON.stringify(context.skills)))}, ${context.version_number},
+          ${input.rating}, ${sql.json([...input.reasons])}, ${input.comment},
+          ${sql.json(JSON.parse(JSON.stringify(input.metadata)))}, ${input.idempotencyKey}
+        )
+        ON CONFLICT (tenant_id, user_id, message_id, idempotency_key) DO NOTHING
+        RETURNING *
+      `;
+      let feedback = inserted[0];
+      const created = feedback !== undefined;
+      if (!feedback) {
+        [feedback] = await sql<MessageFeedbackRow[]>`
+          SELECT * FROM viby.message_feedback
+          WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+            AND message_id = ${input.messageId} AND idempotency_key = ${input.idempotencyKey}
+          LIMIT 1
+        `;
+        if (!feedback) {
+          throw new Error("Message feedback idempotency conflict could not be resolved.");
+        }
+        if (
+          feedback.rating !== input.rating ||
+          feedback.comment !== input.comment ||
+          JSON.stringify(feedback.reasons) !== JSON.stringify(input.reasons) ||
+          JSON.stringify(feedback.metadata) !== JSON.stringify(input.metadata)
+        ) {
+          throw new ConfigurationError(
+            "Message feedback idempotency key was already used with different input.",
+          );
+        }
+      }
+      if (created) {
+        await sql`
+          INSERT INTO viby.message_feedback_selections (
+            tenant_id, user_id, chat_id, message_id, feedback_id
+          ) VALUES (
+            ${scope.tenantId}, ${scope.userId}, ${input.chatId}, ${input.messageId}, ${feedback.id}
+          )
+          ON CONFLICT (tenant_id, user_id, message_id) DO UPDATE SET
+            feedback_id = EXCLUDED.feedback_id, updated_at = now()
+        `;
+      }
+      return mapMessageFeedback(feedback);
+    });
   }
 
   async listMessageFeedback(
@@ -3500,10 +3550,7 @@ export class PostgresRepository implements Repository {
   ): Promise<MessageFeedbackData[]> {
     await this.assertReady();
     const rows = await this.#sql<MessageFeedbackRow[]>`
-      SELECT feedback.id, feedback.chat_id, feedback.message_id, feedback.generation_id,
-        feedback.attempt_id, feedback.version_id, feedback.model_provider, feedback.model_id,
-        feedback.rating, feedback.reasons, feedback.comment, feedback.metadata,
-        feedback.idempotency_key, feedback.created_at
+      SELECT feedback.*
       FROM viby.message_feedback AS feedback
       JOIN viby.chats AS chat ON chat.id = feedback.chat_id
       WHERE feedback.tenant_id = ${scope.tenantId} AND feedback.user_id = ${scope.userId}
@@ -3512,6 +3559,100 @@ export class PostgresRepository implements Repository {
       ORDER BY feedback.created_at, feedback.id
     `;
     return rows.map(mapMessageFeedback);
+  }
+
+  async getSelectedMessageFeedback(
+    scope: UserScope,
+    chatId: string,
+    messageId: string,
+  ): Promise<MessageFeedbackData | null> {
+    await this.assertReady();
+    const [row] = await this.#sql<MessageFeedbackRow[]>`
+      SELECT feedback.*
+      FROM viby.message_feedback_selections AS selection
+      JOIN viby.message_feedback AS feedback ON feedback.id = selection.feedback_id
+      JOIN viby.chats AS chat ON chat.id = selection.chat_id
+      WHERE selection.tenant_id = ${scope.tenantId} AND selection.user_id = ${scope.userId}
+        AND selection.chat_id = ${chatId} AND selection.message_id = ${messageId}
+        AND feedback.tenant_id = selection.tenant_id AND feedback.user_id = selection.user_id
+        AND chat.deleted_at IS NULL
+      LIMIT 1
+    `;
+    return row ? mapMessageFeedback(row) : null;
+  }
+
+  async queryMessageFeedbackAnalytics(
+    scope: UserScope,
+    input: NormalizedFeedbackAnalyticsQuery,
+  ): Promise<FeedbackAnalyticsData> {
+    await this.assertReady();
+    const from = input.from?.toISOString() ?? null;
+    const to = input.to?.toISOString() ?? null;
+    const rows = await this.#sql<FeedbackAnalyticsBucketRow[]>`
+      WITH scoped AS (
+        SELECT feedback.*
+        FROM viby.message_feedback AS feedback
+        JOIN viby.chats AS chat ON chat.id = feedback.chat_id
+        WHERE feedback.tenant_id = ${scope.tenantId} AND feedback.user_id = ${scope.userId}
+          AND chat.deleted_at IS NULL
+          AND (${from}::timestamptz IS NULL OR feedback.created_at >= ${from}::timestamptz)
+          AND (${to}::timestamptz IS NULL OR feedback.created_at <= ${to}::timestamptz)
+          AND (${input.framework}::text IS NULL OR feedback.framework = ${input.framework})
+          AND (${input.modelProvider}::text IS NULL OR feedback.model_provider = ${input.modelProvider})
+          AND (${input.modelId}::text IS NULL OR feedback.model_id = ${input.modelId})
+          AND (${input.runtimeAlias}::text IS NULL OR feedback.runtime_alias = ${input.runtimeAlias})
+      ), bucketed AS (
+        SELECT rating,
+          (CASE WHEN ${input.groupBy.includes("model")} THEN jsonb_build_object(
+            'model', jsonb_build_object('provider', model_provider, 'id', model_id)
+          ) ELSE '{}'::jsonb END) ||
+          (CASE WHEN ${input.groupBy.includes("engine")} THEN jsonb_build_object(
+            'engine', jsonb_build_object('executor', executor, 'alias', runtime_alias)
+          ) ELSE '{}'::jsonb END) ||
+          (CASE WHEN ${input.groupBy.includes("skill-set")} THEN jsonb_build_object(
+            'skillSet', skills
+          ) ELSE '{}'::jsonb END) ||
+          (CASE WHEN ${input.groupBy.includes("framework")} THEN jsonb_build_object(
+            'framework', framework
+          ) ELSE '{}'::jsonb END) ||
+          (CASE WHEN ${input.groupBy.includes("generation-version")} THEN jsonb_build_object(
+            'generationVersion', jsonb_build_object('id', version_id, 'number', version_number)
+          ) ELSE '{}'::jsonb END) AS dimensions
+        FROM scoped
+      )
+      SELECT dimensions,
+        COUNT(*) FILTER (WHERE rating = 'positive') AS positive,
+        COUNT(*) FILTER (WHERE rating = 'negative') AS negative,
+        COUNT(*) AS total,
+        SUM(COUNT(*) FILTER (WHERE rating = 'positive')) OVER () AS total_positive,
+        SUM(COUNT(*) FILTER (WHERE rating = 'negative')) OVER () AS total_negative,
+        SUM(COUNT(*)) OVER () AS grand_total
+      FROM bucketed
+      GROUP BY dimensions
+      ORDER BY total DESC, dimensions::text
+      LIMIT ${input.limit}
+    `;
+    const buckets = rows.map((row) => {
+      const positive = Number(row.positive);
+      const negative = Number(row.negative);
+      const total = Number(row.total);
+      return {
+        key: feedbackAnalyticsKey(row.dimensions),
+        dimensions: row.dimensions,
+        positive,
+        negative,
+        total,
+        positiveRate: total === 0 ? null : positive / total,
+      };
+    });
+    const positive = Number(rows[0]?.total_positive ?? 0);
+    const negative = Number(rows[0]?.total_negative ?? 0);
+    const total = Number(rows[0]?.grand_total ?? 0);
+    return {
+      groupBy: input.groupBy,
+      buckets,
+      totals: { positive, negative, total, positiveRate: total === 0 ? null : positive / total },
+    };
   }
 
   async getAttachment(
@@ -5683,6 +5824,11 @@ function mapMessageFeedback(row: MessageFeedbackRow): MessageFeedbackData {
     versionId: row.version_id,
     modelProvider: row.model_provider,
     modelId: row.model_id,
+    framework: row.framework,
+    executor: row.executor,
+    runtimeAlias: row.runtime_alias,
+    skills: row.skills,
+    versionNumber: row.version_number,
     rating: row.rating,
     reasons: row.reasons,
     comment: row.comment,

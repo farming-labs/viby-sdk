@@ -66,7 +66,9 @@ import type {
 } from "./generator.js";
 import type {
   CreateMessageFeedbackRecord,
+  FeedbackAnalyticsData,
   MessageFeedbackData,
+  NormalizedFeedbackAnalyticsQuery,
 } from "./message-feedback.js";
 import type {
   NormalizedProviderRequestAttributionInput,
@@ -719,6 +721,15 @@ extends DeploymentHistoryStore, PreviewSessionStore, ToolSourceRegistryStore, To
     chatId: string,
     messageId: string,
   ): Promise<MessageFeedbackData[]>;
+  getSelectedMessageFeedback(
+    scope: UserScope,
+    chatId: string,
+    messageId: string,
+  ): Promise<MessageFeedbackData | null>;
+  queryMessageFeedbackAnalytics(
+    scope: UserScope,
+    input: NormalizedFeedbackAnalyticsQuery,
+  ): Promise<FeedbackAnalyticsData>;
   getAttachment(scope: UserScope, chatId: string, id: string): Promise<AttachmentContent | null>;
   listGenerationAttachments(
     scope: UserScope,

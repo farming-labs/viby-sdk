@@ -176,8 +176,17 @@ export async function verifyPersistenceAdapter(
     assertConformance(
       replayedFeedback.id === feedback.id &&
         (await chat.listFeedback(assistant!.id))[0]?.id === feedback.id &&
+        (await chat.getSelectedFeedback(assistant!.id))?.id === feedback.id &&
         feedback.versionId === outcome.version.id,
       "Message feedback was not durable or idempotent.",
+    );
+    const feedbackAnalytics = await owner.feedback.analytics({
+      groupBy: ["model", "engine", "skill-set", "framework", "generation-version"],
+    });
+    assertConformance(
+      feedbackAnalytics.totals.total === 1 &&
+        feedbackAnalytics.buckets[0]?.dimensions.framework === "persistence-conformance",
+      "Message feedback analytics were not durable.",
     );
     const feedbackOutsider = viby.forUser({
       tenantId: scope.tenantId,

@@ -261,6 +261,13 @@ test("hosts chat, message, stream, task, preview, and download flows with Web AP
       `/chats/${chatId}/messages/${assistantMessageId}/feedback`,
     );
     assert.equal(array(feedback.feedback).length, 1);
+    assert.equal(object(feedback.selected).id, object(submittedFeedback.feedback).id);
+    const feedbackAnalytics = await requestJson(
+      api,
+      "/feedback/analytics?groupBy=model%2Cframework",
+    );
+    assert.equal(object(feedbackAnalytics.analytics).totals !== undefined, true);
+    assert.equal(array(object(feedbackAnalytics.analytics).buckets).length, 1);
 
     const preview = await requestJson(api, `/chats/${chatId}/versions/${versionId}/preview`, {
       method: "POST",

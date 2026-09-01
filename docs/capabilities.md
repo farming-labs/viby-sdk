@@ -29,7 +29,7 @@ This inventory describes the current `@viby/sdk` source on `main`. “Shipped”
 | Capability | Shipped surface |
 | --- | --- |
 | Chats | create, import, list, nested metadata filters, get, update, soft delete, restore, and retention-aware purge |
-| Messages | cursor pagination, lookup by ID, plain content, assistant finish reasons, ordered typed parts, and immutable attributed feedback |
+| Messages | cursor pagination, lookup by ID, plain content, assistant finish reasons, ordered typed parts, immutable attributed feedback, reload-safe rating selection, and multidimensional feedback analytics |
 | Durable generation | synchronous convenience methods plus addressable async `Generation` handles |
 | Read-only inspection | exact-version and latest-version inspect/startInspection methods; durable response messages, events, usage, retry/resume/cancel, read-only tool filtering, and no source-version writes |
 | Live updates | persisted event cursors, resumable async iterators, standard SSE, and Web `Response` helpers |

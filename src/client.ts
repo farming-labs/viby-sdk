@@ -155,7 +155,10 @@ import { normalizeDesignEvaluation } from "./design-evaluations.js";
 import { normalizeChatMetadata } from "./metadata.js";
 import { VibyHealthService, type VibyHealth } from "./health.js";
 import {
+  normalizeFeedbackAnalyticsQuery,
   normalizeMessageFeedback,
+  type FeedbackAnalyticsData,
+  type FeedbackAnalyticsQuery,
   type MessageFeedbackData,
   type SubmitMessageFeedbackInput,
 } from "./message-feedback.js";
@@ -940,6 +943,7 @@ export class ScopedViby<Framework extends FrameworkId = FrameworkId> {
   readonly sandboxes: SandboxCollection<Framework>;
   readonly previews: PreviewCollection<Framework>;
   readonly toolSources: RegisteredToolSourceCollection<Framework>;
+  readonly feedback: FeedbackCollection<Framework>;
   readonly integrations: ReturnType<IntegrationClient["forUser"]>;
 
   constructor(dependencies: ScopedDependencies<Framework>) {
@@ -949,9 +953,25 @@ export class ScopedViby<Framework extends FrameworkId = FrameworkId> {
     this.sandboxes = new SandboxCollection(dependencies);
     this.previews = new PreviewCollection(dependencies);
     this.toolSources = new RegisteredToolSourceCollection(dependencies);
+    this.feedback = new FeedbackCollection(dependencies);
     this.integrations = dependencies.integrations.forUser(
       dependencies.scope,
       dependencies.repository,
+    );
+  }
+}
+
+export class FeedbackCollection<Framework extends FrameworkId = FrameworkId> {
+  readonly #dependencies: ScopedDependencies<Framework>;
+
+  constructor(dependencies: ScopedDependencies<Framework>) {
+    this.#dependencies = dependencies;
+  }
+
+  analytics(input: FeedbackAnalyticsQuery = {}): Promise<FeedbackAnalyticsData> {
+    return this.#dependencies.repository.queryMessageFeedbackAnalytics(
+      this.#dependencies.scope,
+      normalizeFeedbackAnalyticsQuery(input),
     );
   }
 }
@@ -1622,6 +1642,16 @@ export class Chat<Framework extends FrameworkId = FrameworkId> {
   async listFeedback(messageId: string): Promise<readonly MessageFeedbackData[]> {
     await this.#assertActive();
     return this.#dependencies.repository.listMessageFeedback(
+      this.#dependencies.scope,
+      this.id,
+      assertIdentifier(messageId, "message id"),
+    );
+  }
+
+  /** Returns the most recently selected immutable rating for UI restoration. */
+  async getSelectedFeedback(messageId: string): Promise<MessageFeedbackData | null> {
+    await this.#assertActive();
+    return this.#dependencies.repository.getSelectedMessageFeedback(
       this.#dependencies.scope,
       this.id,
       assertIdentifier(messageId, "message id"),

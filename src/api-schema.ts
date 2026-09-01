@@ -58,6 +58,7 @@ const operations = [
   operation("getMessage", "get", "/chats/{chatId}/messages/{messageId}", "Get a message", "Messages"),
   operation("listMessageFeedback", "get", "/chats/{chatId}/messages/{messageId}/feedback", "List message feedback", "Feedback"),
   operation("submitMessageFeedback", "post", "/chats/{chatId}/messages/{messageId}/feedback", "Submit immutable message feedback", "Feedback", 201, "json", "MessageFeedbackRequest"),
+  operation("queryFeedbackAnalytics", "get", "/feedback/analytics", "Aggregate durable message feedback", "Feedback"),
   operation("startChatInspection", "post", "/chats/{chatId}/inspections", "Start a read-only chat inspection", "Generations", 202, "json", "GenerateRequest"),
   operation("listVersions", "get", "/chats/{chatId}/versions", "List immutable versions", "Versions"),
   operation("getVersion", "get", "/chats/{chatId}/versions/{versionId}", "Get an immutable version", "Versions"),
