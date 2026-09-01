@@ -160,10 +160,17 @@ test("consumes the Web API host through typed chat, stream, preview, and downloa
       },
     );
     assert.equal(submittedFeedback.feedback.messageId, assistant.id);
-    assert.equal(
-      (await client.chats.messages.listFeedback(created.chat.id, assistant.id)).feedback.length,
-      1,
-    );
+    const listedFeedback = await client.chats.messages.listFeedback(created.chat.id, assistant.id);
+    assert.equal(listedFeedback.feedback.length, 1);
+    assert.equal(listedFeedback.selected?.id, submittedFeedback.feedback.id);
+    const feedbackAnalytics = await client.feedback.analytics({
+      groupBy: ["model", "framework"],
+    });
+    assert.equal(feedbackAnalytics.analytics.totals.total, 1);
+    assert.deepEqual(feedbackAnalytics.analytics.buckets[0]?.dimensions, {
+      model: { provider: "test", id: "test/web-client" },
+      framework: "farm",
+    });
 
     const inspection = await client.chats.versions.inspect(
       created.chat.id,

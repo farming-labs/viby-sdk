@@ -33,7 +33,11 @@ import type {
 } from "./integrations.js";
 import type { PreviewEventListener, PreviewSessionData } from "./preview.js";
 import type { ToolSourceRegistrationStatus } from "./tool-source-registry.js";
-import type { SubmitMessageFeedbackInput } from "./message-feedback.js";
+import type {
+  FeedbackAnalyticsDimension,
+  FeedbackAnalyticsQuery,
+  SubmitMessageFeedbackInput,
+} from "./message-feedback.js";
 import {
   VIBY_API_OPERATIONS,
   type VibyApiKnownOperation,
@@ -268,6 +272,11 @@ async function route<Framework extends FrameworkId>(
     return toolSourceRoute(request, segments, url, user, maxBodyBytes);
   }
 
+  if (segments.length === 2 && segments[0] === "feedback" && segments[1] === "analytics") {
+    if (request.method !== "GET") return methodNotAllowed("GET");
+    return json({ analytics: await user.feedback.analytics(feedbackAnalyticsQuery(url)) });
+  }
+
   if (segments.length === 2 && segments[0] === "chats" && segments[1] === "imports") {
     if (request.method !== "POST") return methodNotAllowed("POST");
     const imported = await importChat(user, await requestObject(request, maxBodyBytes), request.signal);
@@ -415,7 +424,11 @@ async function route<Framework extends FrameworkId>(
       }
       if (segments.length === 5 && segments[4] === "feedback") {
         if (request.method === "GET") {
-          return json({ feedback: await chat.listFeedback(segments[3]!) });
+          const [feedback, selected] = await Promise.all([
+            chat.listFeedback(segments[3]!),
+            chat.getSelectedFeedback(segments[3]!),
+          ]);
+          return json({ feedback, selected });
         }
         if (request.method === "POST") {
           const body = await requestObject(request, maxBodyBytes);
@@ -1487,6 +1500,28 @@ function feedbackInput(body: Readonly<Record<string, unknown>>): SubmitMessageFe
     ...(body.idempotencyKey === undefined
       ? {}
       : { idempotencyKey: requiredString(body.idempotencyKey, "idempotencyKey", 200) }),
+  };
+}
+
+function feedbackAnalyticsQuery(url: URL): FeedbackAnalyticsQuery {
+  const groupBy = url.searchParams.get("groupBy")
+    ?.split(",")
+    .filter(Boolean) as FeedbackAnalyticsDimension[] | undefined;
+  return {
+    ...(groupBy ? { groupBy } : {}),
+    ...(url.searchParams.has("from") ? { from: url.searchParams.get("from")! } : {}),
+    ...(url.searchParams.has("to") ? { to: url.searchParams.get("to")! } : {}),
+    ...(url.searchParams.has("framework")
+      ? { framework: url.searchParams.get("framework")! }
+      : {}),
+    ...(url.searchParams.has("modelProvider")
+      ? { modelProvider: url.searchParams.get("modelProvider")! }
+      : {}),
+    ...(url.searchParams.has("modelId") ? { modelId: url.searchParams.get("modelId")! } : {}),
+    ...(url.searchParams.has("runtimeAlias")
+      ? { runtimeAlias: url.searchParams.get("runtimeAlias")! }
+      : {}),
+    ...(url.searchParams.has("limit") ? { limit: queryInteger(url, "limit") } : {}),
   };
 }
 

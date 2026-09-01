@@ -2,6 +2,7 @@ export {
   createViby,
   Chat,
   ChatToolSourceSelection,
+  FeedbackCollection,
   Generation,
   GenerationCollection,
   GenerationWorker,

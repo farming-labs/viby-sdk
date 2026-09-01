@@ -430,6 +430,10 @@ test("records immutable tenant-scoped feedback for generated assistant messages"
   assert.equal(feedback.generationId, assistant.generationId);
   assert.equal(feedback.versionId !== null, true);
   assert.equal(feedback.modelProvider, "test");
+  assert.equal(feedback.framework, "farm");
+  assert.equal(feedback.executor, "model");
+  assert.equal(feedback.runtimeAlias, "default");
+  assert.equal(feedback.versionNumber, 1);
   assert.deepEqual(feedback.reasons, ["helpful", "well-designed"]);
   assert.equal(feedback.comment, "Strong information hierarchy.");
 
@@ -454,10 +458,54 @@ test("records immutable tenant-scoped feedback for generated assistant messages"
     NotFoundError,
   );
 
-  const other = await viby
-    .forUser({ tenantId: "tenant-feedback", userId: "other-user" })
-    .chats.create({ title: "Other" });
+  const otherUser = viby.forUser({ tenantId: "tenant-feedback", userId: "other-user" });
+  const other = await otherUser.chats.create({ title: "Other" });
   assert.deepEqual(await other.listFeedback(assistant.id), []);
+  assert.deepEqual(await chat.getSelectedFeedback(assistant.id), feedback);
+
+  const negative = await chat.submitFeedback(assistant.id, {
+    rating: "negative",
+    reasons: ["incomplete"],
+    idempotencyKey: "thumb-down-v2",
+  });
+  assert.deepEqual(await chat.getSelectedFeedback(assistant.id), negative);
+  await chat.submitFeedback(assistant.id, {
+    rating: "positive",
+    reasons: ["helpful", "well-designed"],
+    comment: "Strong information hierarchy.",
+    metadata: { surface: "chat" },
+    idempotencyKey: "thumb-up-v1",
+  });
+  assert.deepEqual(await chat.getSelectedFeedback(assistant.id), negative);
+  const analytics = await viby
+    .forUser({ tenantId: "tenant-feedback", userId: "user-feedback" })
+    .feedback.analytics({
+      groupBy: ["model", "engine", "skill-set", "framework", "generation-version"],
+    });
+  assert.deepEqual(analytics.totals, {
+    positive: 1,
+    negative: 1,
+    total: 2,
+    positiveRate: 0.5,
+  });
+  assert.equal(analytics.buckets.length, 1);
+  assert.deepEqual(analytics.buckets[0]?.dimensions, {
+    model: { provider: "test", id: "test/mock" },
+    engine: { executor: "model", alias: "default" },
+    skillSet: feedback.skills,
+    framework: "farm",
+    generationVersion: { id: feedback.versionId, number: 1 },
+  });
+  assert.equal((await viby
+    .forUser({ tenantId: "tenant-feedback", userId: "user-feedback" })
+    .feedback.analytics({ framework: "other" })).totals.total, 0);
+  assert.throws(
+    () => viby
+      .forUser({ tenantId: "tenant-feedback", userId: "user-feedback" })
+      .feedback.analytics({ groupBy: [] }),
+    ConfigurationError,
+  );
+  assert.equal((await otherUser.feedback.analytics()).totals.total, 0);
   await viby.close();
 });
 
