@@ -269,12 +269,12 @@ interface ProviderRequestAttributionRow {
   model_provider: string;
   model_id: string;
   outcome: ProviderRequestOutcome;
-  input_tokens: number | null;
-  output_tokens: number | null;
-  total_tokens: number | null;
-  cache_read_tokens: number | null;
-  cache_write_tokens: number | null;
-  latency_ms: number | null;
+  input_tokens: string | number | null;
+  output_tokens: string | number | null;
+  total_tokens: string | number | null;
+  cache_read_tokens: string | number | null;
+  cache_write_tokens: string | number | null;
+  latency_ms: string | number | null;
   estimated_cost_micros: string | number | null;
   cost_currency: string | null;
   model_metadata: ChatMetadata;
@@ -5267,12 +5267,12 @@ function mapProviderRequestAttribution(
     modelProvider: row.model_provider,
     modelId: row.model_id,
     outcome: row.outcome,
-    inputTokens: row.input_tokens,
-    outputTokens: row.output_tokens,
-    totalTokens: row.total_tokens,
-    cacheReadTokens: row.cache_read_tokens,
-    cacheWriteTokens: row.cache_write_tokens,
-    latencyMs: row.latency_ms,
+    inputTokens: mapNullableStoredInteger(row.input_tokens, "provider input tokens"),
+    outputTokens: mapNullableStoredInteger(row.output_tokens, "provider output tokens"),
+    totalTokens: mapNullableStoredInteger(row.total_tokens, "provider total tokens"),
+    cacheReadTokens: mapNullableStoredInteger(row.cache_read_tokens, "provider cache read tokens"),
+    cacheWriteTokens: mapNullableStoredInteger(row.cache_write_tokens, "provider cache write tokens"),
+    latencyMs: mapNullableStoredInteger(row.latency_ms, "provider latency"),
     cost: mapCost(row.estimated_cost_micros, row.cost_currency),
     modelMetadata: row.model_metadata,
     createdAt: repositoryDate(row.created_at),
@@ -5322,6 +5322,18 @@ function mapCost(
     throw new Error("Stored generation cost is outside the JavaScript safe integer range.");
   }
   return { amountMicros, currency };
+}
+
+function mapNullableStoredInteger(
+  value: string | number | null,
+  label: string,
+): number | null {
+  if (value === null) return null;
+  const number = Number(value);
+  if (!Number.isSafeInteger(number) || number < 0) {
+    throw new Error(`Stored ${label} is outside the JavaScript safe integer range.`);
+  }
+  return number;
 }
 
 function mapEvent(row: GenerationEventRow): GenerationEvent {
