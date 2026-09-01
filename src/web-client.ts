@@ -73,6 +73,7 @@ import type {
   MessageFeedbackData,
   SubmitMessageFeedbackInput,
 } from "./message-feedback.js";
+import type { ProviderRequestAttributionData } from "./provider-request-attribution.js";
 
 const DEFAULT_BASE_URL = "/api/viby";
 const DEFAULT_MAX_RECONNECTS = 5;
@@ -98,6 +99,7 @@ export type VibyApiGenerationAttempt = VibyApiJson<GenerationAttemptData>;
 export type VibyApiGenerationTask = VibyApiJson<GenerationTaskData>;
 export type VibyApiGenerationSteering = VibyApiJson<GenerationSteeringData>;
 export type VibyApiGenerationEvent = VibyApiJson<GenerationEvent>;
+export type VibyApiProviderRequestAttribution = VibyApiJson<ProviderRequestAttributionData>;
 export type VibyApiGeneratedArtifact = VibyApiJson<GeneratedArtifactData>;
 export type VibyApiToolCall = VibyApiJson<ToolCallData>;
 export type VibyApiToolSource = VibyApiJson<ToolSourceRegistrationData>;
@@ -544,6 +546,10 @@ export interface VibyWebGenerationsClient<Framework extends FrameworkId = Framew
     generationId: string,
     options?: VibyWebPageOptions,
   ): Promise<VibyApiJson<GenerationEventPage>>;
+  providerRequests(
+    generationId: string,
+    options?: VibyWebRequestOptions,
+  ): Promise<{ readonly providerRequests: readonly VibyApiProviderRequestAttribution[] }>;
   stream(
     generationId: string,
     options?: VibyWebStreamOptions,
@@ -1104,6 +1110,13 @@ export function createVibyWebClient<Framework extends FrameworkId = FrameworkId>
       undefined,
       input,
       input,
+    ),
+    providerRequests: (generationId, request = {}) => transport.json(
+      "GET",
+      `/generations/${segment(generationId)}/provider-requests`,
+      undefined,
+      undefined,
+      request,
     ),
     stream: (generationId, input = {}) => generationStream(transport, generationId, input),
     cancel: (generationId, reason, request = {}) => transport.json(

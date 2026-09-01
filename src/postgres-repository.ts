@@ -77,6 +77,7 @@ import type {
   ConsumeGenerationSteeringRecord,
   CreateGeneratedArtifactRecord,
   CreateProjectArtifactRecord,
+  CreateProviderRequestAttributionRecord,
   RepairGenerationAttemptRecord,
   CreateVisualArtifactRecord,
   CreateToolCallRecord,
@@ -110,6 +111,10 @@ import type {
   MessageFeedbackRating,
   MessageFeedbackReason,
 } from "./message-feedback.js";
+import type {
+  ProviderRequestAttributionData,
+  ProviderRequestOutcome,
+} from "./provider-request-attribution.js";
 import type {
   BeginRepositoryPushRecord,
   CompleteRepositoryPushRecord,
@@ -252,6 +257,28 @@ interface GenerationAttemptRow {
 interface GenerationAttemptClaimRow extends GenerationAttemptRow {
   tenant_id: string;
   user_id: string;
+}
+
+interface ProviderRequestAttributionRow {
+  id: string;
+  generation_id: string;
+  attempt_id: string;
+  sequence: number;
+  idempotency_key: string;
+  provider_request_id: string | null;
+  model_provider: string;
+  model_id: string;
+  outcome: ProviderRequestOutcome;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  total_tokens: number | null;
+  cache_read_tokens: number | null;
+  cache_write_tokens: number | null;
+  latency_ms: number | null;
+  estimated_cost_micros: string | number | null;
+  cost_currency: string | null;
+  model_metadata: ChatMetadata;
+  created_at: Date;
 }
 
 interface GenerationEngineCheckpointRow {
@@ -720,6 +747,7 @@ export class PostgresRepository implements Repository {
       SELECT
         to_regclass('viby.chats') IS NOT NULL
         AND to_regclass('viby.generation_attempts') IS NOT NULL
+        AND to_regclass('viby.provider_request_attribution') IS NOT NULL
         AND to_regclass('viby.generation_engine_checkpoints') IS NOT NULL
         AND to_regclass('viby.message_feedback') IS NOT NULL
         AND to_regclass('viby.generation_events') IS NOT NULL
@@ -1892,6 +1920,94 @@ export class PostgresRepository implements Repository {
       return attempt;
     });
     return mapAttempt(row);
+  }
+
+  async createProviderRequestAttribution(
+    scope: UserScope,
+    input: CreateProviderRequestAttributionRecord,
+  ): Promise<ProviderRequestAttributionData> {
+    await this.assertReady();
+    return this.#sql.begin(async (sql) => {
+      const [attempt] = await sql<GenerationAttemptRow[]>`
+        SELECT attempt.*
+        FROM viby.generation_attempts AS attempt
+        JOIN viby.generations AS generation ON generation.id = attempt.generation_id
+        WHERE attempt.tenant_id = ${scope.tenantId} AND attempt.user_id = ${scope.userId}
+          AND attempt.generation_id = ${input.generationId} AND attempt.id = ${input.attemptId}
+          AND attempt.status = 'running' AND attempt.lease_token = ${input.leaseToken}
+          AND attempt.lease_expires_at > now()
+          AND generation.active_attempt_id = attempt.id AND generation.status = 'running'
+        FOR UPDATE OF attempt
+      `;
+      if (!attempt) {
+        throw new GenerationStateError(
+          input.generationId,
+          "The generation worker lease is no longer active.",
+        );
+      }
+      const [position] = await sql<{ sequence: number }[]>`
+        SELECT COALESCE(MAX(sequence), -1) + 1 AS sequence
+        FROM viby.provider_request_attribution
+        WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+          AND attempt_id = ${input.attemptId}
+      `;
+      const rows = await sql<ProviderRequestAttributionRow[]>`
+        INSERT INTO viby.provider_request_attribution (
+          id, tenant_id, user_id, chat_id, generation_id, attempt_id, sequence,
+          idempotency_key, provider_request_id, model_provider, model_id, outcome,
+          input_tokens, output_tokens, total_tokens, cache_read_tokens, cache_write_tokens,
+          latency_ms, estimated_cost_micros, cost_currency, model_metadata
+        )
+        SELECT ${input.id}, ${scope.tenantId}, ${scope.userId}, generation.chat_id,
+          ${input.generationId}, ${input.attemptId}, ${position?.sequence ?? 0},
+          ${input.idempotencyKey}, ${input.providerRequestId}, ${input.modelProvider},
+          ${input.modelId}, ${input.outcome}, ${input.inputTokens}, ${input.outputTokens},
+          ${input.totalTokens}, ${input.cacheReadTokens}, ${input.cacheWriteTokens},
+          ${input.latencyMs}, ${input.cost?.amountMicros ?? null},
+          ${input.cost?.currency ?? null},
+          ${sql.json(JSON.parse(JSON.stringify(input.modelMetadata)))}
+        FROM viby.generations AS generation
+        WHERE generation.tenant_id = ${scope.tenantId}
+          AND generation.user_id = ${scope.userId} AND generation.id = ${input.generationId}
+        ON CONFLICT (tenant_id, user_id, attempt_id, idempotency_key) DO NOTHING
+        RETURNING *
+      `;
+      if (rows[0]) return mapProviderRequestAttribution(rows[0]);
+      const [existing] = await sql<ProviderRequestAttributionRow[]>`
+        SELECT * FROM viby.provider_request_attribution
+        WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+          AND attempt_id = ${input.attemptId} AND idempotency_key = ${input.idempotencyKey}
+        LIMIT 1
+      `;
+      if (!existing) {
+        throw new Error("Provider request attribution conflict could not be resolved.");
+      }
+      const mapped = mapProviderRequestAttribution(existing);
+      if (!providerRequestMatches(mapped, input)) {
+        throw new ConfigurationError(
+          "Provider request idempotency key was already used with different attribution.",
+        );
+      }
+      return mapped;
+    });
+  }
+
+  async listProviderRequestAttribution(
+    scope: UserScope,
+    generationId: string,
+  ): Promise<ProviderRequestAttributionData[]> {
+    await this.assertReady();
+    const rows = await this.#sql<ProviderRequestAttributionRow[]>`
+      SELECT attribution.*
+      FROM viby.provider_request_attribution AS attribution
+      JOIN viby.chats AS chat ON chat.id = attribution.chat_id
+      JOIN viby.generation_attempts AS attempt ON attempt.id = attribution.attempt_id
+      WHERE attribution.tenant_id = ${scope.tenantId}
+        AND attribution.user_id = ${scope.userId}
+        AND attribution.generation_id = ${generationId} AND chat.deleted_at IS NULL
+      ORDER BY attempt.number, attribution.sequence, attribution.created_at, attribution.id
+    `;
+    return rows.map(mapProviderRequestAttribution);
   }
 
   async attachGenerationSkills(
@@ -5136,6 +5252,64 @@ function mapAttempt(row: GenerationAttemptRow): GenerationAttemptData {
     heartbeatAt: row.heartbeat_at,
     leaseExpiresAt: row.lease_expires_at,
   };
+}
+
+function mapProviderRequestAttribution(
+  row: ProviderRequestAttributionRow,
+): ProviderRequestAttributionData {
+  return {
+    id: row.id,
+    generationId: row.generation_id,
+    attemptId: row.attempt_id,
+    sequence: row.sequence,
+    idempotencyKey: row.idempotency_key,
+    providerRequestId: row.provider_request_id,
+    modelProvider: row.model_provider,
+    modelId: row.model_id,
+    outcome: row.outcome,
+    inputTokens: row.input_tokens,
+    outputTokens: row.output_tokens,
+    totalTokens: row.total_tokens,
+    cacheReadTokens: row.cache_read_tokens,
+    cacheWriteTokens: row.cache_write_tokens,
+    latencyMs: row.latency_ms,
+    cost: mapCost(row.estimated_cost_micros, row.cost_currency),
+    modelMetadata: row.model_metadata,
+    createdAt: repositoryDate(row.created_at),
+  };
+}
+
+function providerRequestMatches(
+  existing: ProviderRequestAttributionData,
+  input: CreateProviderRequestAttributionRecord,
+): boolean {
+  return JSON.stringify({
+    providerRequestId: existing.providerRequestId,
+    modelProvider: existing.modelProvider,
+    modelId: existing.modelId,
+    outcome: existing.outcome,
+    inputTokens: existing.inputTokens,
+    outputTokens: existing.outputTokens,
+    totalTokens: existing.totalTokens,
+    cacheReadTokens: existing.cacheReadTokens,
+    cacheWriteTokens: existing.cacheWriteTokens,
+    latencyMs: existing.latencyMs,
+    cost: existing.cost,
+    modelMetadata: existing.modelMetadata,
+  }) === JSON.stringify({
+    providerRequestId: input.providerRequestId,
+    modelProvider: input.modelProvider,
+    modelId: input.modelId,
+    outcome: input.outcome,
+    inputTokens: input.inputTokens,
+    outputTokens: input.outputTokens,
+    totalTokens: input.totalTokens,
+    cacheReadTokens: input.cacheReadTokens,
+    cacheWriteTokens: input.cacheWriteTokens,
+    latencyMs: input.latencyMs,
+    cost: input.cost,
+    modelMetadata: input.modelMetadata,
+  });
 }
 
 function mapCost(

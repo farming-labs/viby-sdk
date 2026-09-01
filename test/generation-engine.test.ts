@@ -98,6 +98,69 @@ test("runs a custom generation engine without an AI SDK model", async () => {
   assert.equal(closed, 1);
 });
 
+test("persists provider request attribution reported by a custom engine", async () => {
+  const engine = defineGenerationEngine<"farm">({
+    identity: { provider: "orchestrator", model: "design-agent-v2" },
+    async generate(_input, options) {
+      const request = {
+        idempotencyKey: "provider-call-1",
+        providerRequestId: "req_provider_123",
+        modelProvider: "openai",
+        modelId: "gpt-design",
+        outcome: "succeeded" as const,
+        inputTokens: 120,
+        outputTokens: 80,
+        totalTokens: 200,
+        cacheReadTokens: 64,
+        cacheWriteTokens: 8,
+        latencyMs: 425,
+        cost: { amountMicros: 1_250, currency: "USD" },
+        modelMetadata: { region: "us-east", tier: "priority" },
+      };
+      await options?.attribution?.record(request);
+      await options?.attribution?.record(request);
+      await options?.attribution?.record({
+        idempotencyKey: "provider-call-2",
+        providerRequestId: "req_provider_456",
+        outcome: "failed",
+        latencyMs: 81,
+        modelMetadata: { retryable: true },
+      });
+      return projectOutput();
+    },
+  });
+  const viby = createVibyWithDependencies(
+    { framework: "farm", generation: { engine } },
+    { repository: new MemoryRepository(), skillResolver: new SkillResolver({}) },
+  );
+  const user = viby.forUser({ tenantId: "tenant-attribution", userId: "user-attribution" });
+  const version = await (await user.chats.create()).generate({ prompt: "Create source" });
+  const generation = await version.generation();
+  const requests = await (await user.generations.get(generation!.id)).providerRequests();
+
+  assert.equal(requests.length, 2);
+  assert.deepEqual(requests.map((request) => request.sequence), [0, 1]);
+  assert.deepEqual(requests[0], {
+    ...requests[0],
+    providerRequestId: "req_provider_123",
+    modelProvider: "openai",
+    modelId: "gpt-design",
+    outcome: "succeeded",
+    inputTokens: 120,
+    outputTokens: 80,
+    totalTokens: 200,
+    cacheReadTokens: 64,
+    cacheWriteTokens: 8,
+    latencyMs: 425,
+    cost: { amountMicros: 1_250, currency: "USD" },
+    modelMetadata: { region: "us-east", tier: "priority" },
+  });
+  assert.equal(requests[1]?.modelProvider, "orchestrator");
+  assert.equal(requests[1]?.modelId, "design-agent-v2");
+  assert.equal(requests[1]?.outcome, "failed");
+  await viby.close();
+});
+
 test("verifies provider-neutral generation engine behavior", async () => {
   const engine = defineGenerationEngine<"farm">({
     identity: { provider: "fixture", model: "fixture-v1" },

@@ -17,6 +17,7 @@ export interface PersistenceConformanceReport {
     | "readiness"
     | "chat-metadata"
     | "durable-generation"
+    | "provider-request-attribution"
     | "message-feedback"
     | "message-ordering"
     | "generation-steering"
@@ -100,6 +101,18 @@ export async function verifyPersistenceAdapter(
           identity: { provider: "conformance", model: "fixture-v1" },
           async generate(_generationInput, options) {
             options?.signal?.throwIfAborted();
+            await options?.attribution?.record({
+              idempotencyKey: `conformance-provider-${suffix}`,
+              providerRequestId: `request-${suffix}`,
+              outcome: "succeeded",
+              inputTokens: 2,
+              outputTokens: 3,
+              totalTokens: 5,
+              cacheReadTokens: 1,
+              latencyMs: 25,
+              cost: { amountMicros: 10, currency: "USD" },
+              modelMetadata: { conformance: true },
+            });
             return output;
           },
         },
@@ -135,6 +148,14 @@ export async function verifyPersistenceAdapter(
       "Version files changed.",
     );
     checks.push("durable-generation");
+    const providerRequests = await generation.providerRequests();
+    assertConformance(
+      providerRequests.length === 1 &&
+        providerRequests[0]?.providerRequestId === `request-${suffix}` &&
+        providerRequests[0]?.cacheReadTokens === 1,
+      "Provider request attribution was not durable.",
+    );
+    checks.push("provider-request-attribution");
 
     const assistant = (await chat.listMessages()).items.find(
       (message) => message.role === "assistant",

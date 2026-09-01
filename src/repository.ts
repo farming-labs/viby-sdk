@@ -68,6 +68,10 @@ import type {
   CreateMessageFeedbackRecord,
   MessageFeedbackData,
 } from "./message-feedback.js";
+import type {
+  NormalizedProviderRequestAttributionInput,
+  ProviderRequestAttributionData,
+} from "./provider-request-attribution.js";
 
 export interface ImportChatRecord<Framework extends FrameworkId = FrameworkId> {
   readonly chatId: string;
@@ -287,6 +291,16 @@ export interface CreateAttemptRecord {
   readonly id: string;
   readonly generationId: string;
   readonly reason: Exclude<GenerationAttemptReason, "initial" | "task_resolution">;
+}
+
+export interface CreateProviderRequestAttributionRecord
+extends NormalizedProviderRequestAttributionInput {
+  readonly id: string;
+  readonly generationId: string;
+  readonly attemptId: string;
+  readonly leaseToken: string;
+  readonly modelProvider: string;
+  readonly modelId: string;
 }
 
 export interface RepairGenerationAttemptRecord {
@@ -547,6 +561,14 @@ extends DeploymentHistoryStore, PreviewSessionStore, ToolSourceRegistryStore, To
     scope: UserScope,
     input: CreateAttemptRecord,
   ): Promise<GenerationAttemptData>;
+  createProviderRequestAttribution(
+    scope: UserScope,
+    input: CreateProviderRequestAttributionRecord,
+  ): Promise<ProviderRequestAttributionData>;
+  listProviderRequestAttribution(
+    scope: UserScope,
+    generationId: string,
+  ): Promise<ProviderRequestAttributionData[]>;
   attachGenerationSkills(
     scope: UserScope,
     generationId: string,

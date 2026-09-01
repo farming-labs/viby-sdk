@@ -3,7 +3,12 @@ import { test } from "node:test";
 import type { LanguageModel, LanguageModelUsage } from "ai";
 import { createVibyApi } from "../src/api-host.js";
 import { createVibyWithDependencies } from "../src/client.js";
-import type { GeneratorInput, GeneratorOutput, ProjectGenerator } from "../src/generator.js";
+import type {
+  GeneratorInput,
+  GeneratorOptions,
+  GeneratorOutput,
+  ProjectGenerator,
+} from "../src/generator.js";
 import { SkillResolver } from "../src/skills.js";
 import { defineToolSourceAdapter } from "../src/tool-source-registry.js";
 import type { VersionFile } from "../src/types.js";
@@ -25,7 +30,17 @@ const usage: LanguageModelUsage = {
 };
 
 class WebClientGenerator implements ProjectGenerator<"farm"> {
-  async generate(input: GeneratorInput<"farm">): Promise<GeneratorOutput> {
+  async generate(input: GeneratorInput<"farm">, options?: GeneratorOptions): Promise<GeneratorOutput> {
+    await options?.attribution?.record({
+      idempotencyKey: `web:${options.run?.attemptId ?? "direct"}`,
+      providerRequestId: `req_${options.run?.attemptId ?? "direct"}`,
+      outcome: "succeeded",
+      inputTokens: usage.inputTokens ?? null,
+      outputTokens: usage.outputTokens ?? null,
+      totalTokens: usage.totalTokens ?? null,
+      cacheReadTokens: usage.inputTokenDetails.cacheReadTokens ?? null,
+      latencyMs: 12,
+    });
     if (input.operation === "inspect") {
       return {
         kind: "message",
@@ -128,6 +143,9 @@ test("consumes the Web API host through typed chat, stream, preview, and downloa
     const generation = await client.generations.get(created.generation.id);
     assert.equal(generation.generation.status, "succeeded");
     assert.ok(generation.version);
+    const providerRequests = await client.generations.providerRequests(created.generation.id);
+    assert.equal(providerRequests.providerRequests.length, 1);
+    assert.match(providerRequests.providerRequests[0]!.providerRequestId!, /^req_/);
     const detail = await client.chats.get(created.chat.id);
     assert.equal(detail.messages.length, 2);
     assert.equal(detail.versions.length, 1);

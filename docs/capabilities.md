@@ -91,6 +91,7 @@ Preview URLs exist only when the configured adapter exposes port URLs and backgr
 | API schemas | portable OpenAPI 3.1 builder, complete typed operation inventory, and JSON Schema Draft 2020-12 bundle through `@viby/sdk/schema` |
 | Telemetry | provider-neutral hooks plus an OpenTelemetry-compatible tracer/meter adapter |
 | Cost attribution | host-defined currency/credit calculator, immutable attempt cost, cumulative generation cost, and usage parts |
+| Provider request attribution | durable per-call provider request IDs, routed model identity, outcome, latency, token/cache usage, engine-reported cost estimates, and credential-free metadata |
 | Generation configuration | durable per-request model aliases, host instructions, categorized skill overlays, and JSON metadata |
 | Multimodal input | immutable attachment bytes in an external artifact store, lightweight PostgreSQL metadata, scoped retrieval, and standard AI SDK file parts |
 | Generated artifacts | durable images, audio, video, documents, and binary outputs with ownership, checksums, artifact-store references, and resumable creation events |

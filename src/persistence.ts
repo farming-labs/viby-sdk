@@ -17,6 +17,7 @@ export type {
   CompleteToolCallRecord,
   CreateAttachmentRecord,
   CreateProjectArtifactRecord,
+  CreateProviderRequestAttributionRecord,
   CreateAttemptRecord,
   CreatedGeneration,
   CreatedToolCall,

@@ -32,6 +32,7 @@ import { ConfigurationError } from "./errors.js";
 import { applySourceChanges, normalizeSourceChanges } from "./source-changes.js";
 import type { SandboxSession } from "./sandbox.js";
 import type { ToolSourceContext } from "./tool-source.js";
+import type { ProviderRequestAttributionWriter } from "./provider-request-attribution.js";
 
 const MAX_PROJECT_FILES = 250;
 const MAX_FILE_BYTES = 1_500_000;
@@ -207,6 +208,8 @@ export interface GeneratorOptions {
   readonly onDelta?: (delta: string) => void | Promise<void>;
   readonly trace?: AgentTraceWriter;
   readonly toolCalls?: AgentToolCallWriter;
+  /** Durable per-provider-call attribution for support, usage, and billing. */
+  readonly attribution?: ProviderRequestAttributionWriter;
   /** Opaque credential-free engine state scoped to this exact durable attempt. */
   readonly checkpoint?: GenerationEngineCheckpointChannel;
   /** Host-selected, policy-authorized tools projected without provider-specific types. */
@@ -299,6 +302,7 @@ implements ProjectGenerator<Framework> {
     }
     if (options.onDelta) return this.#generateStreaming(steeredInput, options);
 
+    const startedAt = Date.now();
     const result = await generateText({
       model: this.#model,
       system: createSystemPrompt(
@@ -314,6 +318,7 @@ implements ProjectGenerator<Framework> {
       }),
       ...(options.signal ? { abortSignal: options.signal } : {}),
     });
+    await recordAiSdkProviderRequest(options, this.#model, result, startedAt);
 
     return withGeneratedArtifacts(
       normalizeOutput(
@@ -330,6 +335,7 @@ implements ProjectGenerator<Framework> {
     input: GeneratorInput<Framework>,
     options: GeneratorOptions,
   ): Promise<GeneratorMessageOutput> {
+    const startedAt = Date.now();
     const result = await generateText({
       model: this.#model,
       system: createInspectionSystemPrompt(
@@ -345,6 +351,7 @@ implements ProjectGenerator<Framework> {
       }),
       ...(options.signal ? { abortSignal: options.signal } : {}),
     });
+    await recordAiSdkProviderRequest(options, this.#model, result, startedAt);
     if (options.onDelta) await options.onDelta(result.output.response);
     return {
       kind: "message",
@@ -359,6 +366,7 @@ implements ProjectGenerator<Framework> {
     input: GeneratorInput<Framework>,
     options: GeneratorOptions,
   ): Promise<GeneratorOutput> {
+    const startedAt = Date.now();
     const result = streamText({
       model: this.#model,
       system: createSystemPrompt(input.framework, input.skills, input.instructions ?? null),
@@ -379,6 +387,12 @@ implements ProjectGenerator<Framework> {
       }
     }
 
+    await recordAiSdkProviderRequest(options, this.#model, {
+      response: await result.response,
+      usage: await result.usage,
+      providerMetadata: await result.providerMetadata,
+    }, startedAt);
+
     return withGeneratedArtifacts(
       normalizeOutput(
         await result.output,
@@ -388,6 +402,63 @@ implements ProjectGenerator<Framework> {
       ),
       generatedFileOutputs(await result.files),
     );
+  }
+}
+
+interface AiSdkProviderResult {
+  readonly response?: {
+    readonly id?: string;
+    readonly modelId?: string;
+  };
+  readonly usage: LanguageModelUsage;
+  readonly providerMetadata?: unknown;
+}
+
+async function recordAiSdkProviderRequest(
+  options: GeneratorOptions,
+  model: LanguageModel,
+  result: AiSdkProviderResult,
+  startedAt: number,
+): Promise<void> {
+  if (!options.attribution) return;
+  const providerRequestId = result.response?.id?.trim() || null;
+  const configuredModel = typeof model === "string"
+    ? null
+    : { provider: model.provider, modelId: model.modelId };
+  const modelId = result.response?.modelId?.trim() || configuredModel?.modelId;
+  await options.attribution.record({
+    idempotencyKey: providerRequestId
+      ? `ai-sdk:${providerRequestId}`
+      : `ai-sdk:${options.run?.attemptId ?? "direct"}:0`,
+    providerRequestId,
+    ...(configuredModel ? { modelProvider: configuredModel.provider } : {}),
+    ...(modelId ? { modelId } : {}),
+    outcome: "succeeded",
+    inputTokens: result.usage.inputTokens ?? null,
+    outputTokens: result.usage.outputTokens ?? null,
+    totalTokens: result.usage.totalTokens ?? null,
+    cacheReadTokens: result.usage.inputTokenDetails?.cacheReadTokens ?? null,
+    cacheWriteTokens: result.usage.inputTokenDetails?.cacheWriteTokens ?? null,
+    latencyMs: Math.max(0, Date.now() - startedAt),
+    modelMetadata: credentialFreeModelMetadata(result.providerMetadata),
+  });
+}
+
+function credentialFreeModelMetadata(value: unknown): Readonly<Record<string, JsonValue>> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const encoded = JSON.stringify(value, (key, entry) => {
+    if (/token|secret|authorization|api[-_]?key|credential/i.test(key)) return undefined;
+    if (typeof entry === "bigint") return entry.toString();
+    return entry;
+  });
+  if (!encoded || encoded.length > 32_000) return {};
+  try {
+    const parsed = JSON.parse(encoded) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed as Readonly<Record<string, JsonValue>>
+      : {};
+  } catch {
+    return {};
   }
 }
 

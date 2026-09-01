@@ -84,6 +84,7 @@ const operations = [
   operation("stopPreviewAlias", "post", "/previews/{previewId}/stop", "Stop a durable preview", "Previews", 200, "json", undefined, false, true),
   operation("reconnectPreview", "post", "/previews/{previewId}/reconnect", "Reconnect a durable preview", "Previews"),
   operation("getGeneration", "get", "/generations/{generationId}", "Get generation state and attempts", "Generations"),
+  operation("listProviderRequestAttribution", "get", "/generations/{generationId}/provider-requests", "List durable provider request attribution", "Generations"),
   operation("getGeneratedArtifact", "get", "/generations/{generationId}/artifacts/{artifactId}", "Download a generated artifact", "Artifacts", 200, "binary"),
   operation("streamGenerationEvents", "get", "/generations/{generationId}/events", "Stream resumable generation events", "Generations", 200, "sse"),
   operation("pageGenerationEvents", "get", "/generations/{generationId}/events/page", "Page durable generation events", "Generations"),

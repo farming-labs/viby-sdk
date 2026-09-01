@@ -101,6 +101,7 @@ test(
         "0034_generation_workspace_events",
         "0035_generation_engine_checkpoints",
         "0036_message_feedback",
+        "0037_provider_request_attribution",
       ]);
       assert.equal(
         (await getMigrationStatus(databaseUrl.toString())).every((entry) => entry.applied),
