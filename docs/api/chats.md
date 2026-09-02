@@ -114,6 +114,8 @@ tools, direct patches, moves, or deletes in descendant versions.
 | `delete({ retentionMs? })` | Soft-deletes the chat and returns `deletedAt` plus nullable `purgeAfter`. It does not perform an immediate provider-side cleanup. |
 | `start(input)` | Persists a logical generation and first attempt, schedules according to execution mode, and returns an addressable handle. |
 | `generate(input)` | Convenience method that waits for success and returns a version. It throws on failure, cancellation, or required tasks. |
+| `enqueue({ prompt, afterGenerationId, ... })` | Persists a follow-up immediately and runs it only after the predecessor succeeds, using that exact result as its base. |
+| `queuedGenerations()` | Lists durable follow-ups in this chat that are still waiting to run. |
 | `getGeneration(id)` | Loads a generation belonging to this chat. |
 | `startFromVersion(input, version)` | Starts a durable generation from an exact version snapshot. |
 | `generateFromVersion(input, version)` | Synchronous convenience around `startFromVersion()` and `wait()`. |

@@ -208,6 +208,7 @@ export interface CreateGenerationRecord {
   readonly id: string;
   readonly attemptId: string;
   readonly chatId: string;
+  readonly afterGenerationId?: string | null;
   readonly baseVersionId: string | null;
   readonly prompt: string;
   readonly modelProvider: string;
@@ -522,6 +523,11 @@ extends DeploymentHistoryStore, PreviewSessionStore, ToolSourceRegistryStore, To
     metadata: ChatMetadata,
   ): Promise<RepositoryPage<ChatData<Framework>>>;
   createGeneration(scope: UserScope, input: CreateGenerationRecord): Promise<CreatedGeneration>;
+  listQueuedGenerations(scope: UserScope, chatId: string): Promise<GenerationData[]>;
+  listReadyGenerationDependents(
+    scope: UserScope,
+    generationId: string,
+  ): Promise<GenerationData[]>;
   createGenerationSteering(
     scope: UserScope,
     input: CreateGenerationSteeringRecord,

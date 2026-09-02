@@ -236,6 +236,7 @@ interface FeedbackAnalyticsBucketRow {
 interface GenerationRow {
   id: string;
   chat_id: string;
+  after_generation_id: string | null;
   base_version_id: string | null;
   active_attempt_id: string;
   attempt_count: number;
@@ -1377,10 +1378,11 @@ export class PostgresRepository implements Repository {
       result = await this.#sql.begin(async (sql) => {
         const [generation] = await sql<GenerationRow[]>`
         INSERT INTO viby.generations (
-          id, tenant_id, user_id, chat_id, base_version_id, active_attempt_id,
+          id, tenant_id, user_id, chat_id, after_generation_id, base_version_id, active_attempt_id,
           attempt_count, prompt, status, model_provider, model_id, configuration
         )
-        SELECT ${input.id}, ${scope.tenantId}, ${scope.userId}, id, ${input.baseVersionId},
+        SELECT ${input.id}, ${scope.tenantId}, ${scope.userId}, id,
+          ${input.afterGenerationId ?? null}, ${input.baseVersionId},
           ${input.attemptId}, 1, ${input.prompt}, 'queued', ${input.modelProvider}, ${input.modelId},
           ${sql.json(
             JSON.parse(JSON.stringify(input.configuration ?? defaultGenerationConfiguration())),
@@ -1396,6 +1398,16 @@ export class PostgresRepository implements Repository {
                 AND base.user_id = ${scope.userId}
                 AND base.chat_id = ${input.chatId}
                 AND base.id = ${input.baseVersionId}::uuid
+            )
+          )
+          AND (
+            ${input.afterGenerationId ?? null}::uuid IS NULL
+            OR EXISTS (
+              SELECT 1 FROM viby.generations AS predecessor
+              WHERE predecessor.tenant_id = ${scope.tenantId}
+                AND predecessor.user_id = ${scope.userId}
+                AND predecessor.chat_id = ${input.chatId}
+                AND predecessor.id = ${input.afterGenerationId ?? null}::uuid
             )
           )
         RETURNING *
@@ -1456,6 +1468,46 @@ export class PostgresRepository implements Repository {
       generation: mapGeneration(result.generation),
       attempt: mapAttempt(result.attempt),
     };
+  }
+
+  async listQueuedGenerations(scope: UserScope, chatId: string): Promise<GenerationData[]> {
+    await this.assertReady();
+    const rows = await this.#sql<GenerationRow[]>`
+      SELECT generation.* FROM viby.generations AS generation
+      JOIN viby.chats AS chat ON chat.id = generation.chat_id
+      WHERE generation.tenant_id = ${scope.tenantId}
+        AND generation.user_id = ${scope.userId}
+        AND generation.chat_id = ${chatId}
+        AND generation.after_generation_id IS NOT NULL
+        AND generation.status = 'queued'
+        AND chat.tenant_id = ${scope.tenantId}
+        AND chat.user_id = ${scope.userId}
+        AND chat.deleted_at IS NULL
+      ORDER BY generation.created_at, generation.id
+    `;
+    return rows.map(mapGeneration);
+  }
+
+  async listReadyGenerationDependents(
+    scope: UserScope,
+    generationId: string,
+  ): Promise<GenerationData[]> {
+    await this.assertReady();
+    const rows = await this.#sql<GenerationRow[]>`
+      SELECT dependent.*
+      FROM viby.generations AS dependent
+      JOIN viby.generations AS predecessor
+        ON predecessor.id = dependent.after_generation_id
+      WHERE dependent.tenant_id = ${scope.tenantId}
+        AND dependent.user_id = ${scope.userId}
+        AND dependent.after_generation_id = ${generationId}
+        AND dependent.status = 'queued'
+        AND predecessor.tenant_id = ${scope.tenantId}
+        AND predecessor.user_id = ${scope.userId}
+        AND predecessor.status = 'succeeded'
+      ORDER BY dependent.created_at, dependent.id
+    `;
+    return rows.map(mapGeneration);
   }
 
   async createGenerationSteering(
@@ -1729,6 +1781,23 @@ export class PostgresRepository implements Repository {
           `Generation ${generationId} cannot start attempt ${attemptId} from ${generation.status}.`,
         );
       }
+      if (generation.after_generation_id) {
+        const [predecessorVersion] = await sql<{ id: string }[]>`
+          SELECT version.id FROM viby.generations AS predecessor
+          JOIN viby.versions AS version ON version.generation_id = predecessor.id
+          WHERE predecessor.tenant_id = ${scope.tenantId}
+            AND predecessor.user_id = ${scope.userId}
+            AND predecessor.chat_id = ${generation.chat_id}
+            AND predecessor.id = ${generation.after_generation_id}
+            AND predecessor.status = 'succeeded'
+        `;
+        if (!predecessorVersion) {
+          throw new GenerationStateError(
+            generationId,
+            `Generation ${generationId} is waiting for its predecessor.`,
+          );
+        }
+      }
 
       const [attempt] = await sql<GenerationAttemptRow[]>`
         UPDATE viby.generation_attempts SET status = 'running', started_at = now()
@@ -1740,7 +1809,16 @@ export class PostgresRepository implements Repository {
         throw new GenerationStateError(generationId, `Attempt ${attemptId} is not queued.`);
       }
       await sql`
-        UPDATE viby.generations SET
+        UPDATE viby.generations AS target SET
+          base_version_id = COALESCE(
+            (
+              SELECT version.id FROM viby.versions AS version
+              WHERE version.tenant_id = ${scope.tenantId}
+                AND version.user_id = ${scope.userId}
+                AND version.generation_id = target.after_generation_id
+            ),
+            base_version_id
+          ),
           status = 'running', started_at = COALESCE(started_at, now()),
           completed_at = NULL, error = NULL
         WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId} AND id = ${generationId}
@@ -1776,6 +1854,20 @@ export class PostgresRepository implements Repository {
             WHERE attempt.id = ${input.attemptId}
               AND generation.active_attempt_id = attempt.id
               AND generation.status IN ('queued', 'running')
+              AND (
+                generation.after_generation_id IS NULL
+                OR EXISTS (
+                  SELECT 1
+                  FROM viby.generations AS predecessor
+                  JOIN viby.versions AS predecessor_version
+                    ON predecessor_version.generation_id = predecessor.id
+                  WHERE predecessor.id = generation.after_generation_id
+                    AND predecessor.tenant_id = generation.tenant_id
+                    AND predecessor.user_id = generation.user_id
+                    AND predecessor.chat_id = generation.chat_id
+                    AND predecessor.status = 'succeeded'
+                )
+              )
               AND attempt.status IN ('queued', 'running')
               AND (attempt.lease_expires_at IS NULL OR attempt.lease_expires_at <= now())
               AND chat.framework = ${input.framework}
@@ -1792,6 +1884,20 @@ export class PostgresRepository implements Repository {
             JOIN viby.chats AS chat ON chat.id = generation.chat_id
             WHERE generation.active_attempt_id = attempt.id
               AND generation.status IN ('queued', 'running')
+              AND (
+                generation.after_generation_id IS NULL
+                OR EXISTS (
+                  SELECT 1
+                  FROM viby.generations AS predecessor
+                  JOIN viby.versions AS predecessor_version
+                    ON predecessor_version.generation_id = predecessor.id
+                  WHERE predecessor.id = generation.after_generation_id
+                    AND predecessor.tenant_id = generation.tenant_id
+                    AND predecessor.user_id = generation.user_id
+                    AND predecessor.chat_id = generation.chat_id
+                    AND predecessor.status = 'succeeded'
+                )
+              )
               AND attempt.status IN ('queued', 'running')
               AND (attempt.lease_expires_at IS NULL OR attempt.lease_expires_at <= now())
               AND chat.framework = ${input.framework}
@@ -1816,7 +1922,16 @@ export class PostgresRepository implements Repository {
       `;
       if (!attempt?.lease_expires_at) return null;
       await sql`
-        UPDATE viby.generations SET
+        UPDATE viby.generations AS target SET
+          base_version_id = COALESCE(
+            (
+              SELECT version.id FROM viby.versions AS version
+              WHERE version.tenant_id = ${attempt.tenant_id}
+                AND version.user_id = ${attempt.user_id}
+                AND version.generation_id = target.after_generation_id
+            ),
+            base_version_id
+          ),
           status = 'running', started_at = COALESCE(started_at, now()),
           completed_at = NULL, error = NULL
         WHERE tenant_id = ${attempt.tenant_id} AND user_id = ${attempt.user_id}
@@ -5352,6 +5467,7 @@ function mapGeneration(row: GenerationRow): GenerationData {
   return {
     id: row.id,
     chatId: row.chat_id,
+    afterGenerationId: row.after_generation_id,
     baseVersionId: row.base_version_id,
     activeAttemptId: row.active_attempt_id,
     attemptCount: row.attempt_count,

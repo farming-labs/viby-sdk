@@ -930,6 +930,91 @@ test("persists a durable generation, iteration, events, and download in Postgres
   }
 });
 
+test("persists and claims predecessor-linked follow-up prompts in Postgres", {
+  skip: databaseUrl ? false : "TEST_DATABASE_URL is not configured",
+}, async () => {
+  assert.ok(databaseUrl);
+  await migrateDatabase(databaseUrl);
+  const repository = new PostgresRepository(databaseUrl);
+  let releaseFirst!: () => void;
+  const gate = new Promise<void>((resolve) => { releaseFirst = resolve; });
+  let call = 0;
+  const generator: ProjectGenerator<"farm"> = {
+    async generate(input): Promise<GeneratorOutput> {
+      call += 1;
+      if (call === 1) {
+        await gate;
+        const content = "export const version = 1;\n";
+        return {
+          kind: "project",
+          title: "Queued Postgres project",
+          summary: "Created the first version.",
+          files: [{
+            path: "src/index.ts",
+            content,
+            mediaType: "text/typescript",
+            size: Buffer.byteLength(content),
+            checksum: sha256(content),
+            locked: false,
+          }],
+          usage,
+          finishReason: "stop",
+        };
+      }
+      assert.equal(input.previousFiles[0]?.content, "export const version = 1;\n");
+      return {
+        kind: "changes",
+        title: "Queued Postgres project",
+        summary: "Applied the queued follow-up.",
+        changes: [{
+          type: "write",
+          path: "src/index.ts",
+          content: "export const version = 2;\n",
+        }],
+        usage,
+        finishReason: "stop",
+      };
+    },
+  };
+  const viby = createVibyWithDependencies(
+    { framework: "farm", model: "test/postgres-queue" as LanguageModel },
+    { repository, generator, skillResolver: new SkillResolver({}) },
+  );
+  const scope = {
+    tenantId: `queue-${randomUUID()}`,
+    userId: `queue-${randomUUID()}`,
+  };
+  try {
+    const chat = await viby.forUser(scope).chats.create({ title: "Queued prompts" });
+    const first = await chat.start({ prompt: "Create the project" });
+    const followUp = await chat.enqueue({
+      prompt: "Apply the next version",
+      afterGenerationId: first.id,
+    });
+    assert.equal((await followUp.data()).status, "queued");
+    assert.deepEqual((await chat.queuedGenerations()).map((generation) => generation.id), [
+      followUp.id,
+    ]);
+    releaseFirst();
+    const [firstOutcome, followUpOutcome] = await Promise.all([
+      first.wait({ pollIntervalMs: 10 }),
+      followUp.wait({ pollIntervalMs: 10 }),
+    ]);
+    assert.equal(firstOutcome.status, "succeeded");
+    assert.equal(followUpOutcome.status, "succeeded");
+    if (firstOutcome.status !== "succeeded" || followUpOutcome.status !== "succeeded") {
+      throw new Error("Expected predecessor and follow-up to succeed.");
+    }
+    assert.equal(followUpOutcome.generation.baseVersionId, firstOutcome.version.id);
+    assert.equal(followUpOutcome.version.parentVersionId, firstOutcome.version.id);
+    assert.equal((await chat.queuedGenerations()).length, 0);
+    await chat.delete({ retentionMs: 0 });
+    await viby.forUser(scope).chats.purgeDeleted({ limit: 10 });
+  } finally {
+    await Promise.allSettled([viby.close(), repository.close()]);
+  }
+});
+
 test("retains, restores, and purges deleted chats in Postgres", {
   skip: databaseUrl ? false : "TEST_DATABASE_URL is not configured",
 }, async () => {

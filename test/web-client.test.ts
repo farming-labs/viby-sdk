@@ -143,12 +143,24 @@ test("consumes the Web API host through typed chat, stream, preview, and downloa
     const generation = await client.generations.get(created.generation.id);
     assert.equal(generation.generation.status, "succeeded");
     assert.ok(generation.version);
+    const queued = await client.chats.queue.create(created.chat.id, {
+      prompt: "Add a revenue trend",
+      afterGenerationId: created.generation.id,
+    });
+    for await (const _event of client.generations.stream(queued.generation.id)) {
+      // Consume the resumable stream through its terminal event.
+    }
+    const queuedOutcome = await client.generations.get(queued.generation.id);
+    assert.equal(queuedOutcome.generation.status, "succeeded");
+    assert.equal(queuedOutcome.generation.afterGenerationId, created.generation.id);
+    assert.equal(queuedOutcome.generation.baseVersionId, generation.version!.id);
+    assert.deepEqual((await client.chats.queue.list(created.chat.id)).generations, []);
     const providerRequests = await client.generations.providerRequests(created.generation.id);
     assert.equal(providerRequests.providerRequests.length, 1);
     assert.match(providerRequests.providerRequests[0]!.providerRequestId!, /^req_/);
     const detail = await client.chats.get(created.chat.id);
-    assert.equal(detail.messages.length, 2);
-    assert.equal(detail.versions.length, 1);
+    assert.equal(detail.messages.length, 4);
+    assert.equal(detail.versions.length, 2);
     const assistant = detail.messages.find((message) => message.role === "assistant")!;
     const submittedFeedback = await client.chats.messages.submitFeedback(
       created.chat.id,
@@ -185,7 +197,7 @@ test("consumes the Web API host through typed chat, stream, preview, and downloa
     assert.equal((await client.generations.get(inspection.generation.id)).version, null);
     const inspectedDetail = await client.chats.get(created.chat.id);
     assert.equal(inspectedDetail.messages.at(-1)?.content, "`src/index.ts` contains the generated prompt.");
-    assert.equal(inspectedDetail.versions.length, 1);
+    assert.equal(inspectedDetail.versions.length, 2);
 
     const imported = await client.chats.import({
       title: "Imported web project",

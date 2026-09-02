@@ -17,6 +17,7 @@ import type {
   ChatMetadata,
   FrameworkId,
   GenerateInput,
+  EnqueueGenerationInput,
   GenerationTaskResolution,
   ImportFilePolicy,
   ImportProjectInput,
@@ -435,6 +436,19 @@ async function route<Framework extends FrameworkId>(
           return json({ feedback: await chat.submitFeedback(segments[3]!, feedbackInput(body)) }, 201);
         }
         return methodNotAllowed("GET, POST");
+      }
+      return methodNotAllowed("GET, POST");
+    }
+
+    if (segments[2] === "queue" && segments.length === 3) {
+      if (request.method === "GET") {
+        const queued = await chat.queuedGenerations();
+        return json({ generations: await Promise.all(queued.map((generation) => generation.data())) });
+      }
+      if (request.method === "POST") {
+        const body = await requestObject(request, maxBodyBytes);
+        const generation = await chat.enqueue(enqueueGenerationInput(body));
+        return json({ generation: generationValue(generation) }, 202);
       }
       return methodNotAllowed("GET, POST");
     }
@@ -1207,6 +1221,13 @@ function generateInput(body: Record<string, unknown>): GenerateInput {
     ...(body.attachments === undefined
       ? {}
       : { attachments: attachments(body.attachments) }),
+  };
+}
+
+function enqueueGenerationInput(body: Record<string, unknown>): EnqueueGenerationInput {
+  return {
+    ...generateInput(body),
+    afterGenerationId: requiredString(body.afterGenerationId, "afterGenerationId", 200),
   };
 }
 

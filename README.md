@@ -107,6 +107,24 @@ Inspection is available only after a project has an immutable version. It receiv
 capabilities, filters effectful inbound tools, skips preview and quality-build work, persists the
 assistant response and usage, and leaves version history unchanged.
 
+Accept follow-up prompts while the current generation is still running without racing its source
+version:
+
+```ts
+const first = await chat.start({ prompt: "Build the analytics dashboard" });
+const next = await chat.enqueue({
+  prompt: "Add a revenue trend",
+  afterGenerationId: first.id,
+});
+
+for await (const event of next.stream()) {
+  // Starts only after `first` succeeds, then edits its immutable result.
+}
+```
+
+The queued user message survives reloads immediately. Embedded and external workers enforce the
+same durable predecessor ordering.
+
 `framework` is one type-safe string. Viby provides autocomplete and an automatically resolved,
 immutable framework skill for `farmjs`, `nextjs`, `svelte`, `sveltekit`, `vue`, `nuxt`, `solid`,
 `solidstart`, `tanstack-start`, `react-router`, `astro`, and `vite`. The skill is prepended to the
