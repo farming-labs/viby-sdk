@@ -67,7 +67,7 @@ complete `Response`. Middleware must return a Web `Response`: return one directl
 or call `next()` exactly once to continue. Middleware is entered in array order and unwinds in
 reverse order, so earlier entries can observe or decorate downstream responses. Authentication and
 authorization always run before middleware. Public provider callbacks bypass product authentication,
-authorization, and middleware because their signed single-use state establishes scope. Clone the
+authorization, and middleware because their hashed single-use state establishes scope. Clone the
 request before reading a body so the operation can still consume it.
 
 The former `admit` policy remains as a deprecated compatibility path and still runs after

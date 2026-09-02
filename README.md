@@ -1229,10 +1229,15 @@ const api = createVibyApi({
   middleware: [
     async ({ operationId, scope }, next) => {
       if (operationId !== "startGeneration") return next();
-      const capacity = await quotas.reserveGeneration(scope);
-      return capacity.accepted
-        ? next()
-        : Response.json({ error: "Generation limit reached." }, { status: 429 });
+      const reservation = await quotas.reserveGeneration(scope);
+      if (!reservation.accepted) {
+        return Response.json({ error: "Generation limit reached." }, { status: 429 });
+      }
+      try {
+        return await next();
+      } finally {
+        await reservation.release();
+      }
     },
   ],
   preview: true,
