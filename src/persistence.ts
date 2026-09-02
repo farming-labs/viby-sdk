@@ -53,6 +53,7 @@ export type {
   ReplaceWebhookSecretResult,
   StoredWebhookData,
   UpdateWebhookRecord,
+  WebhookDeliveryWork,
   WebhookStore,
 } from "./webhooks.js";
 export type {

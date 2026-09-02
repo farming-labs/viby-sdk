@@ -86,7 +86,7 @@ Preview URLs exist only when the configured adapter exposes port URLs and backgr
 | MCP client | Streamable HTTP and custom-transport adapter with per-chat connection isolation; static headers or adapter-resolved credentials remain inside the transport factory |
 | MCP server | `registerVibyMcpTools` exposes scoped chats, generations, events, steering, task resolution, versions, iteration, and downloads through the official MCP server SDK |
 | Outbound events | signed CloudEvents-style envelopes with stable IDs and constant-time verification |
-| Durable webhooks | tenant-managed endpoints, one-time secrets, persistent cursors, retries, dead letters, and redrive |
+| Durable webhooks | tenant-managed endpoints, one-time secrets, global due-work discovery, persistent cursors, retries, dead letters, and redrive |
 | Durable delivery | database claims, retry backoff, lease fencing, inspection, dead letters, and explicit redrive |
 | HTTP streaming | `Last-Event-ID` parsing, standard SSE frames, request abort propagation, and Web `Response` headers |
 | Web API host | authenticated Web Request/Response routing with explicit per-operation authorization and ordered middleware for product-owned quotas, billing, concurrency, tracing, and rate limits; public provider callbacks remain isolated from host sessions |
@@ -113,7 +113,7 @@ Preview URLs exist only when the configured adapter exposes port URLs and backgr
 | Deployment conformance | reusable disposable-project suite covering creation, idempotent deployment, lookup, and cancellation |
 | Included deployment adapters | Vercel external-integration authorization with source deployment and cancellation; Cloudflare OAuth with multi-account Pages discovery and Wrangler-compatible prebuilt uploads; Netlify OAuth with team/site discovery, atomic static and prebuilt-function uploads, deploy-scoped secrets, cancellation, durable retry recovery, status, and URLs |
 
-Product authentication, provider-app registration, public callback routes, event scheduling, and transport infrastructure remain host-owned. Viby stores tenant-scoped repository, deployment, and tool-source connections plus delivery state, but does not run a hidden queue or scheduler.
+Product authentication, provider-app registration, public callback routes, worker hosting, and transport infrastructure remain host-owned. Viby stores tenant-scoped repository, deployment, and tool-source connections plus delivery state; the host starts the durable webhook worker in its chosen process, cron, queue, or workflow runtime.
 
 ## Verification and examples
 

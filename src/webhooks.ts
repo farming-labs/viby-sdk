@@ -27,6 +27,8 @@ const DEFAULT_INITIAL_DELAY_MS = 1_000;
 const DEFAULT_MAX_DELAY_MS = 60_000;
 const DEFAULT_MULTIPLIER = 2;
 const DEFAULT_LEASE_MS = 30_000;
+const DEFAULT_WORKER_CONCURRENCY = 1;
+const DEFAULT_WORKER_POLL_INTERVAL_MS = 500;
 
 export const WEBHOOK_EVENT_TYPES = Object.freeze([
   "generation.created",
@@ -93,6 +95,8 @@ export interface WebhookData {
 
 export interface StoredWebhookData extends WebhookData {
   readonly secretRef: string;
+  /** First durable event cursor eligible for automatic delivery. */
+  readonly deliveryStartCursor: string;
 }
 
 export interface CreateWebhookInput {
@@ -178,6 +182,18 @@ export interface WebhookStore {
     cursor: string,
     now: Date,
   ): Promise<string>;
+  /**
+   * Optional global discovery primitive used by the durable webhook worker.
+   * Custom persistence adapters may omit it while retaining explicit delivery.
+   */
+  findWebhookDeliveryWork?(now: Date): Promise<WebhookDeliveryWork | null>;
+}
+
+export interface WebhookDeliveryWork {
+  readonly scope: UserScope;
+  readonly webhookId: string;
+  readonly generationId: string;
+  readonly eventCursor: string;
 }
 
 export interface WebhookDeliveryOptions {
@@ -200,6 +216,17 @@ export interface WebhookDeliveryListOptions {
   readonly status?: OutboundEventDeliveryStatus;
 }
 
+export interface WebhookWorkerOptions {
+  readonly id: string;
+  readonly concurrency?: number;
+  readonly pollIntervalMs?: number;
+  readonly delivery?: Omit<WebhookDeliveryOptions, "signal">;
+}
+
+export interface WebhookWorkerRunOptions {
+  readonly signal?: AbortSignal;
+}
+
 interface NormalizedWebhookConfig {
   readonly fetch: typeof globalThis.fetch;
   readonly source: string;
@@ -211,6 +238,134 @@ interface NormalizedRetryPolicy {
   readonly maxDelayMs: number;
   readonly multiplier: number;
   readonly leaseMs: number;
+}
+
+interface NormalizedWebhookWorkerOptions {
+  readonly id: string;
+  readonly concurrency: number;
+  readonly pollIntervalMs: number;
+  readonly delivery: Omit<WebhookDeliveryOptions, "signal">;
+}
+
+/**
+ * Discovers due webhook work across tenant scopes and drains it with the same
+ * durable cursors, leases, retries, and dead letters used by explicit delivery.
+ */
+export class WebhookWorker {
+  readonly id: string;
+  readonly #repository: Repository;
+  readonly #secrets: SecretStore;
+  readonly #config: WebhookConfig;
+  readonly #options: NormalizedWebhookWorkerOptions;
+  readonly #controller = new AbortController();
+  #runPromise: Promise<void> | null = null;
+  #isRunning = false;
+
+  constructor(
+    repository: Repository,
+    secrets: SecretStore | null,
+    config: WebhookConfig | undefined,
+    options: WebhookWorkerOptions,
+  ) {
+    if (!config || !secrets) {
+      throw new ConfigurationError(
+        "Durable webhook workers require events.webhooks and storage.secrets.",
+      );
+    }
+    if (typeof repository.findWebhookDeliveryWork !== "function") {
+      throw new ConfigurationError(
+        "The configured persistence adapter does not support durable webhook worker discovery.",
+      );
+    }
+    normalizeWebhookConfig(config);
+    this.#repository = repository;
+    this.#secrets = secrets;
+    this.#config = config;
+    this.#options = normalizeWebhookWorkerOptions(options);
+    this.id = this.#options.id;
+  }
+
+  get running(): boolean {
+    return this.#isRunning;
+  }
+
+  async runOnce(options: WebhookWorkerRunOptions = {}): Promise<boolean> {
+    validateWebhookWorkerRunOptions(options);
+    if (this.#runPromise) {
+      throw new ConfigurationError("runOnce cannot be called while the webhook worker is running.");
+    }
+    const signal = combineAbortSignals(this.#controller.signal, options.signal);
+    signal.throwIfAborted();
+    return this.#deliverNext(signal);
+  }
+
+  run(options: WebhookWorkerRunOptions = {}): Promise<void> {
+    validateWebhookWorkerRunOptions(options);
+    if (this.#runPromise) return this.#runPromise;
+    const runController = new AbortController();
+    const signal = combineAbortSignals(
+      combineAbortSignals(this.#controller.signal, options.signal),
+      runController.signal,
+    );
+    this.#isRunning = true;
+    this.#runPromise = Promise.all(
+      Array.from({ length: this.#options.concurrency }, () => this.#runLane(signal)),
+    )
+      .then(() => undefined)
+      .catch((error) => {
+        if (!runController.signal.aborted) runController.abort(error);
+        throw error;
+      })
+      .finally(() => {
+        this.#isRunning = false;
+        this.#runPromise = null;
+      });
+    return this.#runPromise;
+  }
+
+  async stop(): Promise<void> {
+    if (!this.#controller.signal.aborted) {
+      this.#controller.abort(new DOMException("Webhook worker stopped.", "AbortError"));
+    }
+    await this.#runPromise?.catch((error) => {
+      if (!isAbortError(error)) throw error;
+    });
+  }
+
+  async #deliverNext(signal: AbortSignal): Promise<boolean> {
+    const work = await this.#repository.findWebhookDeliveryWork!(new Date());
+    if (!work) return false;
+    const collection = new WebhookCollection(
+      work.scope,
+      this.#repository,
+      this.#secrets,
+      this.#config,
+    );
+    try {
+      await collection.deliver(work.webhookId, work.generationId, {
+        ...this.#options.delivery,
+        signal,
+      });
+    } catch (error) {
+      // Delivery failures are already persisted with retry or dead-letter state.
+      if (signal.aborted) {
+        throw signal.reason ?? new DOMException("Webhook delivery was aborted.", "AbortError");
+      }
+      if (!(error instanceof OutboundEventDeliveryError)) throw error;
+    }
+    return true;
+  }
+
+  async #runLane(signal: AbortSignal): Promise<void> {
+    try {
+      while (!signal.aborted) {
+        const worked = await this.#deliverNext(signal);
+        if (!worked) await waitForPoll(this.#options.pollIntervalMs, signal);
+      }
+    } catch (error) {
+      if (!signal.aborted && !isAbortError(error)) throw error;
+    }
+  }
 }
 
 export class WebhookCollection {
@@ -846,4 +1001,85 @@ function boundedNumber(
     throw new ConfigurationError(`Webhook retry ${label} is outside the supported range.`);
   }
   return normalized;
+}
+
+function normalizeWebhookWorkerOptions(
+  options: WebhookWorkerOptions,
+): NormalizedWebhookWorkerOptions {
+  if (!options || typeof options !== "object") {
+    throw new ConfigurationError("Webhook worker options must be an object.");
+  }
+  const id = assertIdentifier(options.id, "Webhook worker id");
+  const concurrency = options.concurrency ?? DEFAULT_WORKER_CONCURRENCY;
+  const pollIntervalMs = options.pollIntervalMs ?? DEFAULT_WORKER_POLL_INTERVAL_MS;
+  if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 32) {
+    throw new ConfigurationError(
+      "Webhook worker concurrency must be an integer between 1 and 32.",
+    );
+  }
+  if (!Number.isInteger(pollIntervalMs) || pollIntervalMs < 10 || pollIntervalMs > 60_000) {
+    throw new ConfigurationError(
+      "Webhook worker pollIntervalMs must be an integer between 10 and 60000.",
+    );
+  }
+  if (
+    options.delivery !== undefined &&
+    (!options.delivery || typeof options.delivery !== "object")
+  ) {
+    throw new ConfigurationError("Webhook worker delivery options must be an object.");
+  }
+  const delivery = Object.freeze({ ...(options.delivery ?? {}) });
+  normalizeLimit(delivery.limit);
+  normalizeRetryPolicy(delivery.retry);
+  return { id, concurrency, pollIntervalMs, delivery };
+}
+
+function validateWebhookWorkerRunOptions(options: WebhookWorkerRunOptions): void {
+  if (!options || typeof options !== "object") {
+    throw new ConfigurationError("Webhook worker run options must be an object.");
+  }
+}
+
+function isAbortError(error: unknown): boolean {
+  return (
+    (error instanceof DOMException && error.name === "AbortError") ||
+    (error instanceof Error && error.name === "AbortError")
+  );
+}
+
+function combineAbortSignals(first: AbortSignal, second?: AbortSignal): AbortSignal {
+  if (!second) return first;
+  const controller = new AbortController();
+  const abortFirst = () => abort(first.reason);
+  const abortSecond = () => abort(second.reason);
+  const abort = (reason: unknown) => {
+    if (!controller.signal.aborted) controller.abort(reason);
+    first.removeEventListener("abort", abortFirst);
+    second.removeEventListener("abort", abortSecond);
+  };
+  if (first.aborted) abort(first.reason);
+  else if (second.aborted) abort(second.reason);
+  else {
+    first.addEventListener("abort", abortFirst, { once: true });
+    second.addEventListener("abort", abortSecond, { once: true });
+  }
+  return controller.signal;
+}
+
+function waitForPoll(milliseconds: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) {
+      reject(signal.reason);
+      return;
+    }
+    const timeout = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, milliseconds);
+    const onAbort = () => {
+      clearTimeout(timeout);
+      reject(signal.reason);
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
 }

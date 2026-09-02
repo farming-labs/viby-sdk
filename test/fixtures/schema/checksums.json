@@ -38,5 +38,6 @@
   "0037_provider_request_attribution.sql": "cc4eec9c4518f5330752f2b1967e64f7310d62f7550b7847d9cdd19a8620a7db",
   "0038_feedback_analytics.sql": "3d81c1cc277f9eed5d1c3e9c352c7865730e46877c3f4a7d71919ea2ac3e47d4",
   "0039_follow_up_prompt_queue.sql": "d74e64115aa915978227d4d39ec02567c39f9c573773b2ec717576552f6d57f3",
-  "0040_durable_webhooks.sql": "a7a717b72607d75a72bf2ce0cb4b6ff3b30dc24f3a22d50371fafd6c0928566b"
+  "0040_durable_webhooks.sql": "a7a717b72607d75a72bf2ce0cb4b6ff3b30dc24f3a22d50371fafd6c0928566b",
+  "0041_webhook_worker_discovery.sql": "410bfcd3fc29625b5f65d9f4a7c9f9abd04528e73c3544a0320ec71041e4d55a"
 }

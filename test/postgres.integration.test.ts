@@ -1254,21 +1254,24 @@ test("persists webhook configuration, delivery cursors, and signing secrets in P
     tenantId: `webhook-${randomUUID()}`,
     userId: `webhook-${randomUUID()}`,
   };
+  const user = viby.forUser(scope);
+  let webhookId: string | undefined;
   try {
-    const user = viby.forUser(scope);
     const created = await user.webhooks.create({
       name: "Postgres events",
       url: "https://hooks.example.test/postgres",
       events: ["generation.succeeded"],
     });
+    webhookId = created.webhook.id;
     const generation = await (await user.chats.create()).start({ prompt: "Build it" });
     await generation.wait({ pollIntervalMs: 10 });
-    const first = await user.webhooks.deliver(created.webhook.id, generation.id);
-    assert.equal(first.deliveries.length, 1);
+    const worker = viby.webhookWorker({ id: "postgres-webhook-worker" });
+    assert.equal(await worker.runOnce(), true);
     assert.equal(requests.length, 1);
     assert.equal((await user.webhooks.deliver(created.webhook.id, generation.id)).deliveries.length, 0);
     assert.equal((await user.webhooks.list())[0]?.name, "Postgres events");
   } finally {
+    if (webhookId) await user.webhooks.delete(webhookId).catch(() => undefined);
     await viby.close();
   }
 });

@@ -180,7 +180,12 @@ import type {
   OutboundEventDeliveryStatus,
   OutboundEventSink,
 } from "./outbound-events.js";
-import { WebhookCollection, type WebhookConfig } from "./webhooks.js";
+import {
+  WebhookCollection,
+  WebhookWorker,
+  type WebhookConfig,
+  type WebhookWorkerOptions,
+} from "./webhooks.js";
 import {
   generationEventStreamResponse,
   type GenerationEventStreamResponseOptions,
@@ -318,6 +323,7 @@ export interface Viby<Framework extends FrameworkId = FrameworkId> {
   readonly health: VibyHealth;
   forUser(scope: UserScope): ScopedViby<Framework>;
   worker(options: GenerationWorkerOptions): GenerationWorker<Framework>;
+  webhookWorker(options: WebhookWorkerOptions): WebhookWorker;
   close(options?: VibyCloseOptions): Promise<void>;
 }
 
@@ -676,6 +682,7 @@ class VibyClient<Framework extends FrameworkId> implements Viby<Framework> {
   readonly #previews: PreviewRegistry<Framework>;
   readonly #runner: GenerationRunner<Framework>;
   readonly #workers = new Set<GenerationWorker<Framework>>();
+  readonly #webhookWorkers = new Set<WebhookWorker>();
   readonly #deletedChatsMs: number | null;
   readonly #eventSinks: ReadonlyMap<string, OutboundEventSink>;
   readonly #secretStore: SecretStore | null;
@@ -803,8 +810,22 @@ class VibyClient<Framework extends FrameworkId> implements Viby<Framework> {
     return worker;
   }
 
+  webhookWorker(options: WebhookWorkerOptions): WebhookWorker {
+    const worker = new WebhookWorker(
+      this.#repository,
+      this.#secretStore,
+      this.#webhookConfig,
+      options,
+    );
+    this.#webhookWorkers.add(worker);
+    return worker;
+  }
+
   async close(options: VibyCloseOptions = {}): Promise<void> {
-    await Promise.allSettled([...this.#workers].map((worker) => worker.stop()));
+    await Promise.allSettled([
+      ...[...this.#workers].map((worker) => worker.stop()),
+      ...[...this.#webhookWorkers].map((worker) => worker.stop()),
+    ]);
     await this.#registry.abortAll("Viby client closed.");
     const preserveSandboxes = options?.preserveSandboxes === true;
     const preview = await Promise.allSettled([
