@@ -224,3 +224,88 @@ test(
     }
   },
 );
+
+test(
+  "webhook worker migration preserves historical events and installs discovery index",
+  {
+    skip: adminUrl ? false : "SCHEMA_UPGRADE_ADMIN_URL is not configured",
+    timeout: 60_000,
+  },
+  async () => {
+    assert.ok(adminUrl);
+    const databaseName = `viby_webhook_upgrade_${randomUUID().replaceAll("-", "")}`;
+    assert.match(databaseName, /^viby_webhook_upgrade_[a-f0-9]{32}$/);
+    const admin = postgres(adminUrl, { max: 1, onnotice: () => undefined });
+    const databaseUrl = new URL(adminUrl);
+    databaseUrl.pathname = `/${databaseName}`;
+    let fixture: ReturnType<typeof postgres> | undefined;
+
+    try {
+      await admin.unsafe(`CREATE DATABASE "${databaseName}"`);
+      fixture = postgres(databaseUrl.toString(), { max: 1, onnotice: () => undefined });
+      await fixture.unsafe(`
+        CREATE SCHEMA viby;
+        CREATE TABLE viby.webhooks (
+          id uuid PRIMARY KEY,
+          tenant_id text NOT NULL,
+          user_id text NOT NULL,
+          created_at timestamptz NOT NULL
+        );
+        CREATE TABLE viby.generation_events (
+          cursor bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+          tenant_id text NOT NULL,
+          user_id text NOT NULL,
+          generation_id uuid NOT NULL,
+          created_at timestamptz NOT NULL
+        );
+      `);
+      const webhookId = randomUUID();
+      const generationId = randomUUID();
+      const webhookCreatedAt = new Date("2026-08-01T12:00:00.000Z");
+      await fixture`
+        INSERT INTO viby.webhooks (id, tenant_id, user_id, created_at)
+        VALUES (${webhookId}, 'tenant', 'user', ${webhookCreatedAt})
+      `;
+      await fixture`
+        INSERT INTO viby.generation_events (
+          tenant_id, user_id, generation_id, created_at
+        ) VALUES (
+          'tenant', 'user', ${generationId}, ${new Date("2026-08-01T11:59:00.000Z")}
+        )
+      `;
+
+      const migration = await readFile(
+        join(process.cwd(), "migrations", "0041_webhook_worker_discovery.sql"),
+        "utf8",
+      );
+      await fixture.unsafe(migration);
+      const [webhook] = await fixture<{
+        delivery_start_cursor: string | number | bigint;
+      }[]>`
+        SELECT delivery_start_cursor
+        FROM viby.webhooks
+        WHERE id = ${webhookId}
+      `;
+      const [index] = await fixture<{ indexdef: string }[]>`
+        SELECT indexdef
+        FROM pg_indexes
+        WHERE schemaname = 'viby'
+          AND indexname = 'generation_events_webhook_discovery_idx'
+      `;
+      assert.equal(String(webhook?.delivery_start_cursor), "0");
+      assert.match(
+        index?.indexdef ?? "",
+        /\(tenant_id, user_id, cursor, generation_id\)/,
+      );
+    } finally {
+      await fixture?.end({ timeout: 5 }).catch(() => undefined);
+      await admin`
+        SELECT pg_terminate_backend(pid)
+        FROM pg_stat_activity
+        WHERE datname = ${databaseName} AND pid <> pg_backend_pid()
+      `.catch(() => undefined);
+      await admin.unsafe(`DROP DATABASE IF EXISTS "${databaseName}"`).catch(() => undefined);
+      await admin.end({ timeout: 5 });
+    }
+  },
+);

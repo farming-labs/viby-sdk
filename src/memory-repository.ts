@@ -245,6 +245,8 @@ export class MemoryRepository implements Repository {
     }
     for (const [id, webhook] of this.webhooks) {
       if (webhook.deliveryStartCursor === undefined) {
+        // Snapshots written before automatic discovery used cursor zero for
+        // explicit delivery. Preserve that lossless upgrade behavior.
         this.webhooks.set(id, { ...webhook, deliveryStartCursor: "0" });
       }
     }
@@ -2031,25 +2033,49 @@ export class MemoryRepository implements Repository {
     for (const webhook of this.webhooks.values()) {
       if (webhook.status !== "active") continue;
       const scope = { tenantId: webhook.tenantId, userId: webhook.userId };
+
+      for (const delivery of this.outboundDeliveries.values()) {
+        if (
+          !inScope(delivery, scope) ||
+          delivery.sinkId !== webhookSinkId(webhook.id) ||
+          !outboundDeliveryIsDue(delivery, now)
+        ) {
+          continue;
+        }
+        selected = earlierWebhookWork(selected, {
+          scope,
+          webhookId: webhook.id,
+          generationId: delivery.generationId,
+          eventCursor: delivery.eventCursor,
+        });
+      }
+
       for (const generation of this.generations.values()) {
         if (!inScope(generation, scope)) continue;
         const cursor = this.webhookDeliveryCursors.get(
           webhookCursorKey(scope, webhook.id, generation.id),
         ) ?? webhook.deliveryStartCursor;
-        const event = this.events.find(
-          (candidate) =>
-            inScope(candidate, scope) &&
-            candidate.generationId === generation.id &&
-            BigInt(candidate.cursor) > BigInt(cursor),
-        );
-        if (!event || !webhookEventIsDue(webhook, event, this.outboundDeliveries, now)) continue;
-        if (selected && BigInt(selected.eventCursor) <= BigInt(event.cursor)) continue;
-        selected = {
+        const event = this.events
+          .filter(
+            (candidate) =>
+              inScope(candidate, scope) &&
+              candidate.generationId === generation.id &&
+              BigInt(candidate.cursor) > BigInt(cursor),
+          )
+          .sort((left, right) =>
+            BigInt(left.cursor) < BigInt(right.cursor)
+              ? -1
+              : BigInt(left.cursor) > BigInt(right.cursor)
+                ? 1
+                : 0
+          )[0];
+        if (!event || webhookEventIsBlocked(webhook, event, this.outboundDeliveries, now)) continue;
+        selected = earlierWebhookWork(selected, {
           scope,
           webhookId: webhook.id,
           generationId: generation.id,
           eventCursor: event.cursor,
-        };
+        });
       }
     }
     return selected;
@@ -2095,7 +2121,25 @@ export class MemoryRepository implements Repository {
           delivery.leaseExpiresAt !== null &&
           delivery.leaseExpiresAt <= now));
     if (!claimable) {
-      if (!existing) this.outboundDeliveries.set(key, delivery);
+      if (
+        existing &&
+        delivery.status === "delivering" &&
+        delivery.leaseExpiresAt !== null &&
+        delivery.leaseExpiresAt <= now &&
+        delivery.attemptCount >= delivery.maxAttempts
+      ) {
+        this.outboundDeliveries.set(key, {
+          ...delivery,
+          status: "dead_lettered",
+          lastError: delivery.lastError ?? "Delivery lease expired after the final attempt.",
+          deadLetteredAt: now,
+          leaseToken: null,
+          leaseExpiresAt: null,
+          updatedAt: now,
+        });
+      } else if (!existing) {
+        this.outboundDeliveries.set(key, delivery);
+      }
       return null;
     }
     const claimed: MemoryOutboundEventDelivery = {
@@ -3848,22 +3892,40 @@ function outboundDeliveryKey(generationId: string, eventCursor: string, sinkId: 
   return `${generationId}:${eventCursor}:${sinkId}`;
 }
 
-function webhookEventIsDue(
+function webhookEventIsBlocked(
   webhook: MemoryWebhook,
   event: GenerationEvent,
   deliveries: ReadonlyMap<string, MemoryOutboundEventDelivery>,
   now: Date,
 ): boolean {
-  const selected = webhook.events === "all" || webhook.events.includes(event.type);
-  if (!selected) return true;
   const delivery = deliveries.get(
     outboundDeliveryKey(event.generationId, event.cursor, `webhook.${webhook.id}`),
   );
   if (!delivery || delivery.status === "delivered" || delivery.status === "dead_lettered") {
-    return true;
+    return false;
   }
+  return !outboundDeliveryIsDue(delivery, now);
+}
+
+function outboundDeliveryIsDue(delivery: MemoryOutboundEventDelivery, now: Date): boolean {
   if (delivery.status === "pending") return delivery.nextAttemptAt <= now;
-  return delivery.leaseExpiresAt !== null && delivery.leaseExpiresAt <= now;
+  return (
+    delivery.status === "delivering" &&
+    delivery.leaseExpiresAt !== null &&
+    delivery.leaseExpiresAt <= now
+  );
+}
+
+function earlierWebhookWork(
+  current: WebhookDeliveryWork | null,
+  candidate: WebhookDeliveryWork,
+): WebhookDeliveryWork {
+  if (!current || BigInt(candidate.eventCursor) < BigInt(current.eventCursor)) return candidate;
+  return current;
+}
+
+function webhookSinkId(webhookId: string): string {
+  return `webhook.${webhookId}`;
 }
 
 function webhookCursorKey(

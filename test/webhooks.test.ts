@@ -147,7 +147,7 @@ test("durable webhook workers discover due events without tenant or generation i
   const worker = viby.webhookWorker({ id: "webhook-test-worker" });
   assert.equal(await worker.runOnce(), false);
 
-  const secondUser = viby.forUser({ tenantId: "worker-tenant", userId: "second" });
+  const secondUser = viby.forUser({ tenantId: "worker-tenant-two", userId: "second" });
   await secondUser.webhooks.create({
     name: "Second events",
     url: "https://hooks.example.test/second",
@@ -170,6 +170,31 @@ test("durable webhook workers discover due events without tenant or generation i
     new Set([firstGeneration.id, secondGeneration.id]),
   );
   assert.equal(deliveredGenerationIds.includes(historical.id), false);
+  await viby.close();
+});
+
+test("legacy memory snapshots retain lossless webhook cursor semantics", async () => {
+  const { viby, repository } = setup(async () => new Response(null, { status: 204 }));
+  const scope = { tenantId: "snapshot-tenant", userId: "snapshot-owner" };
+  const user = viby.forUser(scope);
+  const generation = await (await user.chats.create()).start({ prompt: "Historical event" });
+  await generation.wait({ pollIntervalMs: 10 });
+  const created = await user.webhooks.create({
+    name: "Legacy endpoint",
+    url: "https://hooks.example.test/legacy-snapshot",
+  });
+  const state = repository.exportState();
+  const webhooks = state.fields.webhooks as Map<string, Record<string, unknown>>;
+  const stored = webhooks.get(created.webhook.id);
+  assert.ok(stored);
+  webhooks.set(created.webhook.id, { ...stored, deliveryStartCursor: undefined });
+
+  const restored = new MemoryRepository();
+  restored.importState(state);
+  assert.equal(
+    await restored.getWebhookDeliveryCursor(scope, created.webhook.id, generation.id),
+    "0",
+  );
   await viby.close();
 });
 
@@ -196,6 +221,128 @@ test("durable webhook workers retain retry state without terminating", async () 
   assert.equal(await worker.runOnce(), true);
   assert.equal(await worker.runOnce(), false);
   assert.equal(attempts, 2);
+  await viby.close();
+});
+
+test("durable webhook workers preserve active delivery leases across event-filter updates", async () => {
+  const { viby, repository } = setup(async () => new Response(null, { status: 204 }));
+  const scope = { tenantId: "worker-filter", userId: "owner" };
+  const user = viby.forUser(scope);
+  const created = await user.webhooks.create({
+    name: "Filtered events",
+    url: "https://hooks.example.test/worker-filter",
+    events: ["generation.succeeded"],
+  });
+  const generation = await (await user.chats.create()).start({ prompt: "Filter safely" });
+  await generation.wait({ pollIntervalMs: 10 });
+  const events = await repository.listGenerationEvents(scope, generation.id, "0", 100);
+  const event = events.find((candidate) => candidate.type === "generation.succeeded");
+  assert.ok(event);
+  const preceding = events.filter(
+    (candidate) => BigInt(candidate.cursor) < BigInt(event.cursor),
+  ).at(-1);
+  if (preceding) {
+    await repository.advanceWebhookDeliveryCursor(
+      scope,
+      created.webhook.id,
+      generation.id,
+      preceding.cursor,
+      new Date(),
+    );
+  }
+  const cursorBeforeLease = await repository.getWebhookDeliveryCursor(
+    scope,
+    created.webhook.id,
+    generation.id,
+  );
+  const claim = await repository.claimOutboundEventDelivery(scope, {
+    generationId: generation.id,
+    eventCursor: event.cursor,
+    sinkId: `webhook.${created.webhook.id}`,
+    leaseToken: "active-filter-lease",
+    leaseMs: 60_000,
+    maxAttempts: 2,
+  });
+  assert.ok(claim);
+  await user.webhooks.update(created.webhook.id, { events: ["generation.failed"] });
+
+  const worker = viby.webhookWorker({ id: "filter-update-worker" });
+  assert.equal(await worker.runOnce(), false);
+  assert.equal(
+    await repository.getWebhookDeliveryCursor(scope, created.webhook.id, generation.id),
+    cursorBeforeLease,
+  );
+
+  await repository.completeOutboundEventDelivery(scope, claim, new Date());
+  assert.equal(await worker.runOnce(), true);
+  assert.equal(
+    await repository.getWebhookDeliveryCursor(scope, created.webhook.id, generation.id),
+    event.cursor,
+  );
+  await viby.close();
+});
+
+test("durable webhook workers dead-letter an expired final lease instead of spinning", async () => {
+  const { viby, repository } = setup(async () => new Response(null, { status: 204 }));
+  const scope = { tenantId: "worker-expired", userId: "owner" };
+  const user = viby.forUser(scope);
+  const created = await user.webhooks.create({
+    name: "Expired lease events",
+    url: "https://hooks.example.test/worker-expired",
+    events: ["generation.succeeded"],
+  });
+  const generation = await (await user.chats.create()).start({ prompt: "Recover the lease" });
+  await generation.wait({ pollIntervalMs: 10 });
+  const events = await repository.listGenerationEvents(scope, generation.id, "0", 100);
+  const event = events.find((candidate) => candidate.type === "generation.succeeded");
+  assert.ok(event);
+  assert.ok(await repository.claimOutboundEventDelivery(scope, {
+    generationId: generation.id,
+    eventCursor: event.cursor,
+    sinkId: `webhook.${created.webhook.id}`,
+    leaseToken: "expired-final-lease",
+    leaseMs: 0,
+    maxAttempts: 1,
+  }));
+
+  const worker = viby.webhookWorker({ id: "expired-lease-worker" });
+  assert.equal(await worker.runOnce(), true);
+  assert.equal(await worker.runOnce(), false);
+  const [delivery] = await user.webhooks.deliveries(created.webhook.id, generation.id);
+  assert.equal(delivery?.status, "dead_lettered");
+  await viby.close();
+});
+
+test("runOnce reports cancellation after persisting the interrupted delivery", async () => {
+  let requestStarted!: () => void;
+  const started = new Promise<void>((resolve) => {
+    requestStarted = resolve;
+  });
+  const { viby } = setup(async (_input, init) => {
+    requestStarted();
+    return new Promise<Response>((_resolve, reject) => {
+      const signal = init?.signal;
+      signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+    });
+  });
+  const user = viby.forUser({ tenantId: "worker-abort", userId: "owner" });
+  const created = await user.webhooks.create({
+    name: "Cancelled events",
+    url: "https://hooks.example.test/worker-abort",
+    events: ["generation.succeeded"],
+  });
+  const generation = await (await user.chats.create()).start({ prompt: "Cancel delivery" });
+  await generation.wait({ pollIntervalMs: 10 });
+  const controller = new AbortController();
+  const delivery = viby.webhookWorker({ id: "abort-worker" }).runOnce({
+    signal: controller.signal,
+  });
+  await started;
+  controller.abort(new DOMException("Stopped by test.", "AbortError"));
+
+  await assert.rejects(delivery, { name: "AbortError", message: "Stopped by test." });
+  const [record] = await user.webhooks.deliveries(created.webhook.id, generation.id);
+  assert.equal(record?.status, "pending");
   await viby.close();
 });
 
@@ -226,8 +373,7 @@ test("persists webhook dead letters and redrives them explicitly", async () => {
   assert.ok(deadLetter);
   await user.webhooks.redrive(created.webhook.id, generation.id, deadLetter.eventCursor);
   fail = false;
-  const delivered = await user.webhooks.deliver(created.webhook.id, generation.id);
-  assert.equal(delivered.deliveries.length, 1);
+  assert.equal(await viby.webhookWorker({ id: "redrive-worker" }).runOnce(), true);
   assert.equal((await user.webhooks.deliveries(created.webhook.id, generation.id))[0]?.status, "delivered");
   await viby.close();
 });

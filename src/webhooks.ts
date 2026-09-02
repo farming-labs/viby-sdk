@@ -348,6 +348,9 @@ export class WebhookWorker {
       });
     } catch (error) {
       // Delivery failures are already persisted with retry or dead-letter state.
+      if (signal.aborted) {
+        throw signal.reason ?? new DOMException("Webhook delivery was aborted.", "AbortError");
+      }
       if (!(error instanceof OutboundEventDeliveryError)) throw error;
     }
     return true;

@@ -109,7 +109,7 @@ const deadLetters = await user.webhooks.deliveries(webhook.id, generationId, {
 });
 
 await user.webhooks.redrive(webhook.id, generationId, deadLetters[0].eventCursor);
-await viby.webhookWorker({ id: "redrive-worker" }).runOnce();
+await user.webhooks.deliver(webhook.id, generationId);
 ```
 
 ## Verify requests

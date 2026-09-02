@@ -3387,33 +3387,44 @@ export class PostgresRepository implements Repository {
       generation_id: string;
       event_cursor: string | number | bigint;
     }[]>`
-      WITH candidates AS (
+      WITH due_deliveries AS (
         SELECT
           webhook.tenant_id,
           webhook.user_id,
           webhook.id AS webhook_id,
-          generation.id AS generation_id,
-          next_event.cursor AS event_cursor,
-          next_event.type AS event_type,
-          webhook.event_types,
-          ('webhook.' || webhook.id::text) AS sink_id
+          delivery.generation_id,
+          delivery.event_cursor
+        FROM viby.outbound_event_deliveries AS delivery
+        JOIN viby.webhooks AS webhook
+          ON delivery.tenant_id = webhook.tenant_id
+          AND delivery.user_id = webhook.user_id
+          AND delivery.sink_id = ('webhook.' || webhook.id::text)
+        WHERE webhook.status = 'active'
+          AND (
+            (delivery.status = 'pending' AND delivery.next_attempt_at <= ${now})
+            OR (delivery.status = 'delivering' AND delivery.lease_expires_at <= ${now})
+          )
+      ),
+      new_events AS (
+        SELECT
+          webhook.tenant_id,
+          webhook.user_id,
+          webhook.id AS webhook_id,
+          next_event.generation_id,
+          next_event.cursor AS event_cursor
         FROM viby.webhooks AS webhook
-        JOIN viby.generations AS generation
-          ON generation.tenant_id = webhook.tenant_id
-          AND generation.user_id = webhook.user_id
-        LEFT JOIN viby.webhook_delivery_cursors AS delivery_cursor
-          ON delivery_cursor.tenant_id = webhook.tenant_id
-          AND delivery_cursor.user_id = webhook.user_id
-          AND delivery_cursor.webhook_id = webhook.id
-          AND delivery_cursor.generation_id = generation.id
         CROSS JOIN LATERAL (
-          SELECT event.cursor, event.type
+          SELECT event.generation_id, event.cursor
           FROM viby.generation_events AS event
+          LEFT JOIN viby.webhook_delivery_cursors AS delivery_cursor
+            ON delivery_cursor.tenant_id = webhook.tenant_id
+            AND delivery_cursor.user_id = webhook.user_id
+            AND delivery_cursor.webhook_id = webhook.id
+            AND delivery_cursor.generation_id = event.generation_id
           WHERE event.tenant_id = webhook.tenant_id
             AND event.user_id = webhook.user_id
-            AND event.generation_id = generation.id
-            AND event.cursor > GREATEST(
-              COALESCE(delivery_cursor.cursor, 0),
+            AND event.cursor > COALESCE(
+              delivery_cursor.cursor,
               webhook.delivery_start_cursor
             )
           ORDER BY event.cursor
@@ -3422,25 +3433,27 @@ export class PostgresRepository implements Repository {
         WHERE webhook.status = 'active'
       )
       SELECT
-        candidate.tenant_id,
-        candidate.user_id,
-        candidate.webhook_id,
-        candidate.generation_id,
-        candidate.event_cursor
-      FROM candidates AS candidate
-      LEFT JOIN viby.outbound_event_deliveries AS delivery
-        ON delivery.tenant_id = candidate.tenant_id
-        AND delivery.user_id = candidate.user_id
-        AND delivery.generation_id = candidate.generation_id
-        AND delivery.event_cursor = candidate.event_cursor
-        AND delivery.sink_id = candidate.sink_id
-      WHERE
-        (candidate.event_types IS NOT NULL AND NOT candidate.event_type = ANY(candidate.event_types))
-        OR delivery.generation_id IS NULL
-        OR delivery.status IN ('delivered', 'dead_lettered')
-        OR (delivery.status = 'pending' AND delivery.next_attempt_at <= ${now})
-        OR (delivery.status = 'delivering' AND delivery.lease_expires_at <= ${now})
-      ORDER BY candidate.event_cursor, candidate.webhook_id, candidate.generation_id
+        work.tenant_id,
+        work.user_id,
+        work.webhook_id,
+        work.generation_id,
+        work.event_cursor
+      FROM (
+        SELECT * FROM due_deliveries
+        UNION ALL
+        SELECT event.* FROM new_events AS event
+        WHERE NOT EXISTS (
+          SELECT 1
+          FROM viby.outbound_event_deliveries AS delivery
+          WHERE delivery.tenant_id = event.tenant_id
+            AND delivery.user_id = event.user_id
+            AND delivery.generation_id = event.generation_id
+            AND delivery.event_cursor = event.event_cursor
+            AND delivery.sink_id = ('webhook.' || event.webhook_id::text)
+            AND delivery.status IN ('pending', 'delivering')
+        )
+      ) AS work
+      ORDER BY work.event_cursor, work.webhook_id, work.generation_id
       LIMIT 1
     `;
     if (!row) return null;
@@ -3470,6 +3483,18 @@ export class PostgresRepository implements Repository {
           AND event.generation_id = ${input.generationId}
           AND event.cursor = ${input.eventCursor}::bigint
         ON CONFLICT (generation_id, event_cursor, sink_id) DO NOTHING
+      `;
+      await sql`
+        UPDATE viby.outbound_event_deliveries SET
+          status = 'dead_lettered',
+          last_error = COALESCE(last_error, 'Delivery lease expired after the final attempt.'),
+          dead_lettered_at = now(), lease_token = NULL, lease_expires_at = NULL,
+          updated_at = now()
+        WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+          AND generation_id = ${input.generationId}
+          AND event_cursor = ${input.eventCursor}::bigint AND sink_id = ${input.sinkId}
+          AND status = 'delivering' AND lease_expires_at <= now()
+          AND attempt_count >= max_attempts
       `;
       const [claimed] = await sql<OutboundEventDeliveryRow[]>`
         UPDATE viby.outbound_event_deliveries SET
