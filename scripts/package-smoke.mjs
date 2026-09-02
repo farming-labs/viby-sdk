@@ -115,6 +115,8 @@ try {
     "dist/integration-vercel.d.ts",
     "dist/integration-cloudflare.js",
     "dist/integration-cloudflare.d.ts",
+    "dist/integration-netlify.js",
+    "dist/integration-netlify.d.ts",
     "migrations/0001_initial.sql",
     "migrations/0002_durable_generations.sql",
     "migrations/0013_generation_costs.sql",
@@ -193,6 +195,21 @@ try {
         'if (skillRead("./skills").source !== "file") throw new Error("skillRead export is invalid");',
         'if (!builtInFrameworks.includes("farmjs") || builtInFrameworks.includes("farm")) throw new Error("framework IDs are invalid");',
         'if (frameworkSkill("nextjs").files[0].path !== "SKILL.md") throw new Error("framework skill is invalid");',
+      ].join("\n"),
+    ],
+    { cwd: consumer },
+  );
+  await execute(
+    node,
+    [
+      "--input-type=module",
+      "--eval",
+      [
+        'import { netlify, netlifyAccounts, netlifyDeployment, NetlifyDeploymentError } from "@viby/sdk/integrations/netlify";',
+        'if (typeof netlify !== "function") throw new Error("Netlify deployment adapter export is missing");',
+        'if (typeof netlifyAccounts !== "function") throw new Error("Netlify account helper export is missing");',
+        'if (netlifyDeployment !== netlify) throw new Error("Netlify deployment alias is invalid");',
+        'if (typeof NetlifyDeploymentError !== "function") throw new Error("Netlify deployment error export is missing");',
       ].join("\n"),
     ],
     { cwd: consumer },

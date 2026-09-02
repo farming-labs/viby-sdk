@@ -109,7 +109,7 @@ Preview URLs exist only when the configured adapter exposes port URLs and backgr
 | Deployment preparation | adapter-declared source/prebuilt input; capability-gated sandbox install/build, immutable external build artifact, artifact reuse on retries, and unchanged raw-source downloads |
 | Environment injection | explicit sandbox environment selection plus automatic deployment/build selection; values never enter prompts, events, telemetry, histories, or command records |
 | Deployment conformance | reusable disposable-project suite covering creation, idempotent deployment, lookup, and cancellation |
-| Included deployment adapters | Vercel external-integration authorization with source deployment and cancellation; Cloudflare OAuth with multi-account Pages discovery, Wrangler-compatible prebuilt asset uploads, durable retry recovery, status, and URLs |
+| Included deployment adapters | Vercel external-integration authorization with source deployment and cancellation; Cloudflare OAuth with multi-account Pages discovery and Wrangler-compatible prebuilt uploads; Netlify OAuth with team/site discovery, atomic static and prebuilt-function uploads, deploy-scoped secrets, cancellation, durable retry recovery, status, and URLs |
 
 Product authentication, provider-app registration, public callback routes, event scheduling, and transport infrastructure remain host-owned. Viby stores tenant-scoped repository, deployment, and tool-source connections plus delivery state, but does not run a hidden queue or scheduler.
 
@@ -125,7 +125,7 @@ Product authentication, provider-app registration, public callback routes, event
 | Sandbox integration | shared conformance suite plus a real local Docker integration job |
 | Reference E2E | standard API host request-level chat → SSE → preview → iterate → ZIP download through real Viby objects and deterministic adapters |
 | Generated-project quality matrix | Farm, TanStack Start, and a custom framework ID across generation, runtime checks, preview HTTP, iteration, evaluation, and ZIP parity |
-| Live provider verification | explicit, environment-gated GitHub, GitLab, Bitbucket, Vercel, and Cloudflare tests with disposable resources and failure-safe cleanup |
+| Live provider verification | explicit, environment-gated GitHub, GitLab, Bitbucket, Vercel, Cloudflare, and Netlify tests with disposable resources and failure-safe cleanup |
 | Package smoke test | packed artifact install, public import, CLI, and exported subpaths |
 | Runtime compatibility | Node 20/22/24, Bun package import, portable dependency-graph guard, and Web Request/Response/streams/crypto behavior |
 

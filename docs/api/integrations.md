@@ -23,6 +23,7 @@ const viby = createViby({
     deployment: {
       vercel: vercel({ /* integration configuration */ }),
       cloudflare: cloudflare({ /* OAuth configuration */ }),
+      netlify: netlify({ /* OAuth configuration */ }),
     },
   },
 });
@@ -125,6 +126,7 @@ callback without adding a Viby history record for arbitrary provider work.
 | GitLab repositories | `@viby/sdk/integrations/gitlab` | [GitLab](/docs/integrations/gitlab) |
 | Vercel deployments | `@viby/sdk/integrations/vercel` | [Vercel](/docs/integrations/vercel) |
 | Cloudflare Pages deployments | `@viby/sdk/integrations/cloudflare` | [Cloudflare](/docs/integrations/cloudflare) |
+| Netlify deployments | `@viby/sdk/integrations/netlify` | [Netlify](/docs/integrations/netlify) |
 
 Custom stores and adapters should run the integration, repository, or deployment conformance suite
 from the corresponding package entry point before production use.

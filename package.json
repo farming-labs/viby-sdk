@@ -180,6 +180,10 @@
       "types": "./dist/integration-cloudflare.d.ts",
       "import": "./dist/integration-cloudflare.js"
     },
+    "./integrations/netlify": {
+      "types": "./dist/integration-netlify.d.ts",
+      "import": "./dist/integration-netlify.js"
+    },
     "./mcp": {
       "types": "./dist/mcp.d.ts",
       "import": "./dist/mcp.js"

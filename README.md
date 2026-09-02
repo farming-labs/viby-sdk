@@ -380,6 +380,7 @@ External account connections use the same tenant and user scope while keeping pr
 ```ts
 import { github } from "@viby/sdk/integrations/github";
 import { cloudflare } from "@viby/sdk/integrations/cloudflare";
+import { netlify } from "@viby/sdk/integrations/netlify";
 import { vercel } from "@viby/sdk/integrations/vercel";
 
 const viby = createViby({
@@ -414,6 +415,10 @@ const viby = createViby({
         clientId: env.CLOUDFLARE_CLIENT_ID,
         clientSecret: env.CLOUDFLARE_CLIENT_SECRET,
         scopes: env.CLOUDFLARE_OAUTH_SCOPES.split(" "),
+      }),
+      netlify: netlify({
+        clientId: env.NETLIFY_CLIENT_ID,
+        clientSecret: env.NETLIFY_CLIENT_SECRET,
       }),
     },
   },
@@ -488,7 +493,7 @@ deployment.url; // null until the provider has a URL
 
 The default idempotency key is stable for the version, integration, project, and environment. A safe retry reuses the persisted provider result or preparation artifact instead of rebuilding or creating another provider effect. Project creation remains explicit through `createIfMissing`. Use `version.deployments()` to reload durable history and `version.deploymentArtifact(deploymentId)` to retrieve a prepared artifact. The normal `version.download()` remains raw framework-native source and is never replaced by build output. Use `provider.projects` and `provider.deployments.get(...)` for the common lifecycle; cancellation is available only when the selected adapter supports it. Adapter authors can run `verifyDeploymentIntegration` from `@viby/sdk/integrations/deployment/conformance`.
 
-The included [Vercel adapter](./docs/integrations/vercel.md) accepts complete framework source and provider build settings. The included [Cloudflare adapter](./docs/integrations/cloudflare.md) declares prebuilt input and selects `dist` by default, so Viby prepares it automatically and never publishes raw framework source in place of a build. Prebuilt deployment requires both `sandbox` and `storage.artifacts`; either can be any conforming adapter.
+The included [Vercel adapter](./docs/integrations/vercel.md) accepts complete framework source and provider build settings. The included [Cloudflare adapter](./docs/integrations/cloudflare.md) declares prebuilt input and selects `dist` by default. The included [Netlify adapter](./docs/integrations/netlify.md) accepts prebuilt static assets plus optional already-built server-function bundles; its guide includes the Farm.js `.output/public` and `.output/server` contract. Viby prepares prebuilt output automatically and never publishes raw framework source in place of a build. Prebuilt deployment requires both `sandbox` and `storage.artifacts`; either can be any conforming adapter.
 
 Binary attachments use a separate provider-neutral artifact store so PostgreSQL retains only queryable ownership, media metadata, checksums, and opaque storage references. The filesystem adapter is a reference implementation for development or hosts with a durable mounted volume:
 

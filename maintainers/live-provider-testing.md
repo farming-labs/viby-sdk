@@ -1,8 +1,8 @@
 # Live provider verification
 
-The live provider suite verifies the shipped adapters against disposable resources in real GitHub, Bitbucket, Vercel, and Cloudflare accounts. It is intentionally excluded from ordinary pull-request CI because it creates external resources and requires user-owned credentials.
+The live provider suite verifies the shipped adapters against disposable resources in real GitHub, GitLab, Bitbucket, Vercel, Cloudflare, and Netlify accounts. It is intentionally excluded from ordinary pull-request CI because it creates external resources and requires user-owned credentials.
 
-The suite is fail-closed. It runs only when `VIBY_LIVE_PROVIDER_TESTS=1` is present, and `VIBY_LIVE_PROVIDERS` selects `github`, `bitbucket`, `vercel`, `cloudflare`, or `all`. Selecting a provider without its required environment variables fails instead of silently skipping it.
+The suite is fail-closed. It runs only when `VIBY_LIVE_PROVIDER_TESTS=1` is present, and `VIBY_LIVE_PROVIDERS` selects a shipped live provider or `all`. Selecting a provider without its required environment variables fails instead of silently skipping it.
 
 ## Safety and cleanup
 
@@ -14,8 +14,9 @@ The tests create only:
 - a private Bitbucket repository, two branches, commits, and a draft pull request;
 - a preview deployment in a dedicated Vercel test project;
 - a Cloudflare Pages project and preview deployment.
+- a Netlify site and draft deploy.
 
-Deleting each disposable repository, Pages project, or Vercel deployment removes the generated resource and its children. The suite never modifies source in an existing repository or creates a production deployment. Vercel is the one exception to project creation: the test uses a caller-owned, dedicated test project because Vercel may classify the first no-Git deployment in a fresh project as production.
+Deleting each disposable repository, Pages project, Netlify site, or Vercel deployment removes the generated resource and its children. The suite never modifies source in an existing repository or creates a production deployment. Vercel is the one exception to project creation: the test uses a caller-owned, dedicated test project because Vercel may classify the first no-Git deployment in a fresh project as production.
 
 ## Run locally
 
@@ -66,6 +67,10 @@ Set `VIBY_LIVE_CLOUDFLARE_ACCOUNT_ID` plus either:
 - `VIBY_LIVE_CLOUDFLARE_REFRESH_TOKEN`, `VIBY_LIVE_CLOUDFLARE_CLIENT_ID`, and `VIBY_LIVE_CLOUDFLARE_CLIENT_SECRET`.
 
 The OAuth grant needs account read and Pages write access. When a refresh token is supplied, the test refreshes it before any provider operation. It lists Pages projects, deploys immutable `dist` content, waits for readiness, and deletes the Pages project.
+
+## Netlify
+
+Set `VIBY_LIVE_NETLIFY_ACCESS_TOKEN` to a dedicated personal access token and `VIBY_LIVE_NETLIFY_ACCOUNT_SLUG` to the test team. `VIBY_LIVE_NETLIFY_ACCOUNT_ID` is optional when it differs from the slug. The test lists sites, creates a uniquely prefixed site, deploys immutable static content as a draft, waits for readiness, verifies the HTTPS deploy URL, and deletes the entire disposable site. The personal token exists only for maintainer verification; shipped product users connect through the adapter's OAuth flow.
 
 ## Bitbucket
 

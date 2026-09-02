@@ -109,6 +109,7 @@ create external disposable resources; use dedicated test accounts and provider c
 | `@viby/sdk/integrations/gitlab` | GitLab.com and self-managed GitLab repository adapter. |
 | `@viby/sdk/integrations/vercel` | Vercel deployment adapter. |
 | `@viby/sdk/integrations/cloudflare` | Cloudflare Pages deployment adapter. |
+| `@viby/sdk/integrations/netlify` | Netlify atomic deployment adapter for static assets and prebuilt server functions. |
 
 ## MCP entry points
 
