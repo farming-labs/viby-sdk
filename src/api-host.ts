@@ -39,6 +39,8 @@ import type {
   FeedbackAnalyticsQuery,
   SubmitMessageFeedbackInput,
 } from "./message-feedback.js";
+import type { WebhookEventSelection } from "./webhooks.js";
+import type { OutboundEventDeliveryStatus, OutboundEventRetryPolicy } from "./outbound-events.js";
 import {
   VIBY_API_OPERATIONS,
   type VibyApiKnownOperation,
@@ -276,6 +278,75 @@ async function route<Framework extends FrameworkId>(
   if (segments.length === 2 && segments[0] === "feedback" && segments[1] === "analytics") {
     if (request.method !== "GET") return methodNotAllowed("GET");
     return json({ analytics: await user.feedback.analytics(feedbackAnalyticsQuery(url)) });
+  }
+
+  if (segments[0] === "webhooks") {
+    if (segments.length === 1) {
+      if (request.method === "GET") return json({ webhooks: await user.webhooks.list() });
+      if (request.method === "POST") {
+        const body = await requestObject(request, maxBodyBytes);
+        return json({ result: await user.webhooks.create(webhookCreateInput(body)) }, 201);
+      }
+      return methodNotAllowed("GET, POST");
+    }
+    const webhookId = segments[1]!;
+    if (segments.length === 2) {
+      if (request.method === "GET") return json({ webhook: await user.webhooks.get(webhookId) });
+      if (request.method === "PATCH") {
+        return json({ webhook: await user.webhooks.update(
+          webhookId,
+          webhookUpdateInput(await requestObject(request, maxBodyBytes)),
+        ) });
+      }
+      if (request.method === "DELETE") {
+        return json({ deleted: await user.webhooks.delete(webhookId) });
+      }
+      return methodNotAllowed("GET, PATCH, DELETE");
+    }
+    if (segments.length === 3 && segments[2] === "pause") {
+      if (request.method !== "POST") return methodNotAllowed("POST");
+      return json({ webhook: await user.webhooks.pause(webhookId) });
+    }
+    if (segments.length === 3 && segments[2] === "resume") {
+      if (request.method !== "POST") return methodNotAllowed("POST");
+      return json({ webhook: await user.webhooks.resume(webhookId) });
+    }
+    if (segments.length === 3 && segments[2] === "rotate-secret") {
+      if (request.method !== "POST") return methodNotAllowed("POST");
+      return json({ result: await user.webhooks.rotateSecret(webhookId) });
+    }
+    if (segments[2] === "generations" && segments[3]) {
+      const generationId = segments[3];
+      if (segments.length === 5 && segments[4] === "deliver") {
+        if (request.method !== "POST") return methodNotAllowed("POST");
+        const body = await optionalRequestObject(request, maxBodyBytes);
+        return json({ delivery: await user.webhooks.deliver(webhookId, generationId, {
+          ...(body.limit === undefined ? {} : { limit: positiveInteger(body.limit, "limit") }),
+          ...(body.retry === undefined ? {} : { retry: webhookRetry(body.retry) }),
+          signal: request.signal,
+        }) });
+      }
+      if (segments.length === 5 && segments[4] === "deliveries") {
+        if (request.method !== "GET") return methodNotAllowed("GET");
+        return json({ deliveries: await user.webhooks.deliveries(webhookId, generationId, {
+          ...(url.searchParams.has("status")
+            ? { status: webhookDeliveryStatus(url.searchParams.get("status")) }
+            : {}),
+        }) });
+      }
+      if (
+        segments.length === 7 && segments[4] === "deliveries" &&
+        segments[6] === "redrive"
+      ) {
+        if (request.method !== "POST") return methodNotAllowed("POST");
+        return json({ delivery: await user.webhooks.redrive(
+          webhookId,
+          generationId,
+          segments[5]!,
+        ) });
+      }
+    }
+    return notFound();
   }
 
   if (segments.length === 2 && segments[0] === "chats" && segments[1] === "imports") {
@@ -1579,6 +1650,76 @@ function sourceChanges(value: unknown): readonly SourceChange[] {
   });
 }
 
+function webhookCreateInput(body: Record<string, unknown>) {
+  return {
+    name: requiredString(body.name, "name", 100),
+    url: requiredString(body.url, "url", 2_000),
+    ...(body.events === undefined ? {} : { events: webhookEvents(body.events) }),
+    ...(body.signingSecret === undefined
+      ? {}
+      : { signingSecret: requiredString(body.signingSecret, "signingSecret", 500) }),
+  };
+}
+
+function webhookUpdateInput(body: Record<string, unknown>) {
+  return {
+    ...(body.name === undefined ? {} : { name: requiredString(body.name, "name", 100) }),
+    ...(body.url === undefined ? {} : { url: requiredString(body.url, "url", 2_000) }),
+    ...(body.events === undefined ? {} : { events: webhookEvents(body.events) }),
+  };
+}
+
+function webhookEvents(value: unknown): WebhookEventSelection {
+  if (value === "all") return "all";
+  return stringArray(value, "events", 100) as WebhookEventSelection;
+}
+
+function webhookRetry(value: unknown): OutboundEventRetryPolicy {
+  const input = jsonObject(value, "retry") as Record<string, unknown>;
+  return {
+    ...(input.maxAttempts === undefined
+      ? {}
+      : { maxAttempts: positiveInteger(input.maxAttempts, "retry.maxAttempts") }),
+    ...(input.initialDelayMs === undefined
+      ? {}
+      : { initialDelayMs: nonNegativeNumber(input.initialDelayMs, "retry.initialDelayMs") }),
+    ...(input.maxDelayMs === undefined
+      ? {}
+      : { maxDelayMs: nonNegativeNumber(input.maxDelayMs, "retry.maxDelayMs") }),
+    ...(input.multiplier === undefined
+      ? {}
+      : { multiplier: positiveNumber(input.multiplier, "retry.multiplier") }),
+    ...(input.leaseMs === undefined
+      ? {}
+      : { leaseMs: positiveInteger(input.leaseMs, "retry.leaseMs") }),
+  };
+}
+
+function webhookDeliveryStatus(value: string | null): OutboundEventDeliveryStatus {
+  if (
+    value !== "pending" && value !== "delivering" && value !== "delivered" &&
+    value !== "dead_lettered"
+  ) {
+    throw new ConfigurationError(
+      "status must be pending, delivering, delivered, or dead_lettered.",
+    );
+  }
+  return value;
+}
+
+function nonNegativeNumber(value: unknown, name: string): number {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    throw new ConfigurationError(`${name} must be a non-negative number.`);
+  }
+  return value;
+}
+
+function positiveNumber(value: unknown, name: string): number {
+  const number = nonNegativeNumber(value, name);
+  if (number === 0) throw new ConfigurationError(`${name} must be greater than zero.`);
+  return number;
+}
+
 function integrationCategory(value: string | undefined): IntegrationCategory {
   if (value !== "repository" && value !== "deployment") {
     throw new ConfigurationError("Integration category must be repository or deployment.");
@@ -1781,9 +1922,10 @@ function errorResponse(error: unknown): Response {
             ? 409
             : error instanceof VibyError && error.code === "integration_authorization_failed"
               ? 400
-              : error instanceof VibyError && (
+            : error instanceof VibyError && (
                   error.code === "integration_operation_failed"
                   || error.code === "source_import_failed"
+                  || error.code === "outbound_event_delivery_failed"
                 )
                 ? 502
           : 500;

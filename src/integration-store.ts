@@ -109,7 +109,8 @@ export interface SecretStorePutInput {
     | "integration-credential"
     | "environment-variable"
     | "tool-source-authorization-session"
-    | "tool-source-credential";
+    | "tool-source-credential"
+    | "webhook-signing";
   readonly expiresAt: Date | null;
 }
 

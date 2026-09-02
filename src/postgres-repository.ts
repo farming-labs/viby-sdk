@@ -6,6 +6,14 @@ import {
 } from "./artifact-store.js";
 import type { OutboundEventDeliveryData, OutboundEventDeliveryStatus } from "./outbound-events.js";
 import type {
+  CreateWebhookRecord,
+  ReplaceWebhookSecretRecord,
+  ReplaceWebhookSecretResult,
+  StoredWebhookData,
+  UpdateWebhookRecord,
+  WebhookStatus,
+} from "./webhooks.js";
+import type {
   AttachmentContent,
   AttachmentData,
   ChatData,
@@ -324,6 +332,18 @@ interface GenerationEventRow {
   type: GenerationEventType;
   data: unknown;
   created_at: Date;
+}
+
+interface WebhookRow {
+  id: string;
+  name: string;
+  url: string;
+  event_types: GenerationEventType[] | null;
+  status: WebhookStatus;
+  key_id: string;
+  secret_ref: string;
+  created_at: Date;
+  updated_at: Date;
 }
 
 interface OutboundEventDeliveryRow {
@@ -3180,6 +3200,166 @@ export class PostgresRepository implements Repository {
     return rows.map(mapEvent);
   }
 
+  async getGenerationEvent(
+    scope: UserScope,
+    generationId: string,
+    cursor: string,
+  ): Promise<GenerationEvent | null> {
+    await this.assertReady();
+    const [row] = await this.#sql<GenerationEventRow[]>`
+      SELECT event.cursor, event.generation_id, event.attempt_id, event.type, event.data,
+        event.created_at
+      FROM viby.generation_events AS event
+      JOIN viby.generations AS generation ON generation.id = event.generation_id
+      WHERE event.tenant_id = ${scope.tenantId} AND event.user_id = ${scope.userId}
+        AND event.generation_id = ${generationId} AND event.cursor = ${cursor}::bigint
+        AND generation.tenant_id = ${scope.tenantId} AND generation.user_id = ${scope.userId}
+      LIMIT 1
+    `;
+    return row ? mapEvent(row) : null;
+  }
+
+  async createWebhook(scope: UserScope, input: CreateWebhookRecord): Promise<StoredWebhookData> {
+    await this.assertReady();
+    const [row] = await this.#sql<WebhookRow[]>`
+      INSERT INTO viby.webhooks (
+        id, tenant_id, user_id, name, url, event_types, status, key_id, secret_ref,
+        created_at, updated_at
+      ) VALUES (
+        ${input.id}, ${scope.tenantId}, ${scope.userId}, ${input.name}, ${input.url},
+        ${input.eventTypes}, ${input.status}, ${input.keyId}, ${input.secretRef},
+        ${input.now}, ${input.now}
+      )
+      RETURNING id, name, url, event_types, status, key_id, secret_ref, created_at, updated_at
+    `;
+    return mapWebhook(row!);
+  }
+
+  async listWebhooks(scope: UserScope): Promise<readonly StoredWebhookData[]> {
+    await this.assertReady();
+    const rows = await this.#sql<WebhookRow[]>`
+      SELECT id, name, url, event_types, status, key_id, secret_ref, created_at, updated_at
+      FROM viby.webhooks
+      WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+      ORDER BY created_at, id
+    `;
+    return rows.map(mapWebhook);
+  }
+
+  async getWebhook(scope: UserScope, id: string): Promise<StoredWebhookData | null> {
+    await this.assertReady();
+    const [row] = await this.#sql<WebhookRow[]>`
+      SELECT id, name, url, event_types, status, key_id, secret_ref, created_at, updated_at
+      FROM viby.webhooks
+      WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId} AND id = ${id}
+      LIMIT 1
+    `;
+    return row ? mapWebhook(row) : null;
+  }
+
+  async updateWebhook(
+    scope: UserScope,
+    id: string,
+    input: UpdateWebhookRecord,
+  ): Promise<StoredWebhookData> {
+    await this.assertReady();
+    const [row] = await this.#sql<WebhookRow[]>`
+      UPDATE viby.webhooks SET
+        name = ${input.name}, url = ${input.url}, event_types = ${input.eventTypes},
+        status = ${input.status}, updated_at = ${input.now}
+      WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId} AND id = ${id}
+      RETURNING id, name, url, event_types, status, key_id, secret_ref, created_at, updated_at
+    `;
+    if (!row) throw new NotFoundError("Webhook");
+    return mapWebhook(row);
+  }
+
+  async replaceWebhookSecret(
+    scope: UserScope,
+    id: string,
+    input: ReplaceWebhookSecretRecord,
+  ): Promise<ReplaceWebhookSecretResult> {
+    await this.assertReady();
+    return this.#sql.begin(async (sql) => {
+      const [previous] = await sql<{ secret_ref: string }[]>`
+        SELECT secret_ref FROM viby.webhooks
+        WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId} AND id = ${id}
+        FOR UPDATE
+      `;
+      if (!previous) throw new NotFoundError("Webhook");
+      const [row] = await sql<WebhookRow[]>`
+        UPDATE viby.webhooks SET
+          key_id = ${input.keyId}, secret_ref = ${input.secretRef}, updated_at = ${input.now}
+        WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId} AND id = ${id}
+        RETURNING id, name, url, event_types, status, key_id, secret_ref, created_at, updated_at
+      `;
+      return { webhook: mapWebhook(row!), replacedSecretRef: previous.secret_ref };
+    });
+  }
+
+  async deleteWebhook(scope: UserScope, id: string): Promise<StoredWebhookData | null> {
+    await this.assertReady();
+    const [row] = await this.#sql<WebhookRow[]>`
+      DELETE FROM viby.webhooks
+      WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId} AND id = ${id}
+      RETURNING id, name, url, event_types, status, key_id, secret_ref, created_at, updated_at
+    `;
+    return row ? mapWebhook(row) : null;
+  }
+
+  async getWebhookDeliveryCursor(
+    scope: UserScope,
+    webhookId: string,
+    generationId: string,
+  ): Promise<string> {
+    await this.assertReady();
+    const [row] = await this.#sql<{ cursor: string | number | bigint }[]>`
+      SELECT cursor FROM viby.webhook_delivery_cursors
+      WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
+        AND webhook_id = ${webhookId} AND generation_id = ${generationId}
+      LIMIT 1
+    `;
+    if (row) return String(row.cursor);
+    const [owned] = await this.#sql<{ owned: boolean }[]>`
+      SELECT true AS owned
+      FROM viby.webhooks AS webhook
+      JOIN viby.generations AS generation
+        ON generation.tenant_id = webhook.tenant_id AND generation.user_id = webhook.user_id
+      WHERE webhook.tenant_id = ${scope.tenantId} AND webhook.user_id = ${scope.userId}
+        AND webhook.id = ${webhookId} AND generation.id = ${generationId}
+      LIMIT 1
+    `;
+    if (!owned) throw new NotFoundError("Webhook or generation");
+    return "0";
+  }
+
+  async advanceWebhookDeliveryCursor(
+    scope: UserScope,
+    webhookId: string,
+    generationId: string,
+    cursor: string,
+    now: Date,
+  ): Promise<string> {
+    await this.assertReady();
+    const [row] = await this.#sql<{ cursor: string | number | bigint }[]>`
+      INSERT INTO viby.webhook_delivery_cursors (
+        tenant_id, user_id, webhook_id, generation_id, cursor, updated_at
+      )
+      SELECT ${scope.tenantId}, ${scope.userId}, webhook.id, generation.id, ${cursor}::bigint, ${now}
+      FROM viby.webhooks AS webhook
+      JOIN viby.generations AS generation
+        ON generation.tenant_id = webhook.tenant_id AND generation.user_id = webhook.user_id
+      WHERE webhook.tenant_id = ${scope.tenantId} AND webhook.user_id = ${scope.userId}
+        AND webhook.id = ${webhookId} AND generation.id = ${generationId}
+      ON CONFLICT (tenant_id, user_id, webhook_id, generation_id) DO UPDATE SET
+        cursor = GREATEST(viby.webhook_delivery_cursors.cursor, EXCLUDED.cursor),
+        updated_at = EXCLUDED.updated_at
+      RETURNING cursor
+    `;
+    if (!row) throw new NotFoundError("Webhook or generation");
+    return String(row.cursor);
+  }
+
   async claimOutboundEventDelivery(
     scope: UserScope,
     input: ClaimOutboundEventDeliveryRecord,
@@ -5602,6 +5782,20 @@ function mapEvent(row: GenerationEventRow): GenerationEvent {
     data: row.data,
     createdAt: row.created_at,
   } as GenerationEvent;
+}
+
+function mapWebhook(row: WebhookRow): StoredWebhookData {
+  return {
+    id: row.id,
+    name: row.name,
+    url: row.url,
+    events: row.event_types === null ? "all" : Object.freeze([...row.event_types]),
+    status: row.status,
+    keyId: row.key_id,
+    secretRef: row.secret_ref,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
 }
 
 function mapOutboundEventDelivery(row: OutboundEventDeliveryRow): OutboundEventDeliveryData {

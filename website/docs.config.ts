@@ -81,6 +81,7 @@ export default {
           { label: "Chats and projects", slug: "api/chats" },
           { label: "Message feedback", slug: "api/message-feedback" },
           { label: "Generations and events", slug: "api/generations" },
+          { label: "Durable webhooks", slug: "api/webhooks" },
           { label: "Versions and artifacts", slug: "api/versions" },
           { label: "Previews and sandboxes", slug: "api/previews" },
           { label: "Tool sources", slug: "api/tool-sources" },

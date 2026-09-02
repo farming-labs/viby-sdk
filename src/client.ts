@@ -180,6 +180,7 @@ import type {
   OutboundEventDeliveryStatus,
   OutboundEventSink,
 } from "./outbound-events.js";
+import { WebhookCollection, type WebhookConfig } from "./webhooks.js";
 import {
   generationEventStreamResponse,
   type GenerationEventStreamResponseOptions,
@@ -536,6 +537,7 @@ export function createVibyWithDependencies<const Framework extends FrameworkId>(
   const authorizedToolSources = Object.values(config.tools?.adapters ?? {}).some(
     (adapter) => adapter.authorization !== undefined,
   );
+  const webhooksEnabled = config.events?.webhooks !== undefined;
   if (
     config.environment !== undefined &&
     (!config.environment || typeof config.environment !== "object")
@@ -544,7 +546,7 @@ export function createVibyWithDependencies<const Framework extends FrameworkId>(
   }
   const secretStore =
     storage.secrets ??
-    (integrationCount > 0 || environmentEnabled || authorizedToolSources
+    (integrationCount > 0 || environmentEnabled || authorizedToolSources || webhooksEnabled
       ? new LazyDefaultSecretStore()
       : null);
   const integrations =
@@ -676,6 +678,8 @@ class VibyClient<Framework extends FrameworkId> implements Viby<Framework> {
   readonly #workers = new Set<GenerationWorker<Framework>>();
   readonly #deletedChatsMs: number | null;
   readonly #eventSinks: ReadonlyMap<string, OutboundEventSink>;
+  readonly #secretStore: SecretStore | null;
+  readonly #webhookConfig: WebhookConfig | undefined;
   readonly #toolSources: readonly ToolSource<Framework>[];
   readonly #toolSourceRegistry: ToolSourceRegistry<Framework>;
 
@@ -689,6 +693,8 @@ class VibyClient<Framework extends FrameworkId> implements Viby<Framework> {
     this.#environment = dependencies.environment;
     this.#deletedChatsMs = normalizeChatRetentionConfig(config.retention);
     this.#eventSinks = normalizeOutboundEventSinks(config.events);
+    this.#secretStore = dependencies.secretStore ?? null;
+    this.#webhookConfig = config.events?.webhooks;
     this.#toolSources = Object.freeze([...new Set(Object.values(config.tools?.sources ?? {}))]);
     this.#toolSourceRegistry = new ToolSourceRegistry(
       this.#repository,
@@ -784,6 +790,8 @@ class VibyClient<Framework extends FrameworkId> implements Viby<Framework> {
       toolSourceRegistry: this.#toolSourceRegistry,
       deletedChatsMs: this.#deletedChatsMs,
       eventSinks: this.#eventSinks,
+      secretStore: this.#secretStore,
+      webhookConfig: this.#webhookConfig,
       integrations: this.integrations,
       environment: this.#environment,
     });
@@ -933,6 +941,8 @@ interface ScopedDependencies<Framework extends FrameworkId> {
   readonly toolSourceRegistry: ToolSourceRegistry<Framework>;
   readonly deletedChatsMs: number | null;
   readonly eventSinks: ReadonlyMap<string, OutboundEventSink>;
+  readonly secretStore: SecretStore | null;
+  readonly webhookConfig: WebhookConfig | undefined;
   readonly integrations: IntegrationClient;
   readonly environment: EnvironmentManager | undefined;
 }
@@ -945,6 +955,7 @@ export class ScopedViby<Framework extends FrameworkId = FrameworkId> {
   readonly previews: PreviewCollection<Framework>;
   readonly toolSources: RegisteredToolSourceCollection<Framework>;
   readonly feedback: FeedbackCollection<Framework>;
+  readonly webhooks: WebhookCollection;
   readonly integrations: ReturnType<IntegrationClient["forUser"]>;
 
   constructor(dependencies: ScopedDependencies<Framework>) {
@@ -955,6 +966,12 @@ export class ScopedViby<Framework extends FrameworkId = FrameworkId> {
     this.previews = new PreviewCollection(dependencies);
     this.toolSources = new RegisteredToolSourceCollection(dependencies);
     this.feedback = new FeedbackCollection(dependencies);
+    this.webhooks = new WebhookCollection(
+      dependencies.scope,
+      dependencies.repository,
+      dependencies.secretStore,
+      dependencies.webhookConfig,
+    );
     this.integrations = dependencies.integrations.forUser(
       dependencies.scope,
       dependencies.repository,

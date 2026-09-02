@@ -86,6 +86,7 @@ Preview URLs exist only when the configured adapter exposes port URLs and backgr
 | MCP client | Streamable HTTP and custom-transport adapter with per-chat connection isolation; static headers or adapter-resolved credentials remain inside the transport factory |
 | MCP server | `registerVibyMcpTools` exposes scoped chats, generations, events, steering, task resolution, versions, iteration, and downloads through the official MCP server SDK |
 | Outbound events | signed CloudEvents-style envelopes with stable IDs and constant-time verification |
+| Durable webhooks | tenant-managed endpoints, one-time secrets, persistent cursors, retries, dead letters, and redrive |
 | Durable delivery | database claims, retry backoff, lease fencing, inspection, dead letters, and explicit redrive |
 | HTTP streaming | `Last-Event-ID` parsing, standard SSE frames, request abort propagation, and Web `Response` headers |
 | Web API host | authenticated Web Request/Response routing with typed per-operation authorization and admission hooks for product-owned roles, quotas, billing, concurrency, and rate limits; public provider callbacks remain isolated from host sessions |

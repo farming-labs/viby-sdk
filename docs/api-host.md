@@ -163,6 +163,12 @@ All paths are relative to `basePath` (default `/api/viby`).
 | `POST /generations/:generationId/retry` | add a retry attempt |
 | `POST /generations/:generationId/resume` | resume an interrupted attempt |
 | `POST /generations/:generationId/tasks/:taskId` | resolve a typed plan, question, or permission task |
+| `GET/POST /webhooks` | list tenant-managed endpoints or create one with a one-time signing secret |
+| `GET/PATCH/DELETE /webhooks/:webhookId` | load, update, or delete endpoint configuration |
+| `POST /webhooks/:webhookId/{pause,resume,rotate-secret}` | control delivery or rotate the one-time signing secret |
+| `POST /webhooks/:webhookId/generations/:generationId/deliver` | deliver the next durable event page from a host-owned worker |
+| `GET /webhooks/:webhookId/generations/:generationId/deliveries` | inspect durable attempts and dead letters |
+| `POST /webhooks/:webhookId/generations/:generationId/deliveries/:cursor/redrive` | return one dead letter to pending state |
 | `GET /previews` | list durable previews by chat, version, or status |
 | `GET/DELETE /previews/:previewId` | load or stop a durable preview |
 | `POST /previews/:previewId/reconnect` | reconnect the configured sandbox to a durable preview lease |

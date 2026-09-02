@@ -1202,3 +1202,73 @@ test("persists encrypted integration connections and single-use authorization se
     await restarted.close();
   }
 });
+
+test("persists webhook configuration, delivery cursors, and signing secrets in Postgres", {
+  skip: databaseUrl ? false : "TEST_DATABASE_URL is not configured",
+}, async () => {
+  assert.ok(databaseUrl);
+  await migrateDatabase(databaseUrl);
+  const repository = new PostgresRepository(databaseUrl);
+  const secrets = new EncryptedPostgresSecretStore({
+    databaseUrl,
+    encryptionKey: new Uint8Array(32).fill(19),
+  });
+  const requests: string[] = [];
+  const generator: ProjectGenerator<"farm"> = {
+    async generate(): Promise<GeneratorOutput> {
+      const content = "export const webhook = true;\n";
+      return {
+        kind: "project",
+        title: "Webhook integration",
+        summary: "Exercises durable webhook storage.",
+        files: [{
+          path: "src/index.ts",
+          content,
+          mediaType: "text/typescript",
+          size: new TextEncoder().encode(content).byteLength,
+          checksum: sha256(content),
+          locked: false,
+        }],
+        usage,
+        finishReason: "stop",
+      };
+    },
+  };
+  const viby = createVibyWithDependencies(
+    {
+      framework: "farm",
+      model: "test/postgres-webhooks" as LanguageModel,
+      storage: { secrets },
+      events: {
+        webhooks: {
+          fetch: async (_input, init) => {
+            requests.push(String(init?.body ?? ""));
+            return new Response(null, { status: 204 });
+          },
+        },
+      },
+    },
+    { repository, generator, skillResolver: new SkillResolver({}) },
+  );
+  const scope = {
+    tenantId: `webhook-${randomUUID()}`,
+    userId: `webhook-${randomUUID()}`,
+  };
+  try {
+    const user = viby.forUser(scope);
+    const created = await user.webhooks.create({
+      name: "Postgres events",
+      url: "https://hooks.example.test/postgres",
+      events: ["generation.succeeded"],
+    });
+    const generation = await (await user.chats.create()).start({ prompt: "Build it" });
+    await generation.wait({ pollIntervalMs: 10 });
+    const first = await user.webhooks.deliver(created.webhook.id, generation.id);
+    assert.equal(first.deliveries.length, 1);
+    assert.equal(requests.length, 1);
+    assert.equal((await user.webhooks.deliver(created.webhook.id, generation.id)).deliveries.length, 0);
+    assert.equal((await user.webhooks.list())[0]?.name, "Postgres events");
+  } finally {
+    await viby.close();
+  }
+});

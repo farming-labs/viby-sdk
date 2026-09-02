@@ -21,6 +21,8 @@ stable public shape; behavior sections explain durability, scope, side effects, 
   to exact assistant messages, attempts, models, and versions.
 - [Generations and events](/docs/api/generations) — start, stream, wait, cancel, retry, resume,
   tasks, artifacts, outbound delivery, and workers.
+- [Durable webhooks](/docs/api/webhooks) — tenant-managed signed endpoints, persistent delivery
+  cursors, retries, dead letters, redrive, and worker ownership.
 - [Versions and artifacts](/docs/api/versions) — source inspection, immutable changes, iteration,
   restore, fork, preview, evaluation, push, deploy, and download.
 

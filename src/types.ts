@@ -20,6 +20,7 @@ import type { ToolSourceRegistrationSnapshot } from "./tool-source-registry.js";
 import type { PreviewConfig } from "./preview.js";
 import type { FrameworkId } from "./frameworks.js";
 import type { VibyHealthConfig } from "./health.js";
+import type { WebhookConfig } from "./webhooks.js";
 
 export type { BuiltInFrameworkId, FrameworkId } from "./frameworks.js";
 
@@ -131,6 +132,8 @@ interface VibyBaseConfig<Framework extends FrameworkId = FrameworkId> {
   };
   readonly events?: {
     readonly sinks?: readonly OutboundEventSink[];
+    /** Tenant-managed, durable signed webhook endpoints. Omit to disable. */
+    readonly webhooks?: WebhookConfig;
   };
   readonly telemetry?: VibyTelemetry;
   readonly cost?: GenerationCostConfig;

@@ -1275,6 +1275,11 @@ savedCursor = page.cursor;
 
 `deliverEvents` is explicit so the host can run it in its own request, cron, queue, or workflow system. Viby durably claims each generation/event/sink tuple, fences concurrent delivery with a lease, retries with bounded backoff, and moves exhausted events to a dead letter. `generation.outboundDeliveries(...)` inspects delivery state and `generation.redriveOutboundEvent(...)` explicitly returns a dead letter to the pending queue. Delivery is at least once. Event IDs are stable as `<generationId>:<cursor>`, so receivers must still deduplicate them.
 
+For endpoints managed by each tenant, enable `events: { webhooks: {} }` and use
+`user.webhooks`. Creation and rotation return the signing secret exactly once; endpoint metadata,
+filter progress, attempts, retry state, and dead letters remain durable. Delivery is intentionally
+triggered by the host's worker, cron, queue, or workflow. See [Durable webhooks](docs/api/webhooks.md).
+
 The helper emits a CloudEvents-style JSON envelope and signs `timestamp.eventId.body` with HMAC-SHA256. It includes key ID, timestamp, event ID, and `v1` signature headers. Rotate keys through `keyId`, keep signing secrets server-side, reject timestamps outside your chosen replay window, and use `verifySignedOutboundEvent` for constant-time verification. Secrets and transport response bodies are never persisted.
 
 ## Expose scoped Viby operations as MCP tools
