@@ -100,6 +100,7 @@ export default {
           { label: "Bitbucket", slug: "integrations/bitbucket" },
           { label: "Vercel", slug: "integrations/vercel" },
           { label: "Cloudflare", slug: "integrations/cloudflare" },
+          { label: "Netlify", slug: "integrations/netlify" },
         ],
       },
       {

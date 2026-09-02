@@ -97,6 +97,17 @@ async function cleanupResource(resource: LiveCleanupResource): Promise<void> {
       await cleanupVercelDeployment(resource);
       return;
     }
+    case "netlify": {
+      const accessToken = requiredEnvironment("VIBY_LIVE_NETLIFY_ACCESS_TOKEN");
+      const apiUrl = optionalEnvironment("VIBY_LIVE_NETLIFY_API_URL")
+        ?? "https://api.netlify.com/api/v1";
+      await providerRequest(
+        `${apiUrl.replace(/\/$/, "")}/sites/${encodeURIComponent(resource.id)}`,
+        { method: "DELETE", headers: { authorization: `Bearer ${accessToken}` } },
+        [204, 404],
+      );
+      return;
+    }
   }
 }
 
