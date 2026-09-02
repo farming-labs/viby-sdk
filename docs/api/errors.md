@@ -90,8 +90,9 @@ distinguish transport failure from a typed Viby API response.
 ## HTTP mapping
 
 `createVibyApi()` converts known errors to JSON with an appropriate status and stable `code`. It
-uses `403 forbidden` when an `authorize` hook returns `false` and `429 admission_denied` when an
-`admit` hook returns `false`. A hook may instead return a complete product `Response` for custom
-codes, billing status, or retry headers. The API also preserves `Response` objects returned by
-authentication or preview callbacks. Unexpected
+uses `403 forbidden` when an `authorize` hook returns `false`. Middleware can return a complete
+product `Response` for rate limits, plan restrictions, billing status, or retry headers without
+running the operation. The deprecated `admit` compatibility hook still maps `false` to `429
+admission_denied`. The API also preserves `Response` objects returned by authentication, middleware,
+or preview callbacks. Unexpected
 errors become a generic server response; raw exception details remain server-side.
