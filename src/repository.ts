@@ -74,6 +74,7 @@ import type {
   NormalizedProviderRequestAttributionInput,
   ProviderRequestAttributionData,
 } from "./provider-request-attribution.js";
+import type { WebhookStore } from "./webhooks.js";
 
 export interface ImportChatRecord<Framework extends FrameworkId = FrameworkId> {
   readonly chatId: string;
@@ -461,7 +462,7 @@ export interface FailOutboundEventDeliveryRecord {
 }
 
 export interface Repository
-extends DeploymentHistoryStore, PreviewSessionStore, ToolSourceRegistryStore, ToolSourceAuthorizationStore {
+extends DeploymentHistoryStore, PreviewSessionStore, ToolSourceRegistryStore, ToolSourceAuthorizationStore, WebhookStore {
   assertReady(): Promise<void>;
   close(): Promise<void>;
   createChat<Framework extends FrameworkId>(
@@ -640,6 +641,11 @@ extends DeploymentHistoryStore, PreviewSessionStore, ToolSourceRegistryStore, To
     after: string,
     limit: number,
   ): Promise<GenerationEvent[]>;
+  getGenerationEvent(
+    scope: UserScope,
+    generationId: string,
+    cursor: string,
+  ): Promise<GenerationEvent | null>;
   claimOutboundEventDelivery(
     scope: UserScope,
     input: ClaimOutboundEventDeliveryRecord,

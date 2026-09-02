@@ -88,6 +88,13 @@ import type {
   OutboundEventDeliveryStatus,
 } from "./outbound-events.js";
 import type {
+  CreateWebhookRecord,
+  ReplaceWebhookSecretRecord,
+  ReplaceWebhookSecretResult,
+  StoredWebhookData,
+  UpdateWebhookRecord,
+} from "./webhooks.js";
+import type {
   BeginRepositoryPushRecord,
   CompleteRepositoryPushRecord,
   FailRepositoryPushRecord,
@@ -171,6 +178,7 @@ type MemoryOutboundEventDelivery = OutboundEventDeliveryData &
 type MemoryGenerationEngineCheckpoint = GenerationEngineCheckpointData & ScopedRecord;
 type MemoryMessageFeedback = MessageFeedbackData & ScopedRecord;
 type MemoryProviderRequestAttribution = ProviderRequestAttributionData & ScopedRecord;
+type MemoryWebhook = StoredWebhookData & ScopedRecord;
 
 export class MemoryRepository implements Repository {
   readonly chats = new Map<string, MemoryChatRecord>();
@@ -202,6 +210,8 @@ export class MemoryRepository implements Repository {
   >();
   readonly toolSourceConnections = new Map<string, StoredToolSourceConnection & ScopedRecord>();
   readonly outboundDeliveries = new Map<string, MemoryOutboundEventDelivery>();
+  readonly webhooks = new Map<string, MemoryWebhook>();
+  readonly webhookDeliveryCursors = new Map<string, string>();
   readonly toolCalls = new Map<string, ToolCallData & ScopedRecord>();
   readonly repositoryLinks = new Map<string, RepositoryLinkData & ScopedRecord>();
   readonly repositoryPushes = new Map<string, RepositoryPushData & ScopedRecord>();
@@ -1892,6 +1902,119 @@ export class MemoryRepository implements Repository {
       .filter((event) => event.generationId === generationId && inScope(event, scope))
       .filter((event) => Number(event.cursor) > cursor)
       .slice(0, limit);
+  }
+
+  async getGenerationEvent(
+    scope: UserScope,
+    generationId: string,
+    cursor: string,
+  ): Promise<GenerationEvent | null> {
+    this.#requireGeneration(scope, generationId);
+    return this.events.find(
+      (event) =>
+        event.generationId === generationId && event.cursor === cursor && inScope(event, scope),
+    ) ?? null;
+  }
+
+  async createWebhook(scope: UserScope, input: CreateWebhookRecord): Promise<StoredWebhookData> {
+    const webhook: MemoryWebhook = {
+      tenantId: scope.tenantId,
+      userId: scope.userId,
+      id: input.id,
+      name: input.name,
+      url: input.url,
+      events: input.eventTypes === null ? "all" : Object.freeze([...input.eventTypes]),
+      status: input.status,
+      keyId: input.keyId,
+      secretRef: input.secretRef,
+      createdAt: input.now,
+      updatedAt: input.now,
+    };
+    this.webhooks.set(webhook.id, webhook);
+    return webhook;
+  }
+
+  async listWebhooks(scope: UserScope): Promise<readonly StoredWebhookData[]> {
+    return [...this.webhooks.values()]
+      .filter((webhook) => inScope(webhook, scope))
+      .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+  }
+
+  async getWebhook(scope: UserScope, id: string): Promise<StoredWebhookData | null> {
+    const webhook = this.webhooks.get(id);
+    return webhook && inScope(webhook, scope) ? webhook : null;
+  }
+
+  async updateWebhook(
+    scope: UserScope,
+    id: string,
+    input: UpdateWebhookRecord,
+  ): Promise<StoredWebhookData> {
+    const webhook = this.webhooks.get(id);
+    if (!webhook || !inScope(webhook, scope)) throw new NotFoundError("Webhook");
+    const updated: MemoryWebhook = {
+      ...webhook,
+      name: input.name,
+      url: input.url,
+      events: input.eventTypes === null ? "all" : Object.freeze([...input.eventTypes]),
+      status: input.status,
+      updatedAt: input.now,
+    };
+    this.webhooks.set(id, updated);
+    return updated;
+  }
+
+  async replaceWebhookSecret(
+    scope: UserScope,
+    id: string,
+    input: ReplaceWebhookSecretRecord,
+  ): Promise<ReplaceWebhookSecretResult> {
+    const webhook = this.webhooks.get(id);
+    if (!webhook || !inScope(webhook, scope)) throw new NotFoundError("Webhook");
+    const updated: MemoryWebhook = {
+      ...webhook,
+      keyId: input.keyId,
+      secretRef: input.secretRef,
+      updatedAt: input.now,
+    };
+    this.webhooks.set(id, updated);
+    return { webhook: updated, replacedSecretRef: webhook.secretRef };
+  }
+
+  async deleteWebhook(scope: UserScope, id: string): Promise<StoredWebhookData | null> {
+    const webhook = this.webhooks.get(id);
+    if (!webhook || !inScope(webhook, scope)) return null;
+    this.webhooks.delete(id);
+    for (const key of this.webhookDeliveryCursors.keys()) {
+      if (key.startsWith(`${scope.tenantId}\u0000${scope.userId}\u0000${id}\u0000`)) {
+        this.webhookDeliveryCursors.delete(key);
+      }
+    }
+    return webhook;
+  }
+
+  async getWebhookDeliveryCursor(
+    scope: UserScope,
+    webhookId: string,
+    generationId: string,
+  ): Promise<string> {
+    if (!(await this.getWebhook(scope, webhookId))) throw new NotFoundError("Webhook");
+    this.#requireGeneration(scope, generationId);
+    return this.webhookDeliveryCursors.get(webhookCursorKey(scope, webhookId, generationId)) ?? "0";
+  }
+
+  async advanceWebhookDeliveryCursor(
+    scope: UserScope,
+    webhookId: string,
+    generationId: string,
+    cursor: string,
+    _now: Date,
+  ): Promise<string> {
+    const key = webhookCursorKey(scope, webhookId, generationId);
+    const current = await this.getWebhookDeliveryCursor(scope, webhookId, generationId);
+    const advanced = BigInt(cursor) > BigInt(current) ? cursor : current;
+    this.webhookDeliveryCursors.set(key, advanced);
+    return advanced;
   }
 
   async claimOutboundEventDelivery(
@@ -3685,6 +3808,14 @@ function addCost(
 
 function outboundDeliveryKey(generationId: string, eventCursor: string, sinkId: string): string {
   return `${generationId}:${eventCursor}:${sinkId}`;
+}
+
+function webhookCursorKey(
+  scope: UserScope,
+  webhookId: string,
+  generationId: string,
+): string {
+  return `${scope.tenantId}\u0000${scope.userId}\u0000${webhookId}\u0000${generationId}`;
 }
 
 function publicOutboundDelivery(delivery: MemoryOutboundEventDelivery): OutboundEventDeliveryData {

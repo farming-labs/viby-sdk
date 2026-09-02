@@ -48,6 +48,14 @@ export type {
   VersionPageCursor,
 } from "./repository.js";
 export type {
+  CreateWebhookRecord,
+  ReplaceWebhookSecretRecord,
+  ReplaceWebhookSecretResult,
+  StoredWebhookData,
+  UpdateWebhookRecord,
+  WebhookStore,
+} from "./webhooks.js";
+export type {
   BeginRepositoryPushRecord,
   CompleteRepositoryPushRecord,
   FailRepositoryPushRecord,

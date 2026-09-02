@@ -74,6 +74,12 @@ export {
 export { GenerationEngineToolApprovalRequiredError } from "./generation-engine-tools.js";
 export * from "./message-feedback.js";
 export * from "./provider-request-attribution.js";
+export {
+  DEFAULT_WEBHOOK_EVENTS,
+  WEBHOOK_EVENT_TYPES,
+  WebhookCollection,
+} from "./webhooks.js";
+export type * from "./webhooks.js";
 export * from "./health.js";
 export * from "./doctor.js";
 export * from "./api-schema.js";

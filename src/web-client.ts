@@ -76,6 +76,19 @@ import type {
   SubmitMessageFeedbackInput,
 } from "./message-feedback.js";
 import type { ProviderRequestAttributionData } from "./provider-request-attribution.js";
+import type {
+  CreateWebhookInput,
+  CreateWebhookResult,
+  RotateWebhookSecretResult,
+  UpdateWebhookInput,
+  WebhookData,
+  WebhookDeliveryPage,
+} from "./webhooks.js";
+import type {
+  OutboundEventDeliveryData,
+  OutboundEventDeliveryStatus,
+  OutboundEventRetryPolicy,
+} from "./outbound-events.js";
 
 const DEFAULT_BASE_URL = "/api/viby";
 const DEFAULT_MAX_RECONNECTS = 5;
@@ -647,6 +660,54 @@ export interface VibyWebClient<Framework extends FrameworkId = FrameworkId> {
   readonly integrations: VibyWebIntegrationsClient;
   readonly toolSources: VibyWebToolSourcesClient;
   readonly feedback: VibyWebFeedbackClient;
+  readonly webhooks: VibyWebWebhooksClient;
+}
+
+export interface VibyWebWebhooksClient {
+  list(options?: VibyWebRequestOptions): Promise<{
+    readonly webhooks: readonly VibyApiJson<WebhookData>[];
+  }>;
+  create(input: CreateWebhookInput, options?: VibyWebRequestOptions): Promise<{
+    readonly result: VibyApiJson<CreateWebhookResult>;
+  }>;
+  get(webhookId: string, options?: VibyWebRequestOptions): Promise<{
+    readonly webhook: VibyApiJson<WebhookData>;
+  }>;
+  update(
+    webhookId: string,
+    input: UpdateWebhookInput,
+    options?: VibyWebRequestOptions,
+  ): Promise<{ readonly webhook: VibyApiJson<WebhookData> }>;
+  delete(
+    webhookId: string,
+    options?: VibyWebRequestOptions,
+  ): Promise<{ readonly deleted: boolean }>;
+  pause(webhookId: string, options?: VibyWebRequestOptions): Promise<{
+    readonly webhook: VibyApiJson<WebhookData>;
+  }>;
+  resume(webhookId: string, options?: VibyWebRequestOptions): Promise<{
+    readonly webhook: VibyApiJson<WebhookData>;
+  }>;
+  rotateSecret(webhookId: string, options?: VibyWebRequestOptions): Promise<{
+    readonly result: VibyApiJson<RotateWebhookSecretResult>;
+  }>;
+  deliver(
+    webhookId: string,
+    generationId: string,
+    input?: { readonly limit?: number; readonly retry?: OutboundEventRetryPolicy },
+    options?: VibyWebRequestOptions,
+  ): Promise<{ readonly delivery: VibyApiJson<WebhookDeliveryPage> }>;
+  deliveries(
+    webhookId: string,
+    generationId: string,
+    input?: { readonly status?: OutboundEventDeliveryStatus } & VibyWebRequestOptions,
+  ): Promise<{ readonly deliveries: readonly VibyApiJson<OutboundEventDeliveryData>[] }>;
+  redrive(
+    webhookId: string,
+    generationId: string,
+    cursor: string,
+    options?: VibyWebRequestOptions,
+  ): Promise<{ readonly delivery: VibyApiJson<OutboundEventDeliveryData> }>;
 }
 
 export interface VibyWebFeedbackClient {
@@ -1381,6 +1442,85 @@ export function createVibyWebClient<Framework extends FrameworkId = FrameworkId>
       input,
     ),
   };
+  const webhooks: VibyWebWebhooksClient = {
+    list: (request = {}) => transport.json(
+      "GET",
+      "/webhooks",
+      undefined,
+      undefined,
+      request,
+    ),
+    create: (input, request = {}) => transport.json(
+      "POST",
+      "/webhooks",
+      input,
+      undefined,
+      request,
+    ),
+    get: (webhookId, request = {}) => transport.json(
+      "GET",
+      `/webhooks/${segment(webhookId)}`,
+      undefined,
+      undefined,
+      request,
+    ),
+    update: (webhookId, input, request = {}) => transport.json(
+      "PATCH",
+      `/webhooks/${segment(webhookId)}`,
+      input,
+      undefined,
+      request,
+    ),
+    delete: (webhookId, request = {}) => transport.json(
+      "DELETE",
+      `/webhooks/${segment(webhookId)}`,
+      undefined,
+      undefined,
+      request,
+    ),
+    pause: (webhookId, request = {}) => transport.json(
+      "POST",
+      `/webhooks/${segment(webhookId)}/pause`,
+      {},
+      undefined,
+      request,
+    ),
+    resume: (webhookId, request = {}) => transport.json(
+      "POST",
+      `/webhooks/${segment(webhookId)}/resume`,
+      {},
+      undefined,
+      request,
+    ),
+    rotateSecret: (webhookId, request = {}) => transport.json(
+      "POST",
+      `/webhooks/${segment(webhookId)}/rotate-secret`,
+      {},
+      undefined,
+      request,
+    ),
+    deliver: (webhookId, generationId, input = {}, request = {}) => transport.json(
+      "POST",
+      `/webhooks/${segment(webhookId)}/generations/${segment(generationId)}/deliver`,
+      input,
+      undefined,
+      request,
+    ),
+    deliveries: (webhookId, generationId, input = {}) => transport.json(
+      "GET",
+      `/webhooks/${segment(webhookId)}/generations/${segment(generationId)}/deliveries`,
+      undefined,
+      input,
+      input,
+    ),
+    redrive: (webhookId, generationId, cursor, request = {}) => transport.json(
+      "POST",
+      `/webhooks/${segment(webhookId)}/generations/${segment(generationId)}/deliveries/${segment(cursor)}/redrive`,
+      {},
+      undefined,
+      request,
+    ),
+  };
   const toolSources: VibyWebToolSourcesClient = {
     list: (input = {}) => transport.json(
       "GET",
@@ -1446,6 +1586,7 @@ export function createVibyWebClient<Framework extends FrameworkId = FrameworkId>
     integrations,
     toolSources: Object.freeze(toolSources),
     feedback: Object.freeze(feedback),
+    webhooks: Object.freeze(webhooks),
   });
 }
 
