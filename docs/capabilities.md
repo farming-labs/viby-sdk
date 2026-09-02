@@ -89,7 +89,7 @@ Preview URLs exist only when the configured adapter exposes port URLs and backgr
 | Durable webhooks | tenant-managed endpoints, one-time secrets, persistent cursors, retries, dead letters, and redrive |
 | Durable delivery | database claims, retry backoff, lease fencing, inspection, dead letters, and explicit redrive |
 | HTTP streaming | `Last-Event-ID` parsing, standard SSE frames, request abort propagation, and Web `Response` headers |
-| Web API host | authenticated Web Request/Response routing with typed per-operation authorization and admission hooks for product-owned roles, quotas, billing, concurrency, and rate limits; public provider callbacks remain isolated from host sessions |
+| Web API host | authenticated Web Request/Response routing with explicit per-operation authorization and ordered middleware for product-owned quotas, billing, concurrency, tracing, and rate limits; public provider callbacks remain isolated from host sessions |
 | API schemas | portable OpenAPI 3.1 builder, complete typed operation inventory, and JSON Schema Draft 2020-12 bundle through `@viby/sdk/schema` |
 | Telemetry | provider-neutral hooks plus an OpenTelemetry-compatible tracer/meter adapter |
 | Cost attribution | host-defined currency/credit calculator, immutable attempt cost, cumulative generation cost, and usage parts |

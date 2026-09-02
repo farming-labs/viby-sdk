@@ -25,8 +25,9 @@ const api = createVibyApi({
 
 The host owns authentication. Returning `null` produces a JSON `401`; returning a `Response` preserves a product-specific redirect or denial. Every resource route after authentication uses the returned tenant/user scope. Integration and tool-source callbacks are deliberately public because their hashed, single-use authorization state establishes the original scope.
 
-Authentication establishes identity. Optional `authorize` and `admit` hooks then apply
-product policy to the exact typed operation before Viby reads or mutates durable state:
+Authentication establishes identity. Optional `authorize` then applies access control to the exact
+typed operation. An ordered `middleware` array wraps authorized operations for product concerns
+such as rate limits, quotas, billing reservations, concurrency, tracing, and response headers:
 
 ```ts
 const api = createVibyApi({
@@ -37,26 +38,41 @@ const api = createVibyApi({
       return permissions.canDelete(scope, params.chatId);
     }
   },
-  admit: async ({ operationId, scope }) => {
-    if (operationId !== "startGeneration" && operationId !== "startIteration") return;
-    const capacity = await quotas.reserveGeneration(scope);
-    if (capacity.accepted) return true;
-    return Response.json(
-      { error: "Generation limit reached.", code: "generation_limit" },
-      { status: 429, headers: { "Retry-After": String(capacity.retryAfterSeconds) } },
-    );
-  },
+  middleware: [
+    async ({ operationId, scope }, next) => {
+      const startedAt = performance.now();
+      const response = await next();
+      metrics.observe(operationId, scope.tenantId, performance.now() - startedAt);
+      return response;
+    },
+    async ({ operationId, scope }, next) => {
+      if (operationId !== "startGeneration" && operationId !== "startIteration") {
+        return next();
+      }
+      const capacity = await quotas.reserveGeneration(scope);
+      if (capacity.accepted) return next();
+      return Response.json(
+        { error: "Generation limit reached.", code: "generation_limit" },
+        { status: 429, headers: { "Retry-After": String(capacity.retryAfterSeconds) } },
+      );
+    },
+  ],
 });
 ```
 
-Both hooks receive the authenticated `scope`, scoped `viby` client, original `request`, the frozen
-operation descriptor and typed `operationId`, plus decoded path `params`. Return `true` or nothing
-to continue, `false` for the default denial (`403 forbidden` from authorization, `429
-admission_denied` from admission), or a complete `Response` for product-specific roles, plans,
-billing, concurrency, or rate-limit behavior. Authorization always runs before admission. Public
-provider callbacks bypass all three host hooks and continue to authenticate with single-use state.
-Hooks should inspect request metadata; clone the request before reading a body so the route can
-still consume it.
+Authorization and middleware receive the authenticated `scope`, scoped `viby` client, original
+`request`, frozen operation descriptor and typed `operationId`, plus decoded path `params`.
+Authorization returns `true` or nothing to continue, `false` for the default `403 forbidden`, or a
+complete `Response`. Middleware must return a Web `Response`: return one directly to short-circuit,
+or call `next()` exactly once to continue. Middleware is entered in array order and unwinds in
+reverse order, so earlier entries can observe or decorate downstream responses. Authentication and
+authorization always run before middleware. Public provider callbacks bypass product authentication,
+authorization, and middleware because their signed single-use state establishes scope. Clone the
+request before reading a body so the operation can still consume it.
+
+The former `admit` policy remains as a deprecated compatibility path and still runs after
+authorization but before middleware. New applications should use middleware so a single primitive
+can handle both early denials and response-side cleanup or instrumentation.
 
 An authenticator that creates or rotates a cookie can return the scope and response headers together.
 The headers are applied to both successful route responses and SDK error responses, and are never
@@ -121,7 +137,7 @@ const tools = await viby.toolSources.create({
 await viby.chats.toolSources.set(chat.id, [tools.toolSource.id]);
 ```
 
-Pass `after` to `generations.stream()` when restoring a cursor from application storage. The client sends it as `Last-Event-ID`, updates it after each event, and reconnects a prematurely closed retryable stream without replaying acknowledged events. File, ZIP, and attachment bytes remain `Uint8Array` values in application code; the client owns their base64 HTTP encoding. Authentication, authorization, and admission remain host-owned: use `headers`, a header factory, or a custom `fetch` implementation to attach the product session.
+Pass `after` to `generations.stream()` when restoring a cursor from application storage. The client sends it as `Last-Event-ID`, updates it after each event, and reconnects a prematurely closed retryable stream without replaying acknowledged events. File, ZIP, and attachment bytes remain `Uint8Array` values in application code; the client owns their base64 HTTP encoding. Authentication, authorization, and middleware policy remain host-owned: use `headers`, a header factory, or a custom `fetch` implementation to attach the product session.
 
 ## Routes
 

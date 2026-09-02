@@ -1226,15 +1226,22 @@ const api = createVibyApi({
   },
   authorize: ({ operationId, params, scope }) =>
     operationId !== "deleteChat" || permissions.canDelete(scope, params.chatId),
-  admit: ({ operationId, scope }) =>
-    operationId === "startGeneration" ? quotas.admitGeneration(scope) : true,
+  middleware: [
+    async ({ operationId, scope }, next) => {
+      if (operationId !== "startGeneration") return next();
+      const capacity = await quotas.reserveGeneration(scope);
+      return capacity.accepted
+        ? next()
+        : Response.json({ error: "Generation limit reached." }, { status: 429 });
+    },
+  ],
   preview: true,
 });
 
 export const fetch = (request: Request) => api.fetch(request);
 ```
 
-It covers chat listing/creation/update/deletion, file/ZIP/repository imports, messages, generation status and control, resumable SSE and event pages, permission-task resolution, versions, immutable source changes, iteration, private binary delivery, project environments, integration authorization and discovery, durable push/deployment workflows, ZIP downloads, public integration callbacks, and durable or host-overridden previews. JSON attachments and binary imports use base64 only at the HTTP boundary. Provider credentials remain in adapter-owned secret storage. Authentication, authorization, admission, sessions, CORS, quotas, billing, rate limits, and sandbox selection remain product-owned. The complete reference application mounts this helper at `/api`.
+It covers chat listing/creation/update/deletion, file/ZIP/repository imports, messages, generation status and control, resumable SSE and event pages, permission-task resolution, versions, immutable source changes, iteration, private binary delivery, project environments, integration authorization and discovery, durable push/deployment workflows, ZIP downloads, public integration callbacks, and durable or host-overridden previews. JSON attachments and binary imports use base64 only at the HTTP boundary. Provider credentials remain in adapter-owned secret storage. Authentication, authorization, middleware, sessions, CORS, quotas, billing, rate limits, and sandbox selection remain product-owned. The complete reference application mounts this helper at `/api`.
 
 Generation steering is available through `GET/POST /generations/:id/steering` and the typed Web
 client's `generations.steering(...)` / `generations.steer(...)` methods.

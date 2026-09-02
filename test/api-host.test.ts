@@ -5,6 +5,7 @@ import type { LanguageModelUsage } from "ai";
 import { createVibyApi } from "../src/api-host.js";
 import { createVibyWithDependencies } from "../src/client.js";
 import { EnvironmentManager } from "../src/environment.js";
+import { ConfigurationError } from "../src/errors.js";
 import type { GeneratorInput, GeneratorOutput, ProjectGenerator } from "../src/generator.js";
 import { SkillResolver } from "../src/skills.js";
 import type { FrameworkId, VersionFile } from "../src/types.js";
@@ -443,7 +444,7 @@ test("adds authenticated session headers to successful and failed API responses"
   }
 });
 
-test("applies typed authorization and admission before matched operation effects", async () => {
+test("applies typed authorization and ordered middleware around matched operations", async () => {
   const calls: string[] = [];
   let listCalls = 0;
   const api = createVibyApi({
@@ -474,20 +475,32 @@ test("applies typed authorization and admission before matched operation effects
         return false;
       }
     },
-    admit: (context) => {
-      calls.push(`admit:${context.operationId}`);
-      if (context.operationId === "createChat") {
-        return new Response(JSON.stringify({ error: "Plan limit reached." }), {
-          status: 402,
-          headers: { "Content-Type": "application/json", "Retry-After": "60" },
-        });
-      }
-    },
+    middleware: [
+      async (context, next) => {
+        calls.push(`middleware:before:${context.operationId}`);
+        const response = await next();
+        calls.push(`middleware:after:${context.operationId}`);
+        const headers = new Headers(response.headers);
+        headers.set("X-Viby-Middleware", "applied");
+        return new Response(response.body, { status: response.status, headers });
+      },
+      async (context, next) => {
+        calls.push(`quota:${context.operationId}`);
+        if (context.operationId === "createChat") {
+          return new Response(JSON.stringify({ error: "Plan limit reached." }), {
+            status: 402,
+            headers: { "Content-Type": "application/json", "Retry-After": "60" },
+          });
+        }
+        return next();
+      },
+    ],
   });
 
   const listed = await api.fetch(new Request("https://app.example/api/viby/chats"));
   assert.equal(listed.status, 200);
   assert.equal(listed.headers.get("x-session"), "active");
+  assert.equal(listed.headers.get("x-viby-middleware"), "applied");
   assert.equal(listCalls, 1);
 
   const forbidden = await api.fetch(
@@ -508,11 +521,78 @@ test("applies typed authorization and admission before matched operation effects
   assert.equal(listCalls, 1);
   assert.deepEqual(calls, [
     "authorize:listChats",
-    "admit:listChats",
+    "middleware:before:listChats",
+    "quota:listChats",
+    "middleware:after:listChats",
     "authorize:getChat",
     "authorize:createChat",
-    "admit:createChat",
+    "middleware:before:createChat",
+    "quota:createChat",
+    "middleware:after:createChat",
   ]);
+});
+
+test("keeps the admission hook as a deprecated compatibility path", async () => {
+  const api = createVibyApi({
+    viby: {
+      framework: "farm",
+      integrations: { callback: async () => ({}) },
+      toolSources: { callback: async () => ({}) },
+      forUser: () => ({ chats: { list: async () => ({ items: [], nextCursor: null }) } }),
+      worker: () => { throw new Error("not used"); },
+      close: async () => {},
+    } as never,
+    authenticate: () => scope,
+    admit: () => false,
+  });
+
+  const response = await api.fetch(new Request("https://app.example/api/viby/chats"));
+  assert.equal(response.status, 429);
+  assert.deepEqual(await response.json(), {
+    error: "Request admission denied.",
+    code: "admission_denied",
+  });
+});
+
+test("validates middleware responses and prevents repeated next calls", async () => {
+  const errors: unknown[] = [];
+  const viby = {
+    framework: "farm",
+    integrations: { callback: async () => ({}) },
+    toolSources: { callback: async () => ({}) },
+    forUser: () => ({ chats: { list: async () => ({ items: [], nextCursor: null }) } }),
+    worker: () => { throw new Error("not used"); },
+    close: async () => {},
+  } as never;
+  assert.throws(
+    () => createVibyApi({ viby, authenticate: () => scope, middleware: [null] as never }),
+    ConfigurationError,
+  );
+
+  const repeated = createVibyApi({
+    viby,
+    authenticate: () => scope,
+    middleware: [async (_context, next) => {
+      await next();
+      return next();
+    }],
+    onError: (error) => { errors.push(error); },
+  });
+  const response = await repeated.fetch(new Request("https://app.example/api/viby/chats"));
+  assert.equal(response.status, 400);
+  assert.ok(errors[0] instanceof ConfigurationError);
+
+  const invalidResponse = createVibyApi({
+    viby,
+    authenticate: () => scope,
+    middleware: [async () => undefined as never],
+    onError: (error) => { errors.push(error); },
+  });
+  const invalid = await invalidResponse.fetch(
+    new Request("https://app.example/api/viby/chats"),
+  );
+  assert.equal(invalid.status, 400);
+  assert.ok(errors[1] instanceof ConfigurationError);
 });
 
 test("handles public integration callbacks before product authentication", async () => {
@@ -538,9 +618,10 @@ test("handles public integration callbacks before product authentication", async
     authorize: () => {
       policyCalls += 1;
     },
-    admit: () => {
+    middleware: [async (_context, next) => {
       policyCalls += 1;
-    },
+      return next();
+    }],
   });
   const response = await api.fetch(new Request(
     "https://app.example/api/viby/integrations/callback?provider=vercel",

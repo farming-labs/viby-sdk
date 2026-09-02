@@ -97,6 +97,7 @@ export type {
   VibyApi,
   VibyApiAuthenticatedSession,
   VibyApiAuthenticationResult,
+  VibyApiMiddleware,
   VibyApiOptions,
   VibyApiOperationContext,
   VibyApiPolicy,
