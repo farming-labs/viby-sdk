@@ -78,6 +78,7 @@ export {
   DEFAULT_WEBHOOK_EVENTS,
   WEBHOOK_EVENT_TYPES,
   WebhookCollection,
+  WebhookWorker,
 } from "./webhooks.js";
 export type * from "./webhooks.js";
 export * from "./health.js";

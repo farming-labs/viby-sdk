@@ -11,6 +11,7 @@ import type {
   ReplaceWebhookSecretResult,
   StoredWebhookData,
   UpdateWebhookRecord,
+  WebhookDeliveryWork,
   WebhookStatus,
 } from "./webhooks.js";
 import type {
@@ -342,6 +343,7 @@ interface WebhookRow {
   status: WebhookStatus;
   key_id: string;
   secret_ref: string;
+  delivery_start_cursor: string | number | bigint;
   created_at: Date;
   updated_at: Date;
 }
@@ -810,6 +812,8 @@ export class PostgresRepository implements Repository {
         AND to_regclass('viby.message_parts') IS NOT NULL
         AND to_regclass('viby.tool_calls') IS NOT NULL
         AND to_regclass('viby.outbound_event_deliveries') IS NOT NULL
+        AND to_regclass('viby.webhooks') IS NOT NULL
+        AND to_regclass('viby.webhook_delivery_cursors') IS NOT NULL
         AND to_regclass('viby.generated_artifacts') IS NOT NULL
         AND to_regclass('viby.visual_artifacts') IS NOT NULL
         AND to_regclass('viby.project_artifacts') IS NOT NULL
@@ -838,6 +842,11 @@ export class PostgresRepository implements Repository {
           SELECT 1 FROM information_schema.columns
           WHERE table_schema = 'viby' AND table_name = 'generations'
             AND column_name = 'estimated_cost_micros'
+        )
+        AND EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_schema = 'viby' AND table_name = 'webhooks'
+            AND column_name = 'delivery_start_cursor'
         ) AS ready
     `;
     if (!row?.ready) throw new DatabaseNotReadyError();
@@ -3224,13 +3233,17 @@ export class PostgresRepository implements Repository {
     const [row] = await this.#sql<WebhookRow[]>`
       INSERT INTO viby.webhooks (
         id, tenant_id, user_id, name, url, event_types, status, key_id, secret_ref,
-        created_at, updated_at
+        delivery_start_cursor, created_at, updated_at
       ) VALUES (
         ${input.id}, ${scope.tenantId}, ${scope.userId}, ${input.name}, ${input.url},
         ${input.eventTypes}, ${input.status}, ${input.keyId}, ${input.secretRef},
-        ${input.now}, ${input.now}
+        COALESCE((
+          SELECT MAX(event.cursor) FROM viby.generation_events AS event
+          WHERE event.tenant_id = ${scope.tenantId} AND event.user_id = ${scope.userId}
+        ), 0), ${input.now}, ${input.now}
       )
-      RETURNING id, name, url, event_types, status, key_id, secret_ref, created_at, updated_at
+      RETURNING id, name, url, event_types, status, key_id, secret_ref,
+        delivery_start_cursor, created_at, updated_at
     `;
     return mapWebhook(row!);
   }
@@ -3238,7 +3251,8 @@ export class PostgresRepository implements Repository {
   async listWebhooks(scope: UserScope): Promise<readonly StoredWebhookData[]> {
     await this.assertReady();
     const rows = await this.#sql<WebhookRow[]>`
-      SELECT id, name, url, event_types, status, key_id, secret_ref, created_at, updated_at
+      SELECT id, name, url, event_types, status, key_id, secret_ref,
+        delivery_start_cursor, created_at, updated_at
       FROM viby.webhooks
       WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId}
       ORDER BY created_at, id
@@ -3249,7 +3263,8 @@ export class PostgresRepository implements Repository {
   async getWebhook(scope: UserScope, id: string): Promise<StoredWebhookData | null> {
     await this.assertReady();
     const [row] = await this.#sql<WebhookRow[]>`
-      SELECT id, name, url, event_types, status, key_id, secret_ref, created_at, updated_at
+      SELECT id, name, url, event_types, status, key_id, secret_ref,
+        delivery_start_cursor, created_at, updated_at
       FROM viby.webhooks
       WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId} AND id = ${id}
       LIMIT 1
@@ -3268,7 +3283,8 @@ export class PostgresRepository implements Repository {
         name = ${input.name}, url = ${input.url}, event_types = ${input.eventTypes},
         status = ${input.status}, updated_at = ${input.now}
       WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId} AND id = ${id}
-      RETURNING id, name, url, event_types, status, key_id, secret_ref, created_at, updated_at
+      RETURNING id, name, url, event_types, status, key_id, secret_ref,
+        delivery_start_cursor, created_at, updated_at
     `;
     if (!row) throw new NotFoundError("Webhook");
     return mapWebhook(row);
@@ -3291,7 +3307,8 @@ export class PostgresRepository implements Repository {
         UPDATE viby.webhooks SET
           key_id = ${input.keyId}, secret_ref = ${input.secretRef}, updated_at = ${input.now}
         WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId} AND id = ${id}
-        RETURNING id, name, url, event_types, status, key_id, secret_ref, created_at, updated_at
+        RETURNING id, name, url, event_types, status, key_id, secret_ref,
+          delivery_start_cursor, created_at, updated_at
       `;
       return { webhook: mapWebhook(row!), replacedSecretRef: previous.secret_ref };
     });
@@ -3302,7 +3319,8 @@ export class PostgresRepository implements Repository {
     const [row] = await this.#sql<WebhookRow[]>`
       DELETE FROM viby.webhooks
       WHERE tenant_id = ${scope.tenantId} AND user_id = ${scope.userId} AND id = ${id}
-      RETURNING id, name, url, event_types, status, key_id, secret_ref, created_at, updated_at
+      RETURNING id, name, url, event_types, status, key_id, secret_ref,
+        delivery_start_cursor, created_at, updated_at
     `;
     return row ? mapWebhook(row) : null;
   }
@@ -3320,8 +3338,8 @@ export class PostgresRepository implements Repository {
       LIMIT 1
     `;
     if (row) return String(row.cursor);
-    const [owned] = await this.#sql<{ owned: boolean }[]>`
-      SELECT true AS owned
+    const [owned] = await this.#sql<{ delivery_start_cursor: string | number | bigint }[]>`
+      SELECT webhook.delivery_start_cursor
       FROM viby.webhooks AS webhook
       JOIN viby.generations AS generation
         ON generation.tenant_id = webhook.tenant_id AND generation.user_id = webhook.user_id
@@ -3330,7 +3348,7 @@ export class PostgresRepository implements Repository {
       LIMIT 1
     `;
     if (!owned) throw new NotFoundError("Webhook or generation");
-    return "0";
+    return String(owned.delivery_start_cursor);
   }
 
   async advanceWebhookDeliveryCursor(
@@ -3358,6 +3376,80 @@ export class PostgresRepository implements Repository {
     `;
     if (!row) throw new NotFoundError("Webhook or generation");
     return String(row.cursor);
+  }
+
+  async findWebhookDeliveryWork(now: Date): Promise<WebhookDeliveryWork | null> {
+    await this.assertReady();
+    const [row] = await this.#sql<{
+      tenant_id: string;
+      user_id: string;
+      webhook_id: string;
+      generation_id: string;
+      event_cursor: string | number | bigint;
+    }[]>`
+      WITH candidates AS (
+        SELECT
+          webhook.tenant_id,
+          webhook.user_id,
+          webhook.id AS webhook_id,
+          generation.id AS generation_id,
+          next_event.cursor AS event_cursor,
+          next_event.type AS event_type,
+          webhook.event_types,
+          ('webhook.' || webhook.id::text) AS sink_id
+        FROM viby.webhooks AS webhook
+        JOIN viby.generations AS generation
+          ON generation.tenant_id = webhook.tenant_id
+          AND generation.user_id = webhook.user_id
+        LEFT JOIN viby.webhook_delivery_cursors AS delivery_cursor
+          ON delivery_cursor.tenant_id = webhook.tenant_id
+          AND delivery_cursor.user_id = webhook.user_id
+          AND delivery_cursor.webhook_id = webhook.id
+          AND delivery_cursor.generation_id = generation.id
+        CROSS JOIN LATERAL (
+          SELECT event.cursor, event.type
+          FROM viby.generation_events AS event
+          WHERE event.tenant_id = webhook.tenant_id
+            AND event.user_id = webhook.user_id
+            AND event.generation_id = generation.id
+            AND event.cursor > GREATEST(
+              COALESCE(delivery_cursor.cursor, 0),
+              webhook.delivery_start_cursor
+            )
+          ORDER BY event.cursor
+          LIMIT 1
+        ) AS next_event
+        WHERE webhook.status = 'active'
+      )
+      SELECT
+        candidate.tenant_id,
+        candidate.user_id,
+        candidate.webhook_id,
+        candidate.generation_id,
+        candidate.event_cursor
+      FROM candidates AS candidate
+      LEFT JOIN viby.outbound_event_deliveries AS delivery
+        ON delivery.tenant_id = candidate.tenant_id
+        AND delivery.user_id = candidate.user_id
+        AND delivery.generation_id = candidate.generation_id
+        AND delivery.event_cursor = candidate.event_cursor
+        AND delivery.sink_id = candidate.sink_id
+      WHERE
+        (candidate.event_types IS NOT NULL AND NOT candidate.event_type = ANY(candidate.event_types))
+        OR delivery.generation_id IS NULL
+        OR delivery.status IN ('delivered', 'dead_lettered')
+        OR (delivery.status = 'pending' AND delivery.next_attempt_at <= ${now})
+        OR (delivery.status = 'delivering' AND delivery.lease_expires_at <= ${now})
+      ORDER BY candidate.event_cursor, candidate.webhook_id, candidate.generation_id
+      LIMIT 1
+    `;
+    if (!row) return null;
+    return {
+      scope: { tenantId: row.tenant_id, userId: row.user_id },
+      webhookId: row.webhook_id,
+      generationId: row.generation_id,
+      eventCursor: String(row.event_cursor),
+    };
   }
 
   async claimOutboundEventDelivery(
@@ -5793,6 +5885,7 @@ function mapWebhook(row: WebhookRow): StoredWebhookData {
     status: row.status,
     keyId: row.key_id,
     secretRef: row.secret_ref,
+    deliveryStartCursor: String(row.delivery_start_cursor),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

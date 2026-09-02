@@ -126,6 +126,79 @@ test("delivers selected generation events with durable cursors and valid signatu
   await viby.close();
 });
 
+test("durable webhook workers discover due events without tenant or generation ids", async () => {
+  const deliveredGenerationIds: string[] = [];
+  const { viby } = setup(async (_input, init) => {
+    const body = JSON.parse(String(init?.body ?? "{}")) as {
+      data?: { generationId?: string };
+    };
+    if (body.data?.generationId) deliveredGenerationIds.push(body.data.generationId);
+    return new Response(null, { status: 204 });
+  });
+  const firstUser = viby.forUser({ tenantId: "worker-tenant", userId: "first" });
+  const historical = await (await firstUser.chats.create()).start({ prompt: "Historical" });
+  await historical.wait({ pollIntervalMs: 10 });
+  await firstUser.webhooks.create({
+    name: "First events",
+    url: "https://hooks.example.test/first",
+    events: ["generation.succeeded"],
+  });
+
+  const worker = viby.webhookWorker({ id: "webhook-test-worker" });
+  assert.equal(await worker.runOnce(), false);
+
+  const secondUser = viby.forUser({ tenantId: "worker-tenant", userId: "second" });
+  await secondUser.webhooks.create({
+    name: "Second events",
+    url: "https://hooks.example.test/second",
+    events: ["generation.succeeded"],
+  });
+  const [firstGeneration, secondGeneration] = await Promise.all([
+    (await firstUser.chats.create()).start({ prompt: "First current generation" }),
+    (await secondUser.chats.create()).start({ prompt: "Second current generation" }),
+  ]);
+  await Promise.all([
+    firstGeneration.wait({ pollIntervalMs: 10 }),
+    secondGeneration.wait({ pollIntervalMs: 10 }),
+  ]);
+
+  assert.equal(await worker.runOnce(), true);
+  assert.equal(await worker.runOnce(), true);
+  assert.equal(await worker.runOnce(), false);
+  assert.deepEqual(
+    new Set(deliveredGenerationIds),
+    new Set([firstGeneration.id, secondGeneration.id]),
+  );
+  assert.equal(deliveredGenerationIds.includes(historical.id), false);
+  await viby.close();
+});
+
+test("durable webhook workers retain retry state without terminating", async () => {
+  let attempts = 0;
+  const { viby } = setup(async () => {
+    attempts += 1;
+    return new Response(null, { status: attempts === 1 ? 503 : 204 });
+  });
+  const user = viby.forUser({ tenantId: "worker-retry", userId: "owner" });
+  await user.webhooks.create({
+    name: "Retry events",
+    url: "https://hooks.example.test/worker-retry",
+    events: ["generation.succeeded"],
+  });
+  const generation = await (await user.chats.create()).start({ prompt: "Retry from worker" });
+  await generation.wait({ pollIntervalMs: 10 });
+  const worker = viby.webhookWorker({
+    id: "webhook-retry-worker",
+    delivery: { retry: { maxAttempts: 2, initialDelayMs: 0 } },
+  });
+
+  assert.equal(await worker.runOnce(), true);
+  assert.equal(await worker.runOnce(), true);
+  assert.equal(await worker.runOnce(), false);
+  assert.equal(attempts, 2);
+  await viby.close();
+});
+
 test("persists webhook dead letters and redrives them explicitly", async () => {
   let fail = true;
   const { viby } = setup(async () => {

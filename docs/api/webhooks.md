@@ -1,6 +1,6 @@
 ---
 title: "Durable webhooks"
-description: "Tenant-managed signed event endpoints with durable cursors, retries, dead letters, and explicit delivery workers."
+description: "Tenant-managed signed event endpoints with durable discovery, cursors, retries, and dead letters."
 ---
 
 # Durable webhooks
@@ -53,30 +53,53 @@ receiver needs the complete trace, including deltas and workspace events. Manage
 `list`, `get`, `update`, `pause`, `resume`, `rotateSecret`, and `delete`. Rotation returns the new
 secret exactly once and deletes the replaced secret after the durable record is updated.
 
-## Deliver from a host-owned worker
+## Run the durable delivery worker
 
-Viby does not create a hidden scheduler. Call `deliver` from the product's queue consumer, cron,
-workflow, or background worker:
+Create one worker from the root client. It discovers due work across every tenant scope, so callers
+never pass webhook, user, or generation IDs. `run()` is suitable for a long-lived worker process;
+`runOnce()` processes at most one webhook/generation page for cron and workflow runtimes.
 
 ```ts
-const page = await user.webhooks.deliver(webhook.id, generationId, {
-  limit: 100,
-  retry: {
-    maxAttempts: 8,
-    initialDelayMs: 1_000,
-    maxDelayMs: 60_000,
-    multiplier: 2,
+const worker = viby.webhookWorker({
+  id: process.env.WORKER_ID!,
+  concurrency: 8,
+  delivery: {
+    limit: 100,
+    retry: {
+      maxAttempts: 8,
+      initialDelayMs: 1_000,
+      maxDelayMs: 60_000,
+      multiplier: 2,
+    },
   },
 });
 
-if (page.hasMore || page.retryAt) scheduleAnotherDelivery(page.retryAt);
+await worker.run({ signal: shutdownSignal });
+
+// Or from a scheduled function:
+await worker.runOnce();
 ```
 
-The cursor advances for both delivered and intentionally filtered events. Concurrent workers use
-leased claims, and each delivery is keyed by webhook, generation, and event cursor. Endpoint errors
-never change generation state. Delivery is at least once because a receiver can accept an HTTP
-request before the worker observes a network failure; receivers must deduplicate the stable
+The durable event log and delivery cursors are the work queue. A newly created endpoint starts after
+the latest event in its tenant scope, so starting a worker never replays unrelated history. The
+cursor advances for both delivered and intentionally filtered events. Concurrent workers use leased
+per-event claims, and each delivery is keyed by webhook, generation, and event cursor. Endpoint
+errors never change generation state. Delivery is at least once because a receiver can accept an
+HTTP request before the worker observes a network failure; receivers must deduplicate the stable
 `viby-event-id` header.
+
+Custom persistence adapters may retain explicit delivery without implementing global discovery.
+To support `viby.webhookWorker(...)`, implement `findWebhookDeliveryWork(now)` on the adapter's
+`WebhookStore` contract.
+
+## Deliver one endpoint explicitly
+
+Products can still drain a known endpoint/generation pair directly:
+
+```ts
+const page = await user.webhooks.deliver(webhook.id, generationId, { limit: 100 });
+if (page.hasMore || page.retryAt) scheduleAnotherDelivery(page.retryAt);
+```
 
 Inspect and redrive failures explicitly:
 
@@ -86,7 +109,7 @@ const deadLetters = await user.webhooks.deliveries(webhook.id, generationId, {
 });
 
 await user.webhooks.redrive(webhook.id, generationId, deadLetters[0].eventCursor);
-await user.webhooks.deliver(webhook.id, generationId);
+await viby.webhookWorker({ id: "redrive-worker" }).runOnce();
 ```
 
 ## Verify requests

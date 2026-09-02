@@ -105,6 +105,7 @@ test(
         "0038_feedback_analytics",
         "0039_follow_up_prompt_queue",
         "0040_durable_webhooks",
+        "0041_webhook_worker_discovery",
       ]);
       assert.equal(
         (await getMigrationStatus(databaseUrl.toString())).every((entry) => entry.applied),

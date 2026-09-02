@@ -93,6 +93,7 @@ import type {
   ReplaceWebhookSecretResult,
   StoredWebhookData,
   UpdateWebhookRecord,
+  WebhookDeliveryWork,
 } from "./webhooks.js";
 import type {
   BeginRepositoryPushRecord,
@@ -241,6 +242,11 @@ export class MemoryRepository implements Repository {
     if (!(this.messageFeedbackSelections instanceof Map)) {
       (this as unknown as { messageFeedbackSelections: Map<string, string> })
         .messageFeedbackSelections = new Map();
+    }
+    for (const [id, webhook] of this.webhooks) {
+      if (webhook.deliveryStartCursor === undefined) {
+        this.webhooks.set(id, { ...webhook, deliveryStartCursor: "0" });
+      }
     }
     const orderedFeedback = [...this.messageFeedback.values()].sort(
       (left, right) =>
@@ -1927,6 +1933,7 @@ export class MemoryRepository implements Repository {
       status: input.status,
       keyId: input.keyId,
       secretRef: input.secretRef,
+      deliveryStartCursor: String(this.#cursor),
       createdAt: input.now,
       updatedAt: input.now,
     };
@@ -1998,9 +2005,11 @@ export class MemoryRepository implements Repository {
     webhookId: string,
     generationId: string,
   ): Promise<string> {
-    if (!(await this.getWebhook(scope, webhookId))) throw new NotFoundError("Webhook");
     this.#requireGeneration(scope, generationId);
-    return this.webhookDeliveryCursors.get(webhookCursorKey(scope, webhookId, generationId)) ?? "0";
+    const webhook = await this.getWebhook(scope, webhookId);
+    if (!webhook) throw new NotFoundError("Webhook");
+    return this.webhookDeliveryCursors.get(webhookCursorKey(scope, webhookId, generationId)) ??
+      webhook.deliveryStartCursor;
   }
 
   async advanceWebhookDeliveryCursor(
@@ -2015,6 +2024,35 @@ export class MemoryRepository implements Repository {
     const advanced = BigInt(cursor) > BigInt(current) ? cursor : current;
     this.webhookDeliveryCursors.set(key, advanced);
     return advanced;
+  }
+
+  async findWebhookDeliveryWork(now: Date): Promise<WebhookDeliveryWork | null> {
+    let selected: WebhookDeliveryWork | null = null;
+    for (const webhook of this.webhooks.values()) {
+      if (webhook.status !== "active") continue;
+      const scope = { tenantId: webhook.tenantId, userId: webhook.userId };
+      for (const generation of this.generations.values()) {
+        if (!inScope(generation, scope)) continue;
+        const cursor = this.webhookDeliveryCursors.get(
+          webhookCursorKey(scope, webhook.id, generation.id),
+        ) ?? webhook.deliveryStartCursor;
+        const event = this.events.find(
+          (candidate) =>
+            inScope(candidate, scope) &&
+            candidate.generationId === generation.id &&
+            BigInt(candidate.cursor) > BigInt(cursor),
+        );
+        if (!event || !webhookEventIsDue(webhook, event, this.outboundDeliveries, now)) continue;
+        if (selected && BigInt(selected.eventCursor) <= BigInt(event.cursor)) continue;
+        selected = {
+          scope,
+          webhookId: webhook.id,
+          generationId: generation.id,
+          eventCursor: event.cursor,
+        };
+      }
+    }
+    return selected;
   }
 
   async claimOutboundEventDelivery(
@@ -3808,6 +3846,24 @@ function addCost(
 
 function outboundDeliveryKey(generationId: string, eventCursor: string, sinkId: string): string {
   return `${generationId}:${eventCursor}:${sinkId}`;
+}
+
+function webhookEventIsDue(
+  webhook: MemoryWebhook,
+  event: GenerationEvent,
+  deliveries: ReadonlyMap<string, MemoryOutboundEventDelivery>,
+  now: Date,
+): boolean {
+  const selected = webhook.events === "all" || webhook.events.includes(event.type);
+  if (!selected) return true;
+  const delivery = deliveries.get(
+    outboundDeliveryKey(event.generationId, event.cursor, `webhook.${webhook.id}`),
+  );
+  if (!delivery || delivery.status === "delivered" || delivery.status === "dead_lettered") {
+    return true;
+  }
+  if (delivery.status === "pending") return delivery.nextAttemptAt <= now;
+  return delivery.leaseExpiresAt !== null && delivery.leaseExpiresAt <= now;
 }
 
 function webhookCursorKey(
