@@ -368,6 +368,12 @@ export interface GenerateInput {
   readonly attachments?: readonly AttachmentInput[];
 }
 
+/** A durable follow-up that starts after another generation succeeds. */
+export interface EnqueueGenerationInput extends GenerateInput {
+  /** Generation in the same chat whose produced version becomes this follow-up's base. */
+  readonly afterGenerationId: string;
+}
+
 export type InspectInput = GenerateInput;
 export type GenerationOperation = "change" | "inspect";
 
@@ -663,6 +669,8 @@ export type DurableMessagePartInput<Type extends MessagePartType = MessagePartTy
 export interface GenerationData {
   readonly id: string;
   readonly chatId: string;
+  /** Predecessor for a queued follow-up, or null for an immediately runnable generation. */
+  readonly afterGenerationId: string | null;
   readonly baseVersionId: string | null;
   readonly activeAttemptId: string;
   readonly attemptCount: number;

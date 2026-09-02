@@ -131,6 +131,7 @@ try {
     "migrations/0034_generation_workspace_events.sql",
     "migrations/0035_generation_engine_checkpoints.sql",
     "migrations/0036_message_feedback.sql",
+    "migrations/0039_follow_up_prompt_queue.sql",
   ]) {
     assert.ok(paths.has(path), `packed package is missing ${path}`);
   }

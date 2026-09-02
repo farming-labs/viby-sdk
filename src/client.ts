@@ -10,6 +10,7 @@ import type {
   DeleteChatInput,
   DesignEvaluationData,
   DesignEvaluationEvidence,
+  EnqueueGenerationInput,
   FrameworkId,
   ForkVersionInput,
   GenerateInput,
@@ -1496,6 +1497,45 @@ export class Chat<Framework extends FrameworkId = FrameworkId> {
     return unwrapGenerationOutcome(await (await this.start(input)).wait());
   }
 
+  /** Queues a durable follow-up whose base is the predecessor's generated version. */
+  async enqueue(input: EnqueueGenerationInput): Promise<Generation<Framework>> {
+    await this.#assertActive();
+    const afterGenerationId = assertIdentifier(
+      input.afterGenerationId,
+      "Predecessor generation id",
+    );
+    const predecessor = await this.#dependencies.repository.getGeneration(
+      this.#dependencies.scope,
+      afterGenerationId,
+    );
+    if (!predecessor || predecessor.chatId !== this.id) throw new NotFoundError("Generation");
+    if (predecessor.configuration.operation === "inspect") {
+      throw new ConfigurationError(
+        "A follow-up cannot depend on a read-only inspection because it does not produce a source version.",
+      );
+    }
+    return startGenerationFrom(
+      this.#dependencies,
+      this.id,
+      input,
+      null,
+      "change",
+      afterGenerationId,
+    );
+  }
+
+  /** Lists follow-ups that are still waiting for their predecessor. */
+  async queuedGenerations(): Promise<Generation<Framework>[]> {
+    await this.#assertActive();
+    const generations = await this.#dependencies.repository.listQueuedGenerations(
+      this.#dependencies.scope,
+      this.id,
+    );
+    return generations.map(
+      (generation) => new Generation(generation.id, this.id, this.#dependencies),
+    );
+  }
+
   /** Starts a durable, strictly read-only inspection of the latest immutable version. */
   async startInspection(input: InspectInput): Promise<Generation<Framework>> {
     await this.#assertActive();
@@ -1697,6 +1737,7 @@ async function startGenerationFrom<Framework extends FrameworkId>(
   input: GenerateInput,
   baseVersion: VersionData<Framework> | null,
   operation: GenerationOperation = "change",
+  afterGenerationId: string | null = null,
 ): Promise<Generation<Framework>> {
   if (baseVersion && baseVersion.chatId !== chatId) throw new NotFoundError("Version");
   const prompt = assertPrompt(input.prompt);
@@ -1714,6 +1755,7 @@ async function startGenerationFrom<Framework extends FrameworkId>(
     id: generationId,
     attemptId,
     chatId,
+    afterGenerationId,
     baseVersionId: baseVersion?.id ?? null,
     prompt,
     modelProvider: selected.model.provider,
@@ -3401,6 +3443,7 @@ class GenerationRunner<Framework extends FrameworkId> {
     let eagerPreview: Promise<PreviewSessionData<Framework>> | undefined;
     let eagerPreviewReady = false;
     let previewHandedOff = false;
+    let succeeded = false;
     const workspaceController = new AbortController();
     let restartForSteering = false;
     let repairAttemptId: string | null = null;
@@ -3918,6 +3961,7 @@ class GenerationRunner<Framework extends FrameworkId> {
         cost,
         artifacts,
       });
+      succeeded = true;
       if (eagerPreviewId && eagerPreviewReady) {
         await this.#dependencies.previews.retarget(scope, eagerPreviewId, version);
         previewHandedOff = true;
@@ -4037,6 +4081,13 @@ class GenerationRunner<Framework extends FrameworkId> {
       await this.#execute(lease, signal, cancelOnAbort, steeringRestarts + 1);
     } else if (repairAttemptId && this.#dependencies.automatic) {
       setTimeout(() => this.schedule(scope, generationId, repairAttemptId!), 0);
+    } else if (succeeded && this.#dependencies.automatic) {
+      const dependents = await this.#dependencies.repository
+        .listReadyGenerationDependents(scope, generationId)
+        .catch(() => []);
+      for (const dependent of dependents) {
+        this.schedule(scope, dependent.id, dependent.activeAttemptId);
+      }
     }
   }
 }

@@ -659,10 +659,17 @@ export class MemoryRepository implements Repository {
         throw new NotFoundError("Chat");
       }
     }
+    if (input.afterGenerationId) {
+      const predecessor = this.generations.get(input.afterGenerationId);
+      if (!predecessor || !inScope(predecessor, scope) || predecessor.chatId !== input.chatId) {
+        throw new NotFoundError("Generation");
+      }
+    }
     const now = new Date();
     const generation: GenerationData & ScopedRecord = {
       id: input.id,
       chatId: input.chatId,
+      afterGenerationId: input.afterGenerationId ?? null,
       baseVersionId: input.baseVersionId,
       activeAttemptId: input.attemptId,
       attemptCount: 1,
@@ -728,6 +735,38 @@ export class MemoryRepository implements Repository {
       reason: "initial",
     });
     return { generation, attempt };
+  }
+
+  async listQueuedGenerations(scope: UserScope, chatId: string): Promise<GenerationData[]> {
+    const chat = await this.getChat(scope, chatId);
+    if (!chat) throw new NotFoundError("Chat");
+    return [...this.generations.values()]
+      .filter((generation) =>
+        inScope(generation, scope) &&
+        generation.chatId === chatId &&
+        generation.afterGenerationId !== null &&
+        generation.status === "queued"
+      )
+      .sort((left, right) =>
+        left.createdAt.getTime() - right.createdAt.getTime() || left.id.localeCompare(right.id)
+      );
+  }
+
+  async listReadyGenerationDependents(
+    scope: UserScope,
+    generationId: string,
+  ): Promise<GenerationData[]> {
+    const predecessor = this.#requireGeneration(scope, generationId);
+    if (predecessor.status !== "succeeded") return [];
+    return [...this.generations.values()]
+      .filter((generation) =>
+        inScope(generation, scope) &&
+        generation.afterGenerationId === generationId &&
+        generation.status === "queued"
+      )
+      .sort((left, right) =>
+        left.createdAt.getTime() - right.createdAt.getTime() || left.id.localeCompare(right.id)
+      );
   }
 
   async createGenerationSteering(
@@ -917,10 +956,26 @@ export class MemoryRepository implements Repository {
     ) {
       throw new GenerationStateError(generationId, `Attempt ${attemptId} is not queued.`);
     }
+    const dependencyVersion = generation.afterGenerationId
+      ? [...this.versions.values()].find(
+          (version) => inScope(version, scope) && version.generationId === generation.afterGenerationId,
+        )
+      : null;
+    if (
+      generation.afterGenerationId &&
+      (this.generations.get(generation.afterGenerationId)?.status !== "succeeded" ||
+        !dependencyVersion)
+    ) {
+      throw new GenerationStateError(
+        generationId,
+        `Generation ${generationId} is waiting for its predecessor.`,
+      );
+    }
     const now = new Date();
     const nextAttempt = { ...attempt, status: "running" as const, startedAt: now };
     const nextGeneration = {
       ...generation,
+      baseVersionId: dependencyVersion?.id ?? generation.baseVersionId,
       status: "running" as const,
       startedAt: generation.startedAt ?? now,
       completedAt: null,
@@ -947,6 +1002,16 @@ export class MemoryRepository implements Repository {
         const generation = this.generations.get(attempt.generationId);
         if (!generation || generation.activeAttemptId !== attempt.id) return false;
         if (generation.status !== "queued" && generation.status !== "running") return false;
+        if (generation.afterGenerationId) {
+          const predecessor = this.generations.get(generation.afterGenerationId);
+          if (!predecessor || predecessor.status !== "succeeded") return false;
+          const baseVersion = [...this.versions.values()].find(
+            (version) =>
+              inScope(version, { tenantId: attempt.tenantId, userId: attempt.userId }) &&
+              version.generationId === predecessor.id,
+          );
+          if (!baseVersion) return false;
+        }
         const models = input.models ?? [{ provider: input.modelProvider, id: input.modelId }];
         if (
           !models.some(
@@ -962,6 +1027,13 @@ export class MemoryRepository implements Repository {
       .sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime())[0];
     if (!candidate) return null;
     const generation = this.generations.get(candidate.generationId)!;
+    const dependencyVersion = generation.afterGenerationId
+      ? [...this.versions.values()].find(
+          (version) =>
+            inScope(version, { tenantId: candidate.tenantId, userId: candidate.userId }) &&
+            version.generationId === generation.afterGenerationId,
+        )
+      : null;
     const wasQueued = candidate.status === "queued";
     const expiresAt = new Date(now.getTime() + input.leaseMs);
     this.attempts.set(candidate.id, {
@@ -975,6 +1047,7 @@ export class MemoryRepository implements Repository {
     this.workerLeaseTokens.set(candidate.id, input.leaseToken);
     this.generations.set(generation.id, {
       ...generation,
+      baseVersionId: dependencyVersion?.id ?? generation.baseVersionId,
       status: "running",
       startedAt: generation.startedAt ?? now,
       completedAt: null,

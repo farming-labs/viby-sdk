@@ -151,6 +151,10 @@ export interface VibyWebGenerationInput {
   readonly attachments?: readonly VibyWebAttachmentInput[];
 }
 
+export interface VibyWebEnqueueGenerationInput extends VibyWebGenerationInput {
+  readonly afterGenerationId: string;
+}
+
 export interface VibyWebGenerationSteeringInput {
   readonly prompt: string;
   readonly idempotencyKey?: string;
@@ -408,6 +412,17 @@ export interface VibyWebChatsClient<Framework extends FrameworkId = FrameworkId>
     input: VibyWebGenerationInput,
     options?: VibyWebRequestOptions,
   ): Promise<{ readonly generation: VibyWebGenerationReference }>;
+  readonly queue: {
+    list(
+      chatId: string,
+      options?: VibyWebRequestOptions,
+    ): Promise<{ readonly generations: readonly VibyApiGeneration[] }>;
+    create(
+      chatId: string,
+      input: VibyWebEnqueueGenerationInput,
+      options?: VibyWebRequestOptions,
+    ): Promise<{ readonly generation: VibyWebGenerationReference }>;
+  };
   readonly environment: {
     list(
       chatId: string,
@@ -860,6 +875,28 @@ export function createVibyWebClient<Framework extends FrameworkId = FrameworkId>
       undefined,
       request,
     ),
+    queue: Object.freeze({
+      list: (chatId: string, request: VibyWebRequestOptions = {}) => transport.json<{
+        readonly generations: readonly VibyApiGeneration[];
+      }>(
+        "GET",
+        `/chats/${segment(chatId)}/queue`,
+        undefined,
+        undefined,
+        request,
+      ),
+      create: (
+        chatId: string,
+        input: VibyWebEnqueueGenerationInput,
+        request: VibyWebRequestOptions = {},
+      ) => transport.json<{ readonly generation: VibyWebGenerationReference }>(
+        "POST",
+        `/chats/${segment(chatId)}/queue`,
+        generationBody(input),
+        undefined,
+        request,
+      ),
+    }),
     environment: Object.freeze({
       list: (chatId: string, input = {}) => transport.json(
         "GET",
@@ -1670,7 +1707,11 @@ function parsePreviewEvent<Result extends JsonValue>(
 }
 
 function generationBody(
-  input: VibyWebCreateChatInput | VibyWebGenerationInput | VibyWebGenerationSteeringInput,
+  input:
+    | VibyWebCreateChatInput
+    | VibyWebGenerationInput
+    | VibyWebEnqueueGenerationInput
+    | VibyWebGenerationSteeringInput,
 ): object {
   return {
     ...input,

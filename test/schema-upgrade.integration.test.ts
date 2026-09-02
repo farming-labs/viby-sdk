@@ -103,6 +103,7 @@ test(
         "0036_message_feedback",
         "0037_provider_request_attribution",
         "0038_feedback_analytics",
+        "0039_follow_up_prompt_queue",
       ]);
       assert.equal(
         (await getMigrationStatus(databaseUrl.toString())).every((entry) => entry.applied),

@@ -130,6 +130,57 @@ test("starts asynchronously, persists streamed deltas, and resumes from an event
   await viby.close();
 });
 
+test("durably queues follow-ups and runs them against the predecessor version", async () => {
+  let releaseFirst!: () => void;
+  const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve; });
+  const calls: Array<{ prompt: string; previous: string[] }> = [];
+  const generator: ProjectGenerator<"farm"> = {
+    async generate(input) {
+      calls.push({ prompt: input.prompt, previous: input.previousFiles.map((file) => file.path) });
+      if (calls.length === 1) await firstGate;
+      return projectOutput(calls.length);
+    },
+  };
+  const { viby } = setup(generator);
+  const chat = await viby.forUser({ tenantId: "tenant-a", userId: "user-a" }).chats.create();
+
+  const first = await chat.start({ prompt: "Build the dashboard" });
+  const followUp = await chat.enqueue({
+    prompt: "Add a compact revenue chart",
+    afterGenerationId: first.id,
+  });
+
+  await waitUntil(async () => (await first.data()).status === "running");
+  assert.equal((await followUp.data()).status, "queued");
+  assert.equal((await followUp.data()).afterGenerationId, first.id);
+  assert.deepEqual((await chat.queuedGenerations()).map((generation) => generation.id), [followUp.id]);
+  assert.deepEqual((await chat.listMessages()).items.map((message) => message.content), [
+    "Build the dashboard",
+    "Add a compact revenue chart",
+  ]);
+
+  releaseFirst();
+  const [firstOutcome, followUpOutcome] = await Promise.all([
+    first.wait({ pollIntervalMs: 10 }),
+    followUp.wait({ pollIntervalMs: 10 }),
+  ]);
+  assert.equal(firstOutcome.status, "succeeded");
+  assert.equal(followUpOutcome.status, "succeeded");
+  assert.deepEqual(calls, [
+    { prompt: "Build the dashboard", previous: [] },
+    { prompt: "Add a compact revenue chart", previous: ["src/index.ts"] },
+  ]);
+  assert.equal(firstOutcome.status, "succeeded");
+  assert.equal(followUpOutcome.status, "succeeded");
+  if (firstOutcome.status !== "succeeded" || followUpOutcome.status !== "succeeded") {
+    throw new Error("Expected both generations to succeed.");
+  }
+  assert.equal((await followUp.data()).baseVersionId, firstOutcome.version.id);
+  assert.equal(followUpOutcome.version.parentVersionId, firstOutcome.version.id);
+  assert.equal((await chat.queuedGenerations()).length, 0);
+  await viby.close();
+});
+
 test("queues, applies, and exposes idempotent durable steering", async () => {
   let started!: () => void;
   let release!: () => void;

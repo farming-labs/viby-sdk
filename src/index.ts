@@ -510,6 +510,7 @@ export type {
   FrameworkId,
   ForkVersionInput,
   GenerateInput,
+  EnqueueGenerationInput,
   ImportProjectInput,
   ImportProjectSource,
   ImportFilePolicy,

@@ -22,11 +22,36 @@ const generation = await chat.start({
 `chat.start()` commits the generation before execution begins. `user.generations.get(id)` or
 `chat.getGeneration(id)` can rehydrate the same handle after a request, reload, or process restart.
 
+## Queue follow-up prompts
+
+Products can accept the next prompt while a generation is still running without guessing which
+source snapshot it should edit:
+
+```ts
+const first = await chat.start({ prompt: "Build the analytics dashboard" });
+const followUp = await chat.enqueue({
+  prompt: "Add a compact revenue trend",
+  afterGenerationId: first.id,
+});
+
+const waiting = await chat.queuedGenerations();
+```
+
+`enqueue()` atomically persists the follow-up generation, attempt, user message, and predecessor
+reference. It remains `queued` and cannot be claimed until the predecessor succeeds. At claim time,
+Viby resolves the predecessor's immutable version as `baseVersionId`, so a chain such as A → B → C
+always edits the intended result. This contract is identical for embedded and external workers.
+
+If a predecessor fails or is cancelled, its dependents remain durably queued. The application may
+retry the predecessor or explicitly cancel the dependent; Viby never silently skips or rebases it.
+`GET /chats/{chatId}/queue` and `POST /chats/{chatId}/queue` expose the same behavior through the
+Web API, and the portable client provides `client.chats.queue.list()` and `.create()`.
+
 ## Status model
 
 | Generation status | Meaning |
 | --- | --- |
-| `queued` | Durable work exists but no active attempt currently owns execution. |
+| `queued` | Durable work exists but no active attempt currently owns execution; a follow-up may also be waiting for its predecessor. |
 | `running` | An embedded runner or leased worker owns the active attempt. |
 | `waiting` | A typed plan, question, or permission task must be resolved. |
 | `succeeded` | A final assistant message and immutable version were committed. |
