@@ -84,6 +84,11 @@ export type VibyApiPolicy<Framework extends FrameworkId = FrameworkId> = (
   context: VibyApiOperationContext<Framework>,
 ) => VibyApiPolicyDecision | Promise<VibyApiPolicyDecision>;
 
+export type VibyApiMiddleware<Framework extends FrameworkId = FrameworkId> = (
+  context: VibyApiOperationContext<Framework>,
+  next: () => Promise<Response>,
+) => Response | Promise<Response>;
+
 export interface VibyApiPreviewContext<Framework extends FrameworkId = FrameworkId> {
   readonly request: Request;
   readonly scope: UserScope;
@@ -102,7 +107,12 @@ export interface VibyApiOptions<Framework extends FrameworkId = FrameworkId> {
   ) => VibyApiAuthenticationResult | Promise<VibyApiAuthenticationResult>;
   /** Decide whether the authenticated scope may invoke the matched API operation. */
   readonly authorize?: VibyApiPolicy<Framework>;
-  /** Apply quota, concurrency, billing, or rate-limit admission before an effect runs. */
+  /**
+   * Wrap matched authenticated operations with ordered Web-standard middleware.
+   * Authentication and authorization always run before this chain.
+   */
+  readonly middleware?: readonly VibyApiMiddleware<Framework>[];
+  /** @deprecated Use middleware and return a Response to short-circuit the operation. */
   readonly admit?: VibyApiPolicy<Framework>;
   /** Defaults to /api/viby. */
   readonly basePath?: string;
@@ -131,6 +141,7 @@ export function createVibyApi<Framework extends FrameworkId>(
   }
   const basePath = normalizeBasePath(options.basePath);
   const maxBodyBytes = normalizeBodyLimit(options.maxBodyBytes);
+  const middleware = normalizeApiMiddleware(options.middleware);
   return Object.freeze({
     async fetch(request: Request): Promise<Response> {
       let authenticationHeaders: HeadersInit | undefined;
@@ -160,6 +171,7 @@ export function createVibyApi<Framework extends FrameworkId>(
         authenticationHeaders = session.headers;
         const user = options.viby.forUser(session.scope);
         const matched = matchApiOperation(request, path);
+        let response: Response;
         if (matched) {
           const context: VibyApiOperationContext<Framework> = {
             request,
@@ -195,15 +207,19 @@ export function createVibyApi<Framework extends FrameworkId>(
               options.headers,
             );
           }
+          response = await runApiMiddleware(middleware, context, () =>
+            route(request, path, session.scope, user, options, maxBodyBytes)
+          );
+        } else {
+          response = await route(
+            request,
+            path,
+            session.scope,
+            user,
+            options,
+            maxBodyBytes,
+          );
         }
-        const response = await route(
-          request,
-          path,
-          session.scope,
-          user,
-          options,
-          maxBodyBytes,
-        );
         return withHeaders(withHeaders(response, authenticationHeaders), options.headers);
       } catch (error) {
         await options.onError?.(error, request);
@@ -230,6 +246,44 @@ function policyResponse(
 ) {
   if (decision instanceof Response) return decision;
   return decision === false ? json({ error, code }, status) : null;
+}
+
+function normalizeApiMiddleware<Framework extends FrameworkId>(
+  value: readonly VibyApiMiddleware<Framework>[] | undefined,
+): readonly VibyApiMiddleware<Framework>[] {
+  if (value === undefined) return Object.freeze([]);
+  if (!Array.isArray(value)) {
+    throw new ConfigurationError("Viby API middleware must be an array.");
+  }
+  for (const middleware of value) {
+    if (typeof middleware !== "function") {
+      throw new ConfigurationError("Every Viby API middleware entry must be a function.");
+    }
+  }
+  return Object.freeze([...value]);
+}
+
+async function runApiMiddleware<Framework extends FrameworkId>(
+  middleware: readonly VibyApiMiddleware<Framework>[],
+  context: VibyApiOperationContext<Framework>,
+  operation: () => Promise<Response>,
+): Promise<Response> {
+  let lastStarted = -1;
+  const dispatch = async (index: number): Promise<Response> => {
+    if (index <= lastStarted) {
+      throw new ConfigurationError("Viby API middleware next() may only be called once.");
+    }
+    lastStarted = index;
+    const current = middleware[index];
+    const response = current
+      ? await current(context, () => dispatch(index + 1))
+      : await operation();
+    if (!(response instanceof Response)) {
+      throw new ConfigurationError("Viby API middleware must return a Web Response.");
+    }
+    return response;
+  };
+  return dispatch(0);
 }
 
 function matchApiOperation(request: Request, path: string) {
