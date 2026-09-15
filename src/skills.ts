@@ -19,6 +19,8 @@ export { defineSkillResolver, skillFrom, skillInline } from "./skill-resolver.js
 
 const MAX_SKILL_FILES = 64;
 const MAX_SKILL_BYTES = 1_000_000;
+const REMOTE_SKILL_FETCH_ATTEMPTS = 3;
+const REMOTE_SKILL_RETRY_DELAY_MS = 100;
 
 const CATEGORY_KEYWORDS: Record<string, readonly string[]> = {
   product: ["product", "requirement", "onboarding", "flow", "journey", "persona"],
@@ -111,6 +113,9 @@ export class SkillResolver {
 
     const pending = this.#resolveUncached(reference, category, prompt);
     this.#cache.set(key, pending);
+    void pending.catch(() => {
+      if (this.#cache.get(key) === pending) this.#cache.delete(key);
+    });
     return pending;
   }
 
@@ -323,7 +328,7 @@ async function resolveFromSkillsSh(
   id: SkillsShSkillId,
   token: string,
 ): Promise<Omit<ResolvedSkill, "category"> | null> {
-  const response = await fetch(`https://skills.sh/api/v1/skills/${id}`, {
+  const response = await fetchRemoteSkillResource(`https://skills.sh/api/v1/skills/${id}`, {
     headers: { Authorization: `Bearer ${token}` },
   });
   if (!response.ok) return null;
@@ -361,14 +366,17 @@ async function resolveFromGitHub(
   };
   if (process.env.GITHUB_TOKEN) headers.Authorization = `Bearer ${process.env.GITHUB_TOKEN}`;
 
-  const repositoryResponse = await fetch(`https://api.github.com/repos/${owner}/${repository}`, { headers });
+  const repositoryResponse = await fetchRemoteSkillResource(
+    `https://api.github.com/repos/${owner}/${repository}`,
+    { headers },
+  );
   if (!repositoryResponse.ok) {
     throw new SkillResolutionError(id, `GitHub returned ${repositoryResponse.status}`);
   }
   const repositoryData = (await repositoryResponse.json()) as { default_branch?: string };
   const branch = repositoryData.default_branch ?? "main";
 
-  const treeResponse = await fetch(
+  const treeResponse = await fetchRemoteSkillResource(
     `https://api.github.com/repos/${owner}/${repository}/git/trees/${encodeURIComponent(branch)}?recursive=1`,
     { headers },
   );
@@ -395,7 +403,7 @@ async function resolveFromGitHub(
   let totalBytes = 0;
 
   for (const path of filePaths) {
-    const response = await fetch(
+    const response = await fetchRemoteSkillResource(
       `https://raw.githubusercontent.com/${owner}/${repository}/${encodeURIComponent(branch)}/${path.split("/").map(encodeURIComponent).join("/")}`,
       { headers: { "User-Agent": "@viby/sdk" } },
     );
@@ -421,6 +429,37 @@ async function resolveFromGitHub(
     contentHash: hashSkillFiles(files),
     files,
   };
+}
+
+async function fetchRemoteSkillResource(
+  input: string,
+  init?: RequestInit,
+): Promise<Response> {
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt < REMOTE_SKILL_FETCH_ATTEMPTS; attempt += 1) {
+    try {
+      const response = await fetch(input, init);
+      if (!isTransientRemoteStatus(response.status) || attempt === REMOTE_SKILL_FETCH_ATTEMPTS - 1) {
+        return response;
+      }
+    } catch (error) {
+      lastError = error;
+      if (attempt === REMOTE_SKILL_FETCH_ATTEMPTS - 1) throw error;
+    }
+
+    await delay(REMOTE_SKILL_RETRY_DELAY_MS * 2 ** attempt);
+  }
+
+  throw lastError instanceof Error ? lastError : new Error("Remote skill request failed");
+}
+
+function isTransientRemoteStatus(status: number): boolean {
+  return status === 408 || status === 425 || status === 429 || status >= 500;
+}
+
+function delay(milliseconds: number): Promise<void> {
+  return new Promise((resolveDelay) => setTimeout(resolveDelay, milliseconds));
 }
 
 function parseFrontmatter(content: string, fallbackName: string): SkillFrontmatter {

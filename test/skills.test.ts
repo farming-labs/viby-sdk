@@ -88,3 +88,82 @@ test("resolves opaque references through a provider-neutral adapter", async () =
   assert.equal(skill?.locator, "skills/design");
   assert.equal(skill?.category, "design");
 });
+
+test("retries transient GitHub failures while resolving a remote skill", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalOidcToken = process.env.VERCEL_OIDC_TOKEN;
+  let repositoryRequests = 0;
+
+  delete process.env.VERCEL_OIDC_TOKEN;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url === "https://api.github.com/repos/acme/skills") {
+      repositoryRequests += 1;
+      if (repositoryRequests === 1) return new Response(null, { status: 504 });
+      return Response.json({ default_branch: "main" });
+    }
+    if (url.includes("/git/trees/main")) {
+      return Response.json({
+        tree: [{ type: "blob", path: "design/SKILL.md" }],
+      });
+    }
+    if (url.includes("raw.githubusercontent.com/acme/skills/main/design/SKILL.md")) {
+      return new Response("---\nname: design\ndescription: Design products.\n---\n\n# Design\n");
+    }
+    return new Response(null, { status: 404 });
+  };
+
+  try {
+    const [skill] = await new SkillResolver({
+      frontend: ["acme/skills/design"],
+    }).resolveForPrompt("Build a page");
+
+    assert.equal(repositoryRequests, 2);
+    assert.equal(skill?.name, "design");
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalOidcToken === undefined) delete process.env.VERCEL_OIDC_TOKEN;
+    else process.env.VERCEL_OIDC_TOKEN = originalOidcToken;
+  }
+});
+
+test("does not retain failed skill resolutions in the runtime cache", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalOidcToken = process.env.VERCEL_OIDC_TOKEN;
+  let available = false;
+
+  delete process.env.VERCEL_OIDC_TOKEN;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url === "https://api.github.com/repos/acme/skills") {
+      return available
+        ? Response.json({ default_branch: "main" })
+        : new Response(null, { status: 404 });
+    }
+    if (url.includes("/git/trees/main")) {
+      return Response.json({
+        tree: [{ type: "blob", path: "design/SKILL.md" }],
+      });
+    }
+    if (url.includes("raw.githubusercontent.com/acme/skills/main/design/SKILL.md")) {
+      return new Response("# Design\n");
+    }
+    return new Response(null, { status: 404 });
+  };
+
+  try {
+    const resolver = new SkillResolver({ frontend: ["acme/skills/design"] });
+    await assert.rejects(
+      resolver.resolveForPrompt("Build a page"),
+      /GitHub returned 404/,
+    );
+
+    available = true;
+    const [skill] = await resolver.resolveForPrompt("Build a page");
+    assert.equal(skill?.name, "design");
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalOidcToken === undefined) delete process.env.VERCEL_OIDC_TOKEN;
+    else process.env.VERCEL_OIDC_TOKEN = originalOidcToken;
+  }
+});
