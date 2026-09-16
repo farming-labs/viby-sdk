@@ -87,6 +87,13 @@ export * from "./api-schema.js";
 export { normalizeGenerationQuality, verifyGenerationQuality } from "./generation-quality.js";
 export type * from "./generation-quality.js";
 export { createVibyApi, vibyApi } from "./api-host.js";
+export { createVibyAIChatHandler } from "./ai-sdk.js";
+export type {
+  VibyAIChatHandler,
+  VibyAIChatHandlerOptions,
+  VibyAIChatRequest,
+  VibyAIChatStartInput,
+} from "./ai-sdk.js";
 export {
   createVibyWebClient,
   VibyApiClientError,
