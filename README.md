@@ -1186,6 +1186,36 @@ return generationEventStreamResponse(generation, { request });
 
 The helper reads `Last-Event-ID`, emits normal `id`, `event`, and JSON `data` fields, sends an SSE retry hint, propagates request cancellation, and returns a Web-standard `Response`.
 
+## Serve an AI SDK chat endpoint
+
+`@viby/sdk/ai-sdk` turns a Viby generation into the AI SDK UI message stream used by
+`DefaultChatTransport` and managed Harness. The product resolves an authorized Viby chat; the
+handler then starts its generation, streams text output, and cancels the generation when the client
+stops the request.
+
+```ts
+import { createVibyAIChatHandler } from "@viby/sdk/ai-sdk";
+
+export const POST = createVibyAIChatHandler({
+  async resolveChat({ conversationId }) {
+    const binding = await harnessBindings.get(conversationId);
+    return viby.forUser(binding.scope).chats.get(binding.vibyChatId);
+  },
+});
+```
+
+`conversationId` is the AI SDK chat id. With `HarnessCloud`, it is the Harness thread id. A product
+can use the same id for its Viby chat or look up a durable thread-to-chat binding in `resolveChat`.
+Create that binding through an authenticated product flow: Harness's backend request is a server-to-
+server request, not the browser's product session.
+The default input builder accepts text-only user messages. Supply `createGenerationInput` to map
+attachments or product metadata, and `startGeneration` when the product persists an idempotent
+request-to-generation binding.
+
+The first bridge handles normal completion, failure, and cancellation. Viby plan, question, and
+permission tasks remain product-owned and should be resolved through Viby's task API before adding a
+task-aware Harness UI.
+
 Browser and other Web-runtime consumers can use the matching typed client without recreating routes or SSE parsing:
 
 ```ts

@@ -44,6 +44,10 @@
       "types": "./dist/node.d.ts",
       "import": "./dist/node.js"
     },
+    "./ai-sdk": {
+      "types": "./dist/ai-sdk.d.ts",
+      "import": "./dist/ai-sdk.js"
+    },
     "./node/migrations": {
       "types": "./dist/node-migrations.d.ts",
       "import": "./dist/node-migrations.js"
