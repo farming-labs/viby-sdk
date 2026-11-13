@@ -818,6 +818,14 @@ svg {
   height: 10px;
 }
 
+/* Keep heading links out of the shared theme's card styles. */
+#nd-page :is(h1, h2, h3, h4, h5, h6) > a[data-card] {
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
 /* Farm renders the same document shell as the shared shadcn theme. Keep the
  * adapter on that native content contract until this selector ships upstream. */
 #nd-docs-layout[data-fd-framework] article#nd-page {
